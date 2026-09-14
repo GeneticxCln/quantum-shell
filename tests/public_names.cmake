@@ -30,6 +30,7 @@ set(QS_TEST_NAMES
     niri-live-action-test
     niri-live-layershell-test
     niri-live-restart-test
+    niri-live-shell-restart-test
     niri-version-test
     niri-ipc-test
     niri-event-stream-test

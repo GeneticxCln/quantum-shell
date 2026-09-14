@@ -17,6 +17,7 @@
 #include "niri/NiriProtocol.h"
 #include "niri/NiriReconnect.h"
 #include "niri/NiriState.h"
+#include "NestedCompositor.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -38,94 +39,7 @@ using quantum::niri::Reply;
 
 namespace {
 
-// The config for the compositor this test starts. Nothing but a comment, so the instance cannot inherit
-// anything from the session it runs in; niri's own validator is run over it before it is used, so a
-// broken fixture fails as a validation error rather than as a mysterious startup timeout.
-constexpr auto testConfig = R"(// The compositor this file configures is started by tests/integration/niri_live_restart_test.cpp.
-)";
-
-// A compositor run and stopped by this test.
-class NestedNiri {
-public:
-    ~NestedNiri() { stop(); }
-
-    bool start(const QString& niriPath, const QString& configPath, const QString& sessionSocket,
-               QString* reason) {
-        sessionSocket_ = sessionSocket;
-        process_.setProcessChannelMode(QProcess::MergedChannels);
-        // niri logs its startup in detail. The pipe is drained continuously so the compositor can never
-        // block writing to it, and the tail is kept for a failure message.
-        QObject::connect(&process_, &QProcess::readyRead, &process_, [this] { collectOutput(); });
-
-        process_.start(niriPath, QStringList{QStringLiteral("-c"), configPath});
-        if (!process_.waitForStarted(5000)) {
-            *reason = QStringLiteral("the test compositor did not start: %1").arg(process_.errorString());
-            return false;
-        }
-
-        socket_ = waitForSocket();
-        if (socket_.isEmpty()) {
-            *reason = QStringLiteral("the test compositor never created an IPC socket. Its output:\n%1")
-                          .arg(tail());
-            return false;
-        }
-        return true;
-    }
-
-    // The socket this instance created, found the way a client has to find it: niri's naming rule, and
-    // never the socket this test process was started with, which belongs to the session's own compositor.
-    QString socket() const { return socket_; }
-
-    void stop() {
-        if (process_.state() == QProcess::NotRunning) {
-            return;
-        }
-        collectOutput();
-        process_.terminate();
-        if (!process_.waitForFinished(5000)) {
-            // SIGTERM is not enough, which matters because a clean exit is what unlinks the socket; the
-            // test reports it rather than treating a killed compositor as a clean one.
-            killed_ = true;
-            process_.kill();
-            process_.waitForFinished(2000);
-        }
-        collectOutput();
-    }
-
-    bool wasKilled() const { return killed_; }
-    QString tail() const { return log_; }
-
-private:
-    QString waitForSocket() {
-        QElapsedTimer timer;
-        timer.start();
-        while (timer.elapsed() < 20000) {
-            for (const QString& candidate : quantum::niri::niriSocketFiles()) {
-                if (candidate != sessionSocket_) {
-                    return candidate;
-                }
-            }
-            QTest::qWait(25);
-            collectOutput();
-        }
-        return QString();
-    }
-
-    void collectOutput() {
-        const QString text = QString::fromUtf8(process_.readAll());
-        log_ += text;
-        // Only the tail is ever shown, so the log cannot grow without bound while the compositor runs.
-        if (log_.size() > 4000) {
-            log_ = log_.right(4000);
-        }
-    }
-
-    QProcess process_;
-    QString sessionSocket_;
-    QString socket_;
-    QString log_;
-    bool killed_ = false;
-};
+// A compositor run and stopped by this test: NestedNiri, from support/NestedCompositor.h.
 
 }  // namespace
 
@@ -173,7 +87,7 @@ void NiriLiveRestartTest::initTestCase() {
     }
 
     configPath_ = directory_.filePath(QStringLiteral("config.kdl"));
-    const QByteArray contents(testConfig);
+    const QByteArray contents(nestedCompositorConfig);
     QFile config(configPath_);
     QVERIFY2(config.open(QIODevice::WriteOnly | QIODevice::Text), qPrintable(config.errorString()));
     QCOMPARE(config.write(contents), static_cast<qint64>(contents.size()));

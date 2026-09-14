@@ -29,6 +29,7 @@
 #include "niri/NiriIPC.h"
 #include "niri/NiriProtocol.h"
 
+#include "AbstractIpcSocket.h"
 #include "SnapshotReconcile.h"
 
 #include <QDir>
@@ -229,33 +230,10 @@ LayerRequests parseRequests(const QString& transcript) {
     return parsed;
 }
 
-// The frozen abstract socket name as an address. The leading NUL is what makes it abstract rather than a
-// filesystem entry, and /proc prints that NUL as '@' — one of them, exactly as `ss -x` does.
-QString abstractSocketRow()
-{
-    return QStringLiteral("@%1").arg(QString::fromLatin1(quantum::ipc::SocketName));
-}
-
-// The socket inode the kernel has bound to that name, or nothing when no process holds it.
-std::optional<qint64> boundSocketInode()
-{
-    QFile table(QStringLiteral("/proc/net/unix"));
-    if (!table.open(QIODevice::ReadOnly))
-        return std::nullopt;
-
-    const QList<QByteArray> lines = table.readAll().split('\n');
-    for (const QByteArray& line : lines) {
-        const QList<QByteArray> fields = line.simplified().split(' ');
-        // Eight columns: the counters, the flags, the type and state, the inode and the path (`Num RefCount
-        // Protocol Flags Type St Inode Path`). A row with no path is a connected socket rather than a listening
-        // one, which is why the last field is compared rather than trusted to exist.
-        if (fields.size() < 8)
-            continue;
-        if (fields.constLast() == abstractSocketRow().toUtf8())
-            return fields.at(6).toLongLong();
-    }
-    return std::nullopt;
-}
+// The frozen abstract socket name as an address, and the inode bound to it: support/AbstractIpcSocket.h.
+// The socket name is per user rather than per process, so "the shell is listening" is ambiguous whenever
+// more than one shell could exist — a second Quantum Shell binds nothing and carries on, and then every
+// `qsctl` below would be answered by whichever process got there first. The inode is what disambiguates.
 
 // One workspace as a line of text, from either source, so that the two can be compared: niri writes
 // `is_focused` where the shell's state writes `isFocused`, and niri states an id as a number where the shell

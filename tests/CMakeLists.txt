@@ -33,7 +33,7 @@ target_link_libraries(niri-live-action-test PRIVATE Qt6::Test quantum-shell-niri
 # kills it and starts another, so it needs a session to nest in and puts a window on screen: built
 # always, registered only when explicitly asked for.
 add_executable(niri-live-restart-test integration/niri_live_restart_test.cpp)
-target_link_libraries(niri-live-restart-test PRIVATE Qt6::Test quantum-shell-niri)
+target_link_libraries(niri-live-restart-test PRIVATE Qt6::Test quantum-shell-niri qs-test-support)
 
 # The proof that the bar is a real layer surface: it starts the built shell, waits for its surface to
 # reach the compositor, and checks the surface against the compositor's own layer list and against the
@@ -51,6 +51,19 @@ add_executable(niri-live-layershell-test integration/niri_live_layershell_test.c
 target_link_libraries(niri-live-layershell-test PRIVATE Qt6::Test quantum-shell-niri quantum-shell-ipc
                                                        qs-test-support)
 target_compile_definitions(niri-live-layershell-test PRIVATE
+    QS_SHELL_BINARY="$<TARGET_FILE:quantum-shell>"
+    QS_SHELL_PLUGIN_PATH="${CMAKE_BINARY_DIR}/plugins"
+    QS_QSCTL_BINARY="$<TARGET_FILE:qsctl>")
+
+# The proof that restart survival reaches the shell itself: a nested niri is started, the built shell
+# runs against it and its bar is confirmed in that compositor; the compositor is stopped and the
+# shell's actual death is observed; a second compositor comes up on the socket path niri's naming rule
+# guarantees to differ; and the shell is started again, with its bar in the new compositor and its IPC
+# answering about the new session. Same opt-ins as the restart test: it starts windows on screen.
+add_executable(niri-live-shell-restart-test integration/niri_live_shell_restart_test.cpp)
+target_link_libraries(niri-live-shell-restart-test PRIVATE Qt6::Test quantum-shell-niri quantum-shell-ipc
+                                                           qs-test-support)
+target_compile_definitions(niri-live-shell-restart-test PRIVATE
     QS_SHELL_BINARY="$<TARGET_FILE:quantum-shell>"
     QS_SHELL_PLUGIN_PATH="${CMAKE_BINARY_DIR}/plugins"
     QS_QSCTL_BINARY="$<TARGET_FILE:qsctl>")
@@ -317,6 +330,9 @@ if(NOT QS_NIRI_SOCKET STREQUAL "" AND NOT QS_NIRI_RESTART_TESTS STREQUAL "")
     add_test(NAME niri-live-restart-test COMMAND niri-live-restart-test)
     set_tests_properties(niri-live-restart-test PROPERTIES RESOURCE_LOCK niri-desktop)
     message(STATUS "niri restart test registered: it starts a niri of its own and restarts it")
+    add_test(NAME niri-live-shell-restart-test COMMAND niri-live-shell-restart-test)
+    set_tests_properties(niri-live-shell-restart-test PROPERTIES RESOURCE_LOCK niri-desktop)
+    message(STATUS "niri shell restart test registered: it drives the built shell across a compositor restart")
 else()
     message(STATUS
         "niri restart test not registered: set QS_NIRI_RESTART_TESTS=1 to run the test that starts "

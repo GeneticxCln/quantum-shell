@@ -81,8 +81,10 @@ Real files in this repository:
                          `Config`, not literals
   tools/qs-scan/         qs-scan, the repository real-code gate: scanner source + pattern table
   tests/unit/            unit tests for src/niri; the compositor's end of the socket is a test double
-  tests/integration/     the four tests that run against a real compositor: two that only read, one
-                         that acts on the session, and one that starts and restarts its own
+  tests/integration/     the five tests that run against a real compositor: two that only read, one
+                         that acts on the session, and two that start and restart their own — one
+                         reattaching its own connections, one driving the built shell across the
+                         restart
   tests/scan/            black-box cases for the gate
   tests/fixtures/        input trees for those cases; never compiled
   tests/*.cmake          the two slot-order checks: a binary's slots read from the binary itself, then
@@ -212,13 +214,18 @@ Tests:            ctest, twenty-five tests before anything opt-in — qs-scan-se
                   had gone — two core dumps, one stack-canary abort and one segmentation fault.
                   niri-ipc-test pins that contract by name,
                   `deliversAReplyAfterTheSendingScopeHasEnded`, with the compositor's end of the socket
-                  withholding the reply until after the caller's deadline has expired. niri-live-restart-test starts a nested niri of its own, kills it and
-                  starts another, and needs the separate QS_NIRI_RESTART_TESTS (30 with the session
-                  tests registered too, 28 without them: the two opt-ins are independent and each adds
-                  its own tests, and all three take a resource lock so a parallel run never has two of
-                  them acting on the desktop at once). Those three are deliberately outside the order
-                  checks: reordering them would change the desktop more times than their opt-in asks
-                  for, so they are audited by reading instead
+                  withholding the reply until after the caller's deadline has expired.
+                  niri-live-restart-test starts a nested niri of its own, kills it and starts another,
+                  and needs the separate QS_NIRI_RESTART_TESTS. niri-live-shell-restart-test drives the
+                  built shell binary across the same shape of outage: a bar confirmed in one nested
+                  compositor, the compositor stopped and the shell's actual death observed (prompt,
+                  exit 1, no signal, IPC socket released — nonzero because a session supervisor restarts
+                  a shell that reported failure), a second compositor on the socket path niri's naming
+                  rule guarantees to differ, and a second shell whose bar is listed in it and whose
+                  `qsctl state` agrees with the new session. The counts: 27 registered with a socket,
+                  29 with either opt-in (each adds its own two), 31 with both, 25 without a socket; all
+                  three acting tests take the resource lock so a parallel run never has two of them on
+                  the desktop at once, and they sit outside the order checks for the same reason
 Version control:  git, branch main; history begins at the first commit of the working slice, published to
                   GitHub (remote `origin`) in the same step, so the checkout starts clean rather than
                   accumulating uncommitted work
@@ -325,10 +332,11 @@ Consequences:
   Implementation Target. `src/niri/` covers that target's niri IPC step and is verified against a
   running niri; `qs-scan` is real, working tooling; and the target now renders a surface: a bar of
   real workspace state and a clock, on the top layer of a live niri. The target is met. Phase 0 is
-  still not, but on one count rather than three: the shell displays a bar on niri, reloads its
-  configuration without restarting, and answers `qsctl`, and it logs; what is missing is that nothing
-  tests the shell's survival of a compositor restart *through the running shell* — recovery is proven
-  for the connection layer alone, by a test that starts and restarts a niri of its own.
+  met: the shell displays a bar on niri, reloads its configuration without restarting, answers `qsctl`,
+  logs, and survives a compositor restart — survival now proven through the running shell itself by
+  niri-live-shell-restart-test (an observed prompt death with the socket released, then a second start
+  listing its bar in the new compositor and answering `qsctl` about the new session), on top of the
+  connection layer's own proof in niri-live-restart-test. Phase 1 is next.
 - The gate requires `tools`, `CMakeLists.txt`, `src`, `qml` and `tests`, and reads all five: `src`
   and `qml` were added in the same change that created them, as the rule above requires.
 - One decision is pending and must not be made by an agent unilaterally: whether the Qt floor is

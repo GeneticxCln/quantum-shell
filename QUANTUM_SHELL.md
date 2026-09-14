@@ -1569,13 +1569,31 @@ compositor's layer list and against the shell's own protocol traffic — and it 
 exercises `src/wayland/` at all, since a shell integration cannot be loaded without a compositor to load
 it against.
 
-The last, `niri-live-restart-test`, needs `QS_NIRI_RESTART_TESTS` as well as `$NIRI_SOCKET` — the
-two opt-ins are independent — and it is separate for a bigger reason: it starts a niri of its own nested in the session, kills it, starts another, and checks that
-the connection layer found the new socket, reattached and rebuilt its state without being told. That
-is the only way to prove rediscovery, because a real restart moves the socket — niri puts its own
-process id in the name — and a test with a fixed path cannot fail on that. A window on the screen for
-a few seconds is the price. It skips, with the reason, when there is no niri on `PATH`, no Wayland
-session to nest in, or no `$NIRI_SOCKET` to tell its own compositor apart from the session's.
+The last two, `niri-live-restart-test` and `niri-live-shell-restart-test`, need `QS_NIRI_RESTART_TESTS`
+as well as `$NIRI_SOCKET` — the two opt-ins are independent — and they are separate for a bigger reason:
+they start a niri of their own nested in the session, kill it, and start another. The first checks that
+the connection layer found the new socket, reattached and rebuilt its state without being told. The
+second drives the built shell binary across the same shape of outage, and it exists because restart
+survival for a Wayland client cannot mean reattaching a display: a Wayland connection that loses its
+compositor is finished, so the design's rule that `QGuiApplication` exits when the display drops is the
+shell's half of recovery, and a fresh start into the new session is the other half. The test proves that
+end to end — a bar confirmed in one nested compositor's layer list and its `qsctl state` reporting that
+session; the compositor stopped and the shell's actual death observed rather than assumed; a second
+compositor, which by niri's socket-naming rule cannot reuse the path; and a second shell started the way
+a session manager would start it, whose bar is listed in the new compositor and whose `qsctl state`
+agrees with the new session's own workspaces answer.
+
+What the death assertion pins is measured, not hoped for: the shell ends within milliseconds of the
+compositor stopping (20–23 ms across four runs), is killed by no signal, and its abstract IPC socket is
+released with it — a corpse holding the frozen name would otherwise answer the next session's `qsctl`.
+The exit status is 1, and the test asserts that on purpose rather than tolerating it: a session
+supervisor configured to restart on failure brings the shell back because it reported failure, while a
+shell that reported success would be lying about its session. These are the facts from the runs, and
+which display connection initiates the exit — Qt's own or the GTK platform theme's, whose
+`Gdk-Message: Error reading events from display: Broken pipe` was in the first run's stderr — is not
+pinned, because the observable contract is what the shell owes. It skips, with the reason, when there
+is no niri on `PATH`, no Wayland session to nest in, or no `$NIRI_SOCKET` to tell its own compositor
+apart from the session's; it takes the same resource lock as the other tests that change the desktop.
 
 ### Public names (`public-names-test`)
 
@@ -1705,10 +1723,12 @@ ignored.
 The IPC server and the logging landed with it, and they are described where the design is: § IPC for the
 socket, the frames and the verbs, and § Logging for what a record is and where it goes. The exit criteria
 below are therefore unmet on one count rather than three — the shell displays a bar on niri, reloads config
-without restarting, and responds to `qsctl`; what is missing is that restart survival is proven for the
-connection layer, by `niri-live-restart-test` starting and restarting a nested niri, and not yet through a
-running shell, whose bar and state would have to come back after a compositor it was attached to went away.
-The bar's route is in that list no longer either: `niri-live-layershell-test` covers it — the surface in
+without restarting, and responds to `qsctl`; and it survives a compositor restart. The survival was the
+count left open longest — first proven for the connection layer alone (`niri-live-restart-test`
+reattaching its own connections), then through the running shell
+(`niri-live-shell-restart-test`, described with the live tests above): a bar in the compositor before,
+an observed death when it stops, and a bar and a correct `qsctl state` in the compositor after. The bar's
+route is in that list no longer either: `niri-live-layershell-test` covers it — the surface in
 the compositor's layer list, the anchors and the exclusive zone on the wire, the configure acknowledged
 before any buffer, and, since the IPC landed, three cases that are the shell answering `qsctl` while the
 compositor watches. The config reload has three tests of its own — `config-test` and
