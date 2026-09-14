@@ -94,6 +94,11 @@ void NiriEventStream::handleReadyRead() {
     buffer_ += socket_->readAll();
     for (const QByteArray& line : takeCompleteLines(buffer_)) {
         handleLine(line);
+        // A refused acknowledgement ends this connection. Do not let a later line in the same read
+        // acknowledge it again after fail() has discarded the subscription.
+        if (!isConnected()) {
+            return;
+        }
     }
     const QString oversized = oversizedBufferReason(buffer_);
     if (!oversized.isEmpty()) {
@@ -122,6 +127,11 @@ void NiriEventStream::handleLine(const QByteArray& line) {
 void NiriEventStream::handleAck(const Reply& reply) {
     if (!reply.isOk()) {
         fail(QStringLiteral("niri refused the event stream: %1").arg(reply.describe()));
+        return;
+    }
+    if (!reply.value.isString() || reply.value.toString() != QLatin1StringView("Handled")) {
+        fail(QStringLiteral("niri returned an unexpected event-stream acknowledgement: %1")
+                 .arg(reply.describe()));
         return;
     }
     streaming_ = true;
@@ -256,6 +266,10 @@ void NiriEventStream::handleEvent(const QString& name, const QJsonValue& fields)
 void NiriEventStream::fail(const QString& reason) {
     streaming_ = false;
     buffer_.clear();
+    // A fatal protocol failure invalidates the state just as a transport disconnect does. Abort
+    // before reporting the failure so observers have already received the socket's disconnected
+    // notification and cannot continue presenting the previous subscription as connected.
+    socket_->abort();
     emit streamFailed(reason);
 }
 

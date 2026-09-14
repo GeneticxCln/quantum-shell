@@ -226,16 +226,22 @@ void NiriState::applyWindowOpenedOrChanged(const NiriWindow& window) {
     }
 
     const QList<NiriWindow> before = this->windows();
-    windows_.insert(window.id(), window);
+    const NiriWindow focusedBefore = focusedWindow();
 
-    // niri documents this event as authoritative about focus: a focused window means no other window
-    // is focused.
+    // Apply the whole event before comparing or notifying. Calling applyFocus after the insertion
+    // loses the old focused value and can also announce the same window-list change twice.
     if (window.isFocused()) {
-        applyFocus(window.id(), true);
+        for (NiriWindow& existing : windows_) {
+            existing.setFocused(false);
+        }
     }
+    windows_.insert(window.id(), window);
 
     if (this->windows() != before) {
         emit windowsChanged();
+    }
+    if (focusedWindow() != focusedBefore) {
+        emit focusedWindowChanged();
     }
 }
 
@@ -245,6 +251,7 @@ void NiriState::applyWindowClosed(quint64 windowId) {
     }
 
     const QList<NiriWindow> before = this->windows();
+    const NiriWindow focusedBefore = focusedWindow();
     const NiriWindow closed = windows_.take(windowId);
     if (!closed.isValid()) {
         return;
@@ -253,11 +260,16 @@ void NiriState::applyWindowClosed(quint64 windowId) {
     // The focused window is gone; focus is nowhere until an event says otherwise. Even if another
     // focus event is already on its way, claiming a vanished window is focused would be wrong now.
     if (closed.isFocused()) {
-        applyFocus(0, false);
+        for (NiriWindow& remaining : windows_) {
+            remaining.setFocused(false);
+        }
     }
 
     if (this->windows() != before) {
         emit windowsChanged();
+    }
+    if (focusedWindow() != focusedBefore) {
+        emit focusedWindowChanged();
     }
 }
 

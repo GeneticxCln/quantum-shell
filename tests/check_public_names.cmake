@@ -1,3 +1,7 @@
+cmake_minimum_required(VERSION 3.31...4.4)
+
+# Script-mode checks do not inherit the root project's policies, including IN_LIST support.
+
 # Checks the project's test-facing public names — the ctest names and the environment variables in
 # tests/public_names.cmake — against the documentation and the build files that use them.
 #
