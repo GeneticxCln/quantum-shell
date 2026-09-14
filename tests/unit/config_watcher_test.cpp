@@ -42,6 +42,7 @@ private slots:
 
     void aMissingFileIsNotAProblem();
     void appliesTheFileThatIsAlreadyThere();
+    void doesNotMissAChangeMadeDuringInitialDiagnosis();
     void appliesAFileWrittenWhileTheShellIsRunning();
     void appliesAFileInADirectoryThatDidNotExistYet();
     void survivesAnAtomicReplaceWithoutEverAnnouncingTheGap();
@@ -148,6 +149,39 @@ void ConfigWatcherTest::appliesTheFileThatIsAlreadyThere() {
     // once the file has been read.
     QCOMPARE(config_->bar()->height(), 44);
     QCOMPARE(diagnosedSpy.count(), 1);
+}
+
+void ConfigWatcherTest::doesNotMissAChangeMadeDuringInitialDiagnosis() {
+    QVERIFY(replace(configFile(44)));
+
+    const QString path = configPath();
+    const QByteArray next = configFile(56);
+    const auto callbackRuns = std::make_shared<int>(0);
+    const auto writeSucceeded = std::make_shared<bool>(false);
+    QObject::connect(watcher_.get(), &ConfigWatcher::diagnosed, watcher_.get(),
+                     [path, next, callbackRuns, writeSucceeded](const QStringList&) {
+                         if (*callbackRuns != 0)
+                             return;
+                         ++*callbackRuns;
+
+                         QFile file(path);
+                         if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                             return;
+                         *writeSucceeded = file.write(next) == next.size();
+                         file.close();
+                     });
+
+    watcher_->start();
+
+    // The first read is still synchronous even though its watches and connections were installed first.
+    QCOMPARE(config_->bar()->height(), 44);
+    QCOMPARE(*callbackRuns, 1);
+    QVERIFY(*writeSucceeded);
+
+    // The write happened from diagnosed itself. A watcher installed after apply() would miss this event
+    // and leave the bar at 44 forever.
+    QTRY_COMPARE(config_->bar()->height(), 56);
+    QCOMPARE(*callbackRuns, 1);
 }
 
 void ConfigWatcherTest::appliesAFileWrittenWhileTheShellIsRunning() {

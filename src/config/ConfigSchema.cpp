@@ -3,6 +3,7 @@
 #include <toml++/toml.hpp>
 
 #include <exception>
+#include <limits>
 #include <optional>
 #include <string_view>
 
@@ -81,13 +82,14 @@ void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warning
                                     .arg(bar.height));
                 continue;
             }
-            if (*height < 1) {
-                // Zero is not a way of declining a height: a surface still has to be given one, and it is
-                // the value the compositor reserves from the tiling area.
-                warnings.append(QStringLiteral("%1: %2 is not a height the bar can have (it must be at "
-                                               "least 1); keeping %3")
+            if (*height < 1 || *height > std::numeric_limits<int>::max()) {
+                // Validate both bounds before narrowing TOML's int64 to the int property consumed by
+                // QML and the exclusive zone. A positive file value must never wrap into a negative one.
+                warnings.append(QStringLiteral("%1: %2 is not a height the bar can have (it must be "
+                                               "between 1 and %3); keeping %4")
                                     .arg(path)
                                     .arg(*height)
+                                    .arg(std::numeric_limits<int>::max())
                                     .arg(bar.height));
                 continue;
             }

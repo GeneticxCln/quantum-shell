@@ -60,6 +60,8 @@ private slots:
     void reportsAnEventWhosePayloadCannotBeRead();
     void keepsStreamingAfterAProblemLine();
     void refusesAnAckThatIsAnError();
+    void refusesAnUnexpectedSuccessfulAck();
+    void fatalFramingFailureDisconnectsAndForgetsState();
     void theStateFollowsTheStream();
     void disconnectForgetsTheState();
 
@@ -398,6 +400,44 @@ void NiriEventStreamTest::refusesAnAckThatIsAnError() {
     QVERIFY(!streamed);
     QVERIFY(!stream->isStreaming());
     QVERIFY(failure.contains(QStringLiteral("error parsing request")));
+}
+
+void NiriEventStreamTest::refusesAnUnexpectedSuccessfulAck() {
+    for (const QByteArray& reply : {QByteArray(R"json({"Ok":"wrong"})json"),
+                                   QByteArray(R"json({"Ok":{}})json"),
+                                   QByteArray(R"json({"Ok":null})json")}) {
+        FakeNiriServer server;
+        QVERIFY2(server.listen(), qPrintable(server.serverError()));
+        server.setReply(QStringLiteral("EventStream"), reply);
+        NiriEventStream stream;
+        QSignalSpy failed(&stream, &NiriEventStream::streamFailed);
+        QSignalSpy streamed(&stream, &NiriEventStream::streaming);
+        stream.connectToCompositor(server.path());
+        QVERIFY(waitFor([&failed, &streamed] { return !failed.isEmpty() || !streamed.isEmpty(); }));
+        QCOMPARE(failed.count(), 1);
+        QCOMPARE(streamed.count(), 0);
+        QVERIFY(!stream.isStreaming());
+        QVERIFY(!stream.isConnected());
+    }
+}
+
+void NiriEventStreamTest::fatalFramingFailureDisconnectsAndForgetsState() {
+    NiriState state;
+    state.observe(*stream_);
+    server_->writeRaw(eventLine(
+        QStringLiteral("WindowsChanged"),
+        QJsonObject{{QStringLiteral("windows"), array({windowObject(7, QStringLiteral("app.one"), 11)})}}));
+    QVERIFY(waitFor([&state] { return state.windows().size() == 1; }));
+
+    QSignalSpy failed(stream_.get(), &NiriEventStream::streamFailed);
+    QSignalSpy disconnected(stream_.get(), &NiriEventStream::disconnected);
+    server_->writeRaw(QByteArray(quantum::niri::maximumLineBytes + 1, 'x'));
+    QVERIFY(waitFor([&failed] { return !failed.isEmpty(); }));
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(disconnected.count(), 1);
+    QVERIFY(!stream_->isStreaming());
+    QVERIFY(!stream_->isConnected());
+    QVERIFY(state.windows().isEmpty());
 }
 
 void NiriEventStreamTest::theStateFollowsTheStream() {

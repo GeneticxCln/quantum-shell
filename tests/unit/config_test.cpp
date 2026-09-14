@@ -13,6 +13,7 @@
 #include <QTest>
 
 #include <array>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -175,15 +176,25 @@ void ConfigTest::refusesANamespaceOutsideTheFrozenPrefix() {
 }
 
 void ConfigTest::refusesAHeightTheBarCannotHave() {
-    // Zero is not a way of declining a height: the surface still has to be given one, and it is the value
-    // the compositor reserves from the tiling area. A negative height is not a size at all.
-    for (const QByteArray& line : {QByteArray("height = 0\n"), QByteArray("height = -3\n")}) {
-        const ParseResult result = parseConfig(QByteArray("schema_version = 1\n[bar]\n") + line);
+    // The logical height must be positive and representable by the int property QML reads. A TOML
+    // integer is wider: validating only the lower bound lets a positive input wrap during narrowing.
+    const qint64 largestHeight = std::numeric_limits<int>::max();
+    for (const qint64 height : {qint64{0}, qint64{-3}, largestHeight + 1,
+                               std::numeric_limits<qint64>::max()}) {
+        const ParseResult result = parseConfig(QByteArray("schema_version = 1\n[bar]\nheight = ")
+                                               + QByteArray::number(height) + '\n');
         QVERIFY(result.errors.isEmpty());
         QCOMPARE(result.warnings.size(), 1);
         QVERIFY(mentions(result.warnings, QStringLiteral("bar.height")));
         QCOMPARE(result.values.bar.height, coveredDefaultHeight);
     }
+
+    // The representable upper boundary is still accepted; the guard must not reject it by one.
+    const ParseResult boundary = parseConfig(QByteArray("schema_version = 1\n[bar]\nheight = ")
+                                             + QByteArray::number(largestHeight) + '\n');
+    QVERIFY(boundary.errors.isEmpty());
+    QVERIFY(boundary.warnings.isEmpty());
+    QCOMPARE(boundary.values.bar.height, std::numeric_limits<int>::max());
 }
 
 void ConfigTest::refusesAFileFromASchemaVersionItDoesNotKnow() {

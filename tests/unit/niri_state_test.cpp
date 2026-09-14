@@ -74,6 +74,7 @@ private slots:
     void holdsTheWholeWindowSetItIsGiven();
     void upsertsAnOpenedOrChangedWindow();
     void openingAFocusedWindowUnfocusesTheOthers();
+    void focusedWindowUpdatesNotifyExactlyOnce();
     void closingTheFocusedWindowLeavesNothingFocused();
     void closingAnUnknownWindowChangesNothing();
     void focusMovesAndClears();
@@ -198,24 +199,65 @@ void NiriStateTest::openingAFocusedWindowUnfocusesTheOthers() {
     state.applyWindowsChanged({window(1, QStringLiteral("app.one"), 1, true),
                                window(2, QStringLiteral("app.two"), 1)});
     QCOMPARE(state.focusedWindow().id(), quint64{1});
+    SignalCounter counter(state);
 
     state.applyWindowOpenedOrChanged(window(3, QStringLiteral("app.three"), 1, true));
 
     QCOMPARE(state.focusedWindow().id(), quint64{3});
     QVERIFY(!state.window(1).isFocused());
     QVERIFY(!state.window(2).isFocused());
+    QCOMPARE(counter.windows, 1);
+    QCOMPARE(counter.focus, 1);
+}
+
+void NiriStateTest::focusedWindowUpdatesNotifyExactlyOnce() {
+    NiriState state;
+    SignalCounter counter(state);
+    const NiriWindow focused = window(4, QStringLiteral("app.one"), 1, true);
+    state.applyWindowOpenedOrChanged(focused);
+    QCOMPARE(counter.windows, 1);
+    QCOMPARE(counter.focus, 1);
+
+    // A duplicate is not a property change.
+    state.applyWindowOpenedOrChanged(focused);
+    QCOMPARE(counter.windows, 1);
+    QCOMPARE(counter.focus, 1);
+
+    QJsonObject changed = windowObject(4, QStringLiteral("app.one"), 1, true);
+    changed.insert(QStringLiteral("title"), QStringLiteral("changed focused title"));
+    state.applyWindowOpenedOrChanged(NiriWindow::fromJson(changed));
+    QCOMPARE(state.focusedWindow().title(), QStringLiteral("changed focused title"));
+    QCOMPARE(counter.windows, 2);
+    QCOMPARE(counter.focus, 2);
+
+    // An unrelated window does not change the focused-window value.
+    state.applyWindowOpenedOrChanged(window(5, QStringLiteral("app.two"), 1));
+    QCOMPARE(counter.windows, 3);
+    QCOMPARE(counter.focus, 2);
+
+    changed.insert(QStringLiteral("is_focused"), false);
+    state.applyWindowOpenedOrChanged(NiriWindow::fromJson(changed));
+    QVERIFY(!state.focusedWindow().isValid());
+    QCOMPARE(counter.windows, 4);
+    QCOMPARE(counter.focus, 3);
 }
 
 void NiriStateTest::closingTheFocusedWindowLeavesNothingFocused() {
     NiriState state;
     state.applyWindowsChanged({window(1, QStringLiteral("app.one"), 1),
                                window(2, QStringLiteral("app.two"), 1, true)});
+    SignalCounter counter(state);
 
     state.applyWindowClosed(2);
 
     QVERIFY(!state.focusedWindow().isValid());
     QVERIFY(!state.window(1).isFocused());
     QCOMPARE(state.windows().size(), 1);
+    QCOMPARE(counter.windows, 1);
+    QCOMPARE(counter.focus, 1);
+    state.applyWindowClosed(2);
+    QCOMPARE(counter.windows, 1);
+    QCOMPARE(counter.focus, 1);
 }
 
 void NiriStateTest::closingAnUnknownWindowChangesNothing() {

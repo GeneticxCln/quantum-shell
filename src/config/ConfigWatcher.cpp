@@ -63,11 +63,9 @@ QString ConfigWatcher::defaultPath() {
 }
 
 void ConfigWatcher::start() {
-    // Synchronous, and the only read that is: this runs before the QML engine loads, so the bar is built
-    // with the values in the file instead of being built with the defaults and resized a moment later.
-    apply(readAndParse(path_));
-
-    rewatch();
+    // Install the connections and watches before the initial read: diagnosed is synchronous, so a
+    // listener can change the file from that callback and the resulting filesystem event must not be
+    // missed while start() is still setting up.
     // Both signals, because either can be the one that fires: an in-place write changes the file, an
     // atomic replace changes the directory. They lead to the same place.
     QObject::connect(&watcher_, &QFileSystemWatcher::fileChanged, this,
@@ -76,6 +74,11 @@ void ConfigWatcher::start() {
                      &ConfigWatcher::onWatchedPathChanged);
     QObject::connect(&read_, &QFutureWatcher<ParseResult>::finished, this,
                      &ConfigWatcher::readFinished);
+    rewatch();
+
+    // Synchronous, and the only read that is: this runs before the QML engine loads, so the bar is built
+    // with the values in the file instead of being built with the defaults and resized a moment later.
+    apply(readAndParse(path_));
 }
 
 void ConfigWatcher::onWatchedPathChanged() {
@@ -145,6 +148,7 @@ void ConfigWatcher::rewatch() {
         wanted.append(directory);
 
     QStringList current = watcher_.files();
+    current.append(watcher_.directories());
     current.sort();
     wanted.sort();
     // Only when the set really changed. Removing and re-adding the same directory on every event would

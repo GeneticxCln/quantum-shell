@@ -1,3 +1,7 @@
+cmake_minimum_required(VERSION 3.31...4.4)
+
+# Script-mode checks do not inherit the root project's policies, including IN_LIST support.
+
 # Runs each test binary's slots in a random order, so that a slot which depends on state an earlier slot
 # left behind fails here instead of passing because the file happens to declare them in a working order.
 #
