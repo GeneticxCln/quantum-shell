@@ -16,9 +16,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        compiler: [g++, clang++]
+        include:
+          - compiler: g++
+            c-compiler: gcc
+          - compiler: clang++
+            c-compiler: clang
     env:
-      CC: ${{ matrix.compiler }}
+      # The C++ compiler is what the matrix varies. `CC` must be the matching C compiler rather than
+      # the same string: the project enables C for wayland-scanner's output, and CMake refuses a C++
+      # compiler as `CMAKE_C_COMPILER` ("The CMAKE_C_COMPILER is set to a C++ compiler"), which is
+      # what a `CC: g++` matrix produced — found by running this workflow's steps locally, where the
+      # configure step failed before building anything.
+      CC: ${{ matrix.c-compiler }}
       CXX: ${{ matrix.compiler }}
     steps:
       - name: Check out
