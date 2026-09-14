@@ -60,6 +60,7 @@ private slots:
     void reportsAnEventWhosePayloadCannotBeRead();
     void keepsStreamingAfterAProblemLine();
     void refusesAnAckThatIsAnError();
+    void doesNotAcknowledgeAgainAfterARefusedOneInTheSameRead();
     void refusesAnUnexpectedSuccessfulAck();
     void fatalFramingFailureDisconnectsAndForgetsState();
     void theStateFollowsTheStream();
@@ -400,6 +401,35 @@ void NiriEventStreamTest::refusesAnAckThatIsAnError() {
     QVERIFY(!streamed);
     QVERIFY(!stream->isStreaming());
     QVERIFY(failure.contains(QStringLiteral("error parsing request")));
+}
+
+void NiriEventStreamTest::doesNotAcknowledgeAgainAfterARefusedOneInTheSameRead() {
+    // One read can carry more than the refused acknowledgement: niri's lines are only bounded by the
+    // sender, and the fatal line is not the last byte the client will see. Whatever follows must not
+    // be taken for a second ack once fail() has torn the subscription down — otherwise a later
+    // `{"Ok":"Handled"}` would mark a dead connection as streaming again.
+    FakeNiriServer server;
+    QVERIFY2(server.listen(), qPrintable(server.serverError()));
+    server.setReply(QStringLiteral("EventStream"), QByteArray("{\"Err\":\"error parsing request\"}"));
+    server.setDeferReplies(true);
+
+    NiriEventStream stream;
+    QSignalSpy failed(&stream, &NiriEventStream::streamFailed);
+    QSignalSpy streamed(&stream, &NiriEventStream::streaming);
+    QSignalSpy connected(&stream, &NiriEventStream::connected);
+    stream.connectToCompositor(server.path());
+    QVERIFY(waitFor([&connected] { return !connected.isEmpty(); }));
+    QVERIFY(waitFor([&server] { return server.receivedRequests().size() == 1; }));
+
+    // Back to back with no event loop in between, so the client reads both lines in one readyRead.
+    server.flushReplies();
+    server.writeRaw(QByteArray("{\"Ok\":\"Handled\"}\n"));
+
+    QVERIFY(waitFor([&failed] { return !failed.isEmpty(); }));
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(streamed.count(), 0);
+    QVERIFY(!stream.isStreaming());
+    QVERIFY(!stream.isConnected());
 }
 
 void NiriEventStreamTest::refusesAnUnexpectedSuccessfulAck() {
