@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build and test (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    env:
+      CC: ${{ matrix.compiler }}
+      CXX: ${{ matrix.compiler }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      # The CMake shipped in the runner image can predate the 3.31 floor this project requires, so
+      # the version is pinned here rather than inherited from the image.
+      - name: Install CMake 4.4.3
+        run: |
+          curl -fsSL -o /tmp/cmake.tar.gz \
+            https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-x86_64.tar.gz
+          tar -xzf /tmp/cmake.tar.gz -C /tmp
+          echo "/tmp/cmake-4.4.3-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      # The Qt in the runner image is older than this project's floor, and the floor is pinned rather
+      # than inferred: building against a different Qt minor is the failure mode the risk register
+      # calls out.
+      - name: Install Qt 6.11.2
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.2
+          cache: true
+
+      - name: Show toolchain
+        run: |
+          cmake --version
+          "$CXX" --version | head -1
+          qmake6 --version | tail -1 || true
+
+      - name: Configure
+        run: cmake --preset ci
+
+      - name: Build
+        run: cmake --build --preset ci
+
+      # The gate on its own, so a violation is readable in the job log instead of only appearing as a
+      # failing test. It runs again inside ctest, which is the copy that fails the build.
+      - name: Repository scan
+        run: ./build/ci/qs-scan --root . --require tools --require CMakeLists.txt --require src --require tests --list
+
+      - name: Test
+        run: ctest --preset ci
+
+  sanitizers:
+    name: sanitizers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Install CMake 4.4.3
+        run: |
+          curl -fsSL -o /tmp/cmake.tar.gz \
+            https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-x86_64.tar.gz
+          tar -xzf /tmp/cmake.tar.gz -C /tmp
+          echo "/tmp/cmake-4.4.3-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Install Qt 6.11.2
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.2
+          cache: true
+
+      - name: Configure
+        run: cmake --preset asan
+
+      - name: Build
+        run: cmake --build --preset asan
+
+      - name: Test
+        run: ctest --preset asan

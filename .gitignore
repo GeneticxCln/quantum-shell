@@ -1,0 +1,22 @@
+# Build output. CMakePresets.json puts every preset's binary directory under build/ at the root, and
+# any other build tree carries the same "build" prefix qs-scan uses to recognise build output. The
+# leading slash keeps the fixture trees under tests/ tracked, including build_fixture/build-here.
+/build*/
+
+# CMake's own in-tree markers, so a configure run with -B . cannot commit a cache. Objects and
+# binaries from such a run are not covered: the presets are the supported way to build this project.
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+
+# Generated or user-local: the compile database is written by CMAKE_EXPORT_COMPILE_COMMANDS, .cache
+# is where clangd keeps its index of it, and CMakeUserPresets.json is deliberately not shared.
+compile_commands.json
+.cache/
+CMakeUserPresets.json
+
+# Client metadata: identifies this checkout to the tool that created it. Not authored source, and
+# already walked by the scan, which reads it as a normal file.
+.freebuff/
+.claude/
