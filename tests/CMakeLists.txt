@@ -159,7 +159,8 @@ set(QS_ORDER_CHECK_COSTS
     niri-state-test=11
     niri-keyboard-layouts-test=10
     niri-version-test=10
-    niri-output-test=9)
+    niri-output-test=9
+    bar-interaction-test=401)
 set(QS_ORDER_CHECK_SHARDS 4)
 
 # The table, checked in both directions before it is used. A target of the check with no measured cost

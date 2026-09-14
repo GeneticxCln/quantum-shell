@@ -1,7 +1,11 @@
 #include "niri/NiriActions.h"
 
+#include "app/Logging.h"
+#include "niri/NiriQmlModule.h"
+
 #include <QJsonArray>
 #include <QJsonValue>
+#include <QQmlEngine>
 
 #include <utility>
 
@@ -11,11 +15,38 @@ namespace {
 // niri's `WorkspaceReferenceArg::Index` and `LayoutSwitchTarget::Index` are both `u8`.
 constexpr int maximumIndex = 255;
 
-// A JSON number for a niri id. niri's ids are u64 and JSON has one number type, which this code holds
-// as a double: exact up to 2^53. niri generates ids far below that, and the read side reads them the
-// same way, but an id above 2^53 could not be addressed through a field encoded like this.
+// A JSON number for a niri id. niri's ids are u64 and JSON has one number type, which `QJsonValue` holds
+// either as a double — exact only to 2^53, so a larger id would be written as a different one — or as a
+// signed 64-bit integer, which is written as its exact digits and is what niri's serde reads back. Every
+// caller has already refused an id above `NiriActions::maximumId`, which is what the signed form holds,
+// so the cast below cannot lose anything: `WorkspaceReference::isValid` and `moveWindowToWorkspace` are
+// the two gates, and each reports the refusal instead of sending a rounded id.
 QJsonValue idValue(quint64 id) {
-    return QJsonValue(static_cast<double>(id));
+    return QJsonValue(static_cast<qint64>(id));
+}
+
+// A workspace id as QML holds it: decimal digits and nothing else. Qt's own parser accepts a leading `+`,
+// leading whitespace and a sign, and a value it accepted loosely is one this build cannot claim to have
+// read exactly, so the digits are checked first. A number too large for a `u64` makes `toULongLong` set
+// `ok` false rather than wrap, which is the second way this refuses instead of acting on a different
+// workspace. A `u64` that is merely too large to write as a JSON number — anything above
+// `NiriActions::maximumId` — is parsed here and refused at the reference instead, so the C++ callers and
+// the QML one share one ceiling rather than each deciding their own.
+std::optional<quint64> idFromText(const QString& text) {
+    if (text.isEmpty()) {
+        return std::nullopt;
+    }
+    for (const QChar character : text) {
+        if (character < u'0' || character > u'9') {
+            return std::nullopt;
+        }
+    }
+    bool ok = false;
+    const quint64 id = text.toULongLong(&ok);
+    if (!ok) {
+        return std::nullopt;
+    }
+    return id;
 }
 
 NiriActions::Result classifyReply(const Reply& reply) {
@@ -77,7 +108,7 @@ bool NiriActions::WorkspaceReference::isValid() const {
     case Kind::index:
         return index_ >= 0 && index_ <= maximumIndex;
     case Kind::id:
-        return true;
+        return isAddressableId(id_);
     case Kind::name:
         return !name_.isEmpty();
     }
@@ -221,6 +252,17 @@ void NiriActions::moveWindowToWorkspace(const WorkspaceReference& reference, boo
     if (refuseWithoutAWorkspace(QStringLiteral("MoveWindowToWorkspace"), reference, handler)) {
         return;
     }
+    // The windows ids take the same encoding as the workspace ones, so they have the same ceiling, and
+    // this is the gate for them: a window id is only ever spelled here.
+    if (windowId.has_value() && !isAddressableId(*windowId)) {
+        refuse(QStringLiteral("MoveWindowToWorkspace"),
+               QStringLiteral("window %1 cannot be addressed from this build: an id must be at most %2, "
+                              "the largest a JSON number this client writes can hold exactly")
+                   .arg(*windowId)
+                   .arg(maximumId),
+               handler);
+        return;
+    }
     dispatch(QStringLiteral("MoveWindowToWorkspace"),
              QJsonObject{{QStringLiteral("reference"), QJsonValue(reference.toJson())},
                          {QStringLiteral("focus"), QJsonValue(focus)},
@@ -245,6 +287,35 @@ void NiriActions::closeOverview(ResultHandler handler) {
     dispatch(QStringLiteral("CloseOverview"), QJsonObject{}, std::move(handler));
 }
 
+void NiriActions::focusWorkspaceById(const QString& idText) {
+    const std::optional<quint64> id = idFromText(idText);
+    if (!id.has_value()) {
+        refuse(QStringLiteral("FocusWorkspace"),
+               QStringLiteral("\"%1\" is not a niri workspace id: an id is decimal digits and nothing "
+                              "else, and one too large for a 64-bit integer is not an id either")
+                   .arg(idText),
+               {});
+        return;
+    }
+    focusWorkspace(WorkspaceReference::withId(*id));
+}
+
+void NiriActions::focusWorkspaceUp() {
+    dispatch(QStringLiteral("FocusWorkspaceUp"), QJsonObject{}, {});
+}
+
+void NiriActions::focusWorkspaceDown() {
+    dispatch(QStringLiteral("FocusWorkspaceDown"), QJsonObject{}, {});
+}
+
+void NiriActions::registerQmlSingleton(NiriActions& actions) {
+    // Uncreatable from QML, like the state service: a second one would perform actions through a
+    // connection nothing else knows about. The names come from NiriQmlModule.h rather than being spelled
+    // here, so there is one place they are written down.
+    qmlRegisterSingletonInstance(qml::ModuleUri, qml::ModuleMajorVersion, qml::ModuleMinorVersion,
+                                 qml::ActionTypeName, &actions);
+}
+
 void NiriActions::switchLayout(const LayoutTarget& target, ResultHandler handler) {
     if (!target.isValid()) {
         refuse(QStringLiteral("SwitchLayout"),
@@ -263,6 +334,11 @@ void NiriActions::refuse(const QString& action, const QString& reason,
     Result result;
     result.outcome = Result::Outcome::notDelivered;
     result.detail = reason;
+    // Written down rather than only signalled, because the caller that left the handler out is now QML,
+    // which cannot hold one: an action the bar asked for and did not get is a thing to be able to read
+    // afterwards, not a silence.
+
+    qCWarning(quantum::app::niriLog) << "action" << action << "was not sent:" << reason;
     if (handler) {
         handler(result);
     }
@@ -276,10 +352,12 @@ bool NiriActions::refuseWithoutAWorkspace(const QString& action,
         return false;
     }
     refuse(action,
-           QStringLiteral("%1 is not a workspace this build can name: a workspace index must be "
-                          "between 0 and %2, and a workspace name cannot be empty")
+           QStringLiteral("%1 is not a workspace this build can name: an index must be between 0 and %2, "
+                          "an id must be at most %3 — the largest a JSON number this client writes can "
+                          "hold exactly — and a name cannot be empty")
                .arg(reference.describe())
-               .arg(maximumIndex),
+               .arg(maximumIndex)
+               .arg(maximumId),
            handler);
     return true;
 }
@@ -294,6 +372,7 @@ void NiriActions::dispatch(const QString& action, const QJsonObject& fields,
             handler(result);
         }
         if (!result.isHandled()) {
+            qCWarning(quantum::app::niriLog) << "action" << action << "failed:" << result.describe();
             emit actionFailed(action, result);
         }
     });

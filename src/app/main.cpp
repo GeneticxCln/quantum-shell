@@ -15,6 +15,7 @@
 #include "config/ConfigWatcher.h"
 #include "ipc/IPCProtocol.h"
 #include "ipc/IPCServer.h"
+#include "niri/NiriActions.h"
 #include "niri/NiriEventStream.h"
 #include "niri/NiriIPC.h"
 #include "niri/NiriOutputs.h"
@@ -89,6 +90,12 @@ int main(int argc, char **argv)
 
     quantum::niri::NiriService service(state, stream);
     quantum::niri::NiriService::registerQmlSingleton(service);
+
+    // The actions the bar performs, on the request connection: a capsule click focuses its workspace and
+    // the wheel moves to the one below or above. Registered beside the state service so the two names the
+    // bar binds to — `NiriService` and `NiriActions` — come from the same module and the same place.
+    quantum::niri::NiriActions actions(requests);
+    quantum::niri::NiriActions::registerQmlSingleton(actions);
 
     quantum::niri::NiriReconnect reconnect;
     reconnect.keepAttached(requests);

@@ -278,13 +278,17 @@ set_target_properties(quantum-shell-layer-shell PROPERTIES
 # one that was built.
 add_executable(quantum-shell
     src/app/main.cpp)
+# The bar's QML, listed once: the application packs these files into its resources, and
+# `bar-interaction-test` loads the same files into a real engine, so the component a gesture is tested
+# against is the component that ships rather than a copy of it kept in sync by hand.
+set(QS_QML_FILES
+    qml/Main.qml
+    qml/Bar.qml
+    qml/Clock.qml
+    qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"
     PREFIX "/"
-    FILES
-        qml/Main.qml
-        qml/Bar.qml
-        qml/Clock.qml
-        qml/Workspaces.qml)
+    FILES ${QS_QML_FILES})
 target_link_libraries(quantum-shell
     PRIVATE quantum-shell-capabilities quantum-shell-ipc quantum-shell-niri quantum-shell-config
             quantum-shell-wayland quantum-shell-warnings)

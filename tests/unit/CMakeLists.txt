@@ -30,6 +30,9 @@ qs_unit_test(niri-state-test niri_state_test.cpp)
 qs_unit_test(niri-actions-test
     niri_actions_test.cpp
     FakeNiriServer.cpp)
+# Linked explicitly because a refusal has to be readable in the log as well as signalled, and the slot
+# that checks the record links the same category the shell writes it on rather than a copy of the name.
+target_link_libraries(niri-actions-test PRIVATE quantum-shell-logging)
 
 qs_unit_test(niri-output-test niri_output_test.cpp)
 
@@ -50,6 +53,31 @@ qs_unit_test(niri-service-test
 qs_unit_test(niri-reconnect-test
     niri_reconnect_test.cpp
     FakeNiriServer.cpp)
+
+# The bar's own gestures, against the component the shell ships. What a click and a wheel mean is a
+# property of qml/Workspaces.qml and of nothing in C++, so the file the application packs is loaded into
+# a real engine here and given real window events, with the requests that reach niri's end of the socket
+# as the assertion. Offscreen, so it needs no display and no session — which is what lets it run in CI
+# and under the slot-order checks like any other unit test.
+qs_unit_test(bar-interaction-test
+    bar_interaction_test.cpp
+    FakeNiriServer.cpp)
+target_link_libraries(bar-interaction-test PRIVATE Qt6::Quick)
+# The component is taken out of the one list the application's resources are built from, so there is no
+# second copy of it to keep in step and no name written down twice. It is read from the source tree rather
+# than from a resource of this binary because that resource set belongs to the application; that the packed
+# copy loads in a real shell is what `niri-live-layershell-test` asserts, on the built binary.
+foreach(qs_qml IN LISTS QS_QML_FILES)
+    if(qs_qml MATCHES "Workspaces\\.qml$")
+        set(QS_BAR_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
+    endif()
+endforeach()
+if(NOT DEFINED QS_BAR_QML)
+    message(FATAL_ERROR
+        "no Workspaces.qml is named in QS_QML_FILES, so bar-interaction-test would have no component to "
+        "load and would fail at run time instead of here.")
+endif()
+target_compile_definitions(bar-interaction-test PRIVATE QS_BAR_QML="${QS_BAR_QML}")
 
 # The configuration schema, the QObject tree QML binds to, and the watcher that keeps the two in step
 # with the file. Nothing here needs a compositor or a display: the schema is a pure function of a string,

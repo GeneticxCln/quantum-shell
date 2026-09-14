@@ -82,6 +82,7 @@ private slots:
     void theOverviewActionsDriveTheModelBothWays();
     void anActionTheCompositorDoesNotKnowIsReportedNotIgnored();
     void focusingAnotherWorkspaceMovesFocusAndFocusingItBackRestoresIt();
+    void theWheelActionsMoveThroughTheCompositorsOwnWorkspaces();
     void switchingTheKeyboardLayoutKeepsTheModelValid();
     void theKeyboardLayoutSwitchMovesTheActiveLayout();
 
@@ -409,6 +410,70 @@ void NiriLiveActionTest::focusingAnotherWorkspaceMovesFocusAndFocusingItBackRest
           "time, but where it sent focus could not be observed");
 }
 
+
+void NiriLiveActionTest::theWheelActionsMoveThroughTheCompositorsOwnWorkspaces() {
+    // The two requests the bar's wheel sends, and the one pair whose *name* only the compositor can
+    // confirm: `niri_actions_test` pins the bytes this build writes, and this case is what says niri
+    // 26.04 accepts them as the actions its own default config binds to the wheel. A name niri did not
+    // have would come back as a parse error, which is what the failure list below catches.
+    //
+    // They move focus the way the desktop's own wheel binding does — down to the workspace below, up to
+    // the one above — so the case reads as a person scrolling over the bar: one step down, and one step
+    // back. Where it lands is the compositor's answer rather than an index computed here, which is the
+    // point of using these actions at all.
+    QStringList failures;
+    const QMetaObject::Connection failure =
+        connect(&actions_, &NiriActions::actionFailed, this,
+                [&failures](const QString& action, const NiriActions::Result&) {
+                    failures.append(action);
+                });
+
+    const std::optional<quint64> origin = compositorFocusedWorkspaceId();
+    QVERIFY2(origin.has_value(), "the compositor never answered a Workspaces request");
+    QCOMPARE(state_.focusedWorkspace().id(), *origin);
+
+    actions_.focusWorkspaceDown();
+    const bool moved = QTest::qWaitFor(
+        [this, &origin] {
+            const std::optional<quint64> now = compositorFocusedWorkspaceId();
+            return now.has_value() && *now != *origin;
+        },
+        3000);
+    QVERIFY2(failures.isEmpty(),
+             qPrintable(QStringLiteral("the compositor refused %1").arg(failures.join(", "))));
+    QVERIFY2(moved,
+             qPrintable(QStringLiteral("the compositor accepted FocusWorkspaceDown and left the focused "
+                                       "workspace at %1")
+                            .arg(*origin)));
+
+    const std::optional<quint64> below = compositorFocusedWorkspaceId();
+    QVERIFY2(below.has_value(), "the compositor never answered a Workspaces request");
+    // Focus is now somewhere this test moved it to, so cleanup owns putting it back if anything below
+    // fails before it is returned.
+    focusMovedTo_ = below;
+    QTRY_COMPARE_WITH_TIMEOUT(state_.focusedWorkspace().id(), *below, 5000);
+    qInfo("FocusWorkspaceDown moved focus to workspace %llu, and the model followed",
+          static_cast<unsigned long long>(*below));
+
+    actions_.focusWorkspaceUp();
+    const bool returned = QTest::qWaitFor(
+        [this, &origin] { return compositorFocusedWorkspaceId() == origin; }, 3000);
+    QVERIFY2(failures.isEmpty(),
+             qPrintable(QStringLiteral("the compositor refused %1").arg(failures.join(", "))));
+    if (returned) {
+        QTRY_COMPARE_WITH_TIMEOUT(state_.focusedWorkspace().id(), *origin, 5000);
+        focusMovedTo_.reset();
+        qInfo("FocusWorkspaceUp returned focus to workspace %llu, and the model followed",
+              static_cast<unsigned long long>(*origin));
+    } else {
+        // FocusWorkspaceDown has just been verified in the same run, so a session that moved during the
+        // return is reported: cleanup still holds the change and will say what it did with it.
+        qInfo("the session did not return to workspace %llu: cleanup will report what focus was left on",
+              static_cast<unsigned long long>(*origin));
+    }
+
+    disconnect(failure);
+}
 
 void NiriLiveActionTest::switchingTheKeyboardLayoutKeepsTheModelValid() {
     const NiriKeyboardLayouts before = state_.keyboardLayouts();

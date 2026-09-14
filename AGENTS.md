@@ -54,10 +54,12 @@ Real files in this repository:
                          detection, the typed event stream, the workspace/window/output/layout/
                          overview state model it feeds, the request-driven output refresh niri
                          requires because it streams no output event, the supervisor that keeps both
-                         connections attached across a compositor restart, and the QObject service QML
-                         binds to — whose QML-visible property and key names are declared once in
-                         NiriServiceKeys.h and whose module URI, version and type name are declared
-                         once in NiriQmlModule.h, both pinned by compile-time checks in its test
+                         connections attached across a compositor restart, and the two QObjects QML binds
+                         to and calls into — the state service, whose QML-visible property and key names
+                         are declared once in NiriServiceKeys.h, and the actions the bar performs
+                         (`NiriActions`: focus a workspace by the id text a capsule carries, focus the
+                         workspace below or above) — whose module URI, version and both type names are
+                         declared once in NiriQmlModule.h, pinned by compile-time checks in their tests
   src/wayland/           the layer-shell client, Route 1: the vendored wlr-layer-shell protocol, the
                          generated Qt bindings, the zwlr_layer_surface_v1 role, the shell-integration
                          plugin Qt loads for QT_WAYLAND_SHELL_INTEGRATION=quantum-shell, and the
@@ -77,8 +79,9 @@ Real files in this repository:
                          format every other library logs through; and the three capabilities the IPC
                          exposes, each a delegation to the service, the schema or the bar window
   qml/                   the bar: the layer-shell window, its layout, the workspace strip bound to
-                         NiriService, and the clock; its height and namespace are bindings onto
-                         `Config`, not literals
+                         NiriService and acted on through NiriActions (a click focuses the workspace a
+                         capsule names, the wheel moves to the one below or above), and the clock; its
+                         height and namespace are bindings onto `Config`, not literals
   tools/qs-scan/         qs-scan, the repository real-code gate: scanner source + pattern table
   tests/unit/            unit tests for src/niri; the compositor's end of the socket is a test double
   tests/integration/     the five tests that run against a real compositor: two that only read, one
@@ -109,7 +112,7 @@ Build system:     CMake 3.31 floor (4.4.3 tested), C++23, Qt 6.11 floor (6.11.2 
                   application), qsctl (the client), and the test binaries. C is enabled as a project
                   language for wayland-scanner's output alone; Qt Concurrent is used for the off-thread
                   config parse
-Tests:            ctest, twenty-five tests before anything opt-in — qs-scan-self-test and repo-scan (the
+Tests:            ctest, twenty-six tests before anything opt-in — qs-scan-self-test and repo-scan (the
                   gate), public-names-test (the test names and environment variables the documents tell
                   people to run, against the declarations in tests/public_names.cmake), then two order
                   checks that read each test binary rather than its source:
@@ -153,11 +156,13 @@ Tests:            ctest, twenty-five tests before anything opt-in — qs-scan-se
                   combination flakier than one in a hundred thousand — six passes with that floor, say
                   — is refused before it runs) —
                   and
-                  seventeen unit tests that need no compositor: niri-version-test, niri-ipc-test,
+                  eighteen unit tests that need no compositor: niri-version-test, niri-ipc-test,
                   niri-event-stream-test, niri-state-test, niri-actions-test, niri-output-test,
                   niri-keyboard-layouts-test, niri-outputs-test, niri-reconnect-test and
                   niri-service-test (which loads a QML binding in a real engine, and still needs no
-                  display), plus config-test (the schema, the diffing, and a `Config` binding in a
+                  display), bar-interaction-test (the bar's own component, loaded into a real engine and
+                  given real window events offscreen, so what a click and a wheel ask the compositor for
+                  is asserted rather than assumed), plus config-test (the schema, the diffing, and a `Config` binding in a
                   real engine) and config-watcher-test (the watcher against real files in a scratch
                   directory of its own). The four that arrived with the IPC and the logging are
                   ipc-protocol-test (the wire format as pure functions: the frozen verb names mirrored
@@ -222,8 +227,8 @@ Tests:            ctest, twenty-five tests before anything opt-in — qs-scan-se
                   exit 1, no signal, IPC socket released — nonzero because a session supervisor restarts
                   a shell that reported failure), a second compositor on the socket path niri's naming
                   rule guarantees to differ, and a second shell whose bar is listed in it and whose
-                  `qsctl state` agrees with the new session. The counts: 27 registered with a socket,
-                  29 with either opt-in (each adds its own two), 31 with both, 25 without a socket; all
+                  `qsctl state` agrees with the new session. The counts: 28 registered with a socket,
+                  30 with either opt-in (each adds its own two), 32 with both, 26 without a socket; all
                   three acting tests take the resource lock so a parallel run never has two of them on
                   the desktop at once, and they sit outside the order checks for the same reason
 Version control:  git, branch main; history begins at the first commit of the working slice, published to
@@ -319,7 +324,23 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    audio service behind it, so implementing it would be the canned value the rules
                    ban), `qsctl bar toggle` took the bar out of the compositor's layer list and put it
                    back, and the journal held the refusal it produced with the category and level
-                   attached. Nothing is committed yet.
+                   attached. Phase 1 has begun with the bar's first interaction: the workspace strip
+                   performs niri actions. The shell's C++ actions are registered as a second singleton
+                   (`NiriActions`) beside the state service, so a click on a capsule asks niri to focus
+                   the workspace that capsule names — by the id text the model reported — and the wheel
+                   over the strip sends niri's own `FocusWorkspaceUp`/`FocusWorkspaceDown`, which is
+                   what its default config binds to the same gesture. A click on the capsule that is
+                   already focused asks for nothing, because niri resolves the reference and switches,
+                   so with `workspace-auto-back-and-forth` it would land on the previously focused
+                   workspace instead of nowhere. That wiring is covered by bar-interaction-test, which
+                   loads the shipped `qml/Workspaces.qml` into a real engine offscreen and delivers
+                   real clicks and wheel events, and the two action names are confirmed against niri
+                   26.04 by the new case in niri-live-action-test (focus moved down to workspace 2 and
+                   back up to 13, with the model following). It also closed a latent defect the
+                   earlier review had only recorded: ids above 2^53 were written as a JSON double and
+                   would have named a different workspace, so they are now written as exact integers,
+                   and an id above what that form holds is refused with the reason rather than
+                   rounded. Nothing is committed yet.
 ```
 
 Consequences:
@@ -336,7 +357,10 @@ Consequences:
   logs, and survives a compositor restart — survival now proven through the running shell itself by
   niri-live-shell-restart-test (an observed prompt death with the socket released, then a second start
   listing its bar in the new compositor and answering `qsctl` about the new session), on top of the
-  connection layer's own proof in niri-live-restart-test. Phase 1 is next.
+  connection layer's own proof in niri-live-restart-test. Phase 1 has started: the bar's workspace
+  strip is interactive — a click focuses the workspace a capsule names and the wheel moves through the
+  compositor's own workspaces — and the rest of Phase 1's modules (capsule groups, system status,
+  audio, network, battery, media) are not started.
 - The gate requires `tools`, `CMakeLists.txt`, `src`, `qml` and `tests`, and reads all five: `src`
   and `qml` were added in the same change that created them, as the rule above requires.
 - One decision is pending and must not be made by an agent unilaterally: whether the Qt floor is
@@ -559,9 +583,12 @@ The build system is CMake with presets; every command below was run in this chec
 ```sh
 cmake --preset dev && cmake --build --preset dev   # configure and build; -Werror comes from the
                                                    # quantum-shell-warnings interface target
-ctest --preset dev                                 # twenty-five tests with no session; the two read-only
+ctest --preset dev                                 # twenty-six tests with no session; the two read-only
                                                    # live tests join them only when NIRI_SOCKET is set,
                                                    # and the preset runs four tests at a time
+ctest --preset dev -R bar-interaction-test         # the bar's own QML in a real engine, offscreen: a
+                                                   # click on a capsule and the wheel over the strip,
+                                                   # read back as the requests niri would receive
 ctest --preset dev -R ipc-server-test              # the IPC server over a real socket: the handshake,
                                                    # every verb, every refusal, ~0.3 s, no compositor
 ctest --preset dev -R ipc-protocol-test            # the wire format as pure functions, ~0.02 s
@@ -630,7 +657,8 @@ git status --short                                 # git, branch main; the tree 
 
 `ctest --preset dev` runs four tests at a time, because the test presets set `execution.jobs`. The four
 shards of the shuffled check are why: without that setting ctest runs them one after another, which is
-still correct and about four times the wall clock — 400 s against 100 s, measured here. Running tests
+still correct and takes their sum — 147 s, 166 s, 166 s and 231 s measured here, so 710 s in sequence
+against 231 s run together. Running tests
 together is safe because the two that act on the desktop take a resource lock, so no two of them are ever
 changing what is on screen at once; the shards only read, which is what lets them run beside everything
 else.

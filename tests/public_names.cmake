@@ -47,7 +47,8 @@ set(QS_TEST_NAMES
     ipc-server-test
     ipc-capabilities-test
     app-logging-test
-    snapshot-reconcile-test)
+    snapshot-reconcile-test
+    bar-interaction-test)
 
 # The environment variables that change what a test run does. `NIRI_SOCKET` is niri's own and is read to
 # decide whether there is a compositor to talk to at all; the rest are this project's opt-ins.

@@ -7,6 +7,7 @@
 // window, taking a screenshot) and are pinned here by shape instead.
 #include "niri/NiriActions.h"
 
+#include "app/Logging.h"
 #include "niri/NiriIPC.h"
 
 #include "FakeNiriServer.h"
@@ -31,6 +32,21 @@ struct Captured {
     int calls = 0;
     NiriActions::Result result;
 };
+
+// What the shell's own logging wrote while one slot ran. A refusal that QML caused has nowhere else to
+// be read: QML cannot hold a result handler, so the record is the report, and this is how a slot checks
+// that it is written rather than assumed.
+struct Record {
+    QtMsgType type = QtDebugMsg;
+    QString category;
+    QString message;
+};
+
+QList<Record> records;
+
+void captureRecords(QtMsgType type, const QMessageLogContext& context, const QString& message) {
+    records.append(Record{type, QString::fromUtf8(context.category ? context.category : ""), message});
+}
 
 bool connectTo(NiriIPC& client, FakeNiriServer& server) {
     QSignalSpy connected(&client, &NiriIPC::connected);
@@ -67,6 +83,12 @@ private slots:
     void refusesWhatItCannotEncodeWithoutSendingAnything();
     void emitsEveryFailureEvenWhenNoHandlerWasGiven();
     void keepsActionsInOrderWithTheRequestsAroundThem();
+
+    // The three calls the bar makes, which QML reaches through the `NiriActions` singleton.
+    void sendsTheWorkspaceGestureActionsQmlCalls();
+    void focusesTheWorkspaceAnIdNamesExactly();
+    void refusesAnIdTextThatIsNotOneWithoutSendingAnything();
+    void writesThatAFailedActionHappenedRatherThanOnlySignallingIt();
 };
 
 void NiriActionsTest::sendsEachActionInTheShapeNiriParses() {
@@ -396,6 +418,139 @@ void NiriActionsTest::emitsEveryFailureEvenWhenNoHandlerWasGiven() {
     QTRY_VERIFY_WITH_TIMEOUT(failures.size() == 1, 5000);
     QCOMPARE(failures.first(), QStringLiteral("OpenOverview"));
     QCOMPARE(reason, QStringLiteral("refused: action failed"));
+}
+
+void NiriActionsTest::sendsTheWorkspaceGestureActionsQmlCalls() {
+    FakeNiriServer server;
+    QVERIFY2(server.listen(), qPrintable(server.serverError()));
+    server.setReply(QStringLiteral("Action"), QByteArray(R"json({"Ok":"Handled"})json"));
+
+    NiriIPC client;
+    NiriActions actions(client);
+    QVERIFY2(connectTo(client, server), "the request connection never came up");
+
+    int failures = 0;
+    connect(&actions, &NiriActions::actionFailed, this,
+            [&failures](const QString&, const NiriActions::Result&) { failures += 1; });
+
+    // Both are `{}` struct variants of niri-ipc v26.04's `Action` enum — `FocusWorkspaceUp {}` and
+    // `FocusWorkspaceDown {}` — so the field object is empty and the variant name is the whole request.
+    // The wheel over the strip issues exactly these, which is what makes the gesture niri's own
+    // workspace-above/below movement rather than an order computed from the strip.
+    actions.focusWorkspaceUp();
+    QTRY_VERIFY_WITH_TIMEOUT(server.receivedRequests().size() == 1, 5000);
+    QCOMPARE(server.receivedRequests().last(),
+             QStringLiteral(R"({"Action":{"FocusWorkspaceUp":{}}})"));
+
+    actions.focusWorkspaceDown();
+    QTRY_VERIFY_WITH_TIMEOUT(server.receivedRequests().size() == 2, 5000);
+    QCOMPARE(server.receivedRequests().last(),
+             QStringLiteral(R"({"Action":{"FocusWorkspaceDown":{}}})"));
+
+    // Nothing failed, so nothing was reported: the two calls above are the whole contract, and a
+    // failure signal here would mean the bar asks for something it cannot get.
+    QTest::qWait(60);
+    QCOMPARE(failures, 0);
+}
+
+void NiriActionsTest::focusesTheWorkspaceAnIdNamesExactly() {
+    FakeNiriServer server;
+    QVERIFY2(server.listen(), qPrintable(server.serverError()));
+    server.setReply(QStringLiteral("Action"), QByteArray(R"json({"Ok":"Handled"})json"));
+
+    NiriIPC client;
+    NiriActions actions(client);
+    QVERIFY2(connectTo(client, server), "the request connection never came up");
+
+    // The id QML reads out of the model is the text it hands back, and it goes on the wire as the digits
+    // it names. 123456789012345 is above 2^53 — the largest whole number a double holds — so a client
+    // that encoded ids as doubles would send a different id here and niri would be asked to focus a
+    // workspace that is not this one. This is the assertion that fails if the encoding goes back.
+    actions.focusWorkspaceById(QStringLiteral("123456789012345"));
+    QTRY_VERIFY_WITH_TIMEOUT(server.receivedRequests().size() == 1, 5000);
+    QCOMPARE(server.receivedRequests().last(),
+             QStringLiteral(R"({"Action":{"FocusWorkspace":{"reference":{"Id":123456789012345}}}})"));
+
+    // The largest id this build writes, still exact: one above it is refused, which the slot below
+    // checks. 9223372036854775807 as a double is 9223372036854775808, so an id at the ceiling is another
+    // case the double encoding would have got wrong.
+    actions.focusWorkspaceById(QString::number(NiriActions::maximumId));
+    QTRY_VERIFY_WITH_TIMEOUT(server.receivedRequests().size() == 2, 5000);
+    QCOMPARE(server.receivedRequests().last(),
+             QStringLiteral(
+                 R"({"Action":{"FocusWorkspace":{"reference":{"Id":9223372036854775807}}}})"));
+}
+
+void NiriActionsTest::refusesAnIdTextThatIsNotOneWithoutSendingAnything() {
+    FakeNiriServer server;
+    QVERIFY2(server.listen(), qPrintable(server.serverError()));
+    server.setReply(QStringLiteral("Action"), QByteArray(R"json({"Ok":"Handled"})json"));
+
+    NiriIPC client;
+    NiriActions actions(client);
+    QVERIFY2(connectTo(client, server), "the request connection never came up");
+
+    QStringList refused;
+    connect(&actions, &NiriActions::actionFailed, this,
+            [&refused](const QString& action, const NiriActions::Result&) { refused.append(action); });
+
+    // Everything Qt's own parser would accept loosely, plus the two ways a digit string is not an id:
+    // one that is not a number at all, and one above what a JSON number this client writes can hold.
+    // Each is refused rather than converted, because a converted id is a request naming a workspace the
+    // person did not click.
+    const QStringList notIds{QString(),        QStringLiteral("7x"),
+                             QStringLiteral(" 7"), QStringLiteral("+7"),
+                             QStringLiteral("-1"), QStringLiteral("7.0"),
+                             QStringLiteral("1e3"),
+                             QStringLiteral("18446744073709551616"),  // > u64::max
+                             QStringLiteral("9223372036854775808")};  // u64, one above the ceiling
+    for (const QString& text : notIds) {
+        actions.focusWorkspaceById(text);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(refused.size(), notIds.size(), 5000);
+    QCOMPARE(server.receivedRequests().size(), 0);
+
+    // And the same ceiling applies to a window id, which is encoded the same way.
+    NiriActions::Result moveResult;
+    int moveCalls = 0;
+    actions.moveWindowToWorkspace(NiriActions::WorkspaceReference::atIndex(0), true,
+                                  NiriActions::maximumId + 1,
+                                  [&moveCalls, &moveResult](const NiriActions::Result& result) {
+                                      moveCalls += 1;
+                                      moveResult = result;
+                                  });
+    QCOMPARE(moveCalls, 1);
+    QVERIFY(!moveResult.isHandled());
+    QVERIFY2(moveResult.detail.contains(QStringLiteral("9223372036854775808")),
+             qPrintable(moveResult.detail));
+    QCOMPARE(server.receivedRequests().size(), 0);
+}
+
+void NiriActionsTest::writesThatAFailedActionHappenedRatherThanOnlySignallingIt() {
+    FakeNiriServer server;
+    QVERIFY2(server.listen(), qPrintable(server.serverError()));
+    server.setReply(QStringLiteral("Action"), QByteArray(R"json({"Ok":"Handled"})json"));
+
+    NiriIPC client;
+    NiriActions actions(client);
+    QVERIFY2(connectTo(client, server), "the request connection never came up");
+
+    // QML performs actions and cannot hold a result handler, so a failure it caused has to be readable
+    // afterwards rather than only signalled at whoever happened to connect. The record is the thing that
+    // makes `qsctl`-less debugging possible when the bar does nothing and nobody is watching signals.
+    const QtMessageHandler previous = qInstallMessageHandler(&captureRecords);
+    records.clear();
+    actions.focusWorkspaceById(QStringLiteral("not an id"));
+    qInstallMessageHandler(previous);
+
+    QCOMPARE(records.size(), 1);
+    QCOMPARE(records.first().category, quantum::app::niriLog().categoryName());
+    QCOMPARE(records.first().type, QtWarningMsg);
+    QVERIFY2(records.first().message.contains(QStringLiteral("FocusWorkspace")),
+             qPrintable(records.first().message));
+    QVERIFY2(records.first().message.contains(QStringLiteral("not an id")),
+             qPrintable(records.first().message));
+    QCOMPARE(server.receivedRequests().size(), 0);
 }
 
 void NiriActionsTest::keepsActionsInOrderWithTheRequestsAroundThem() {

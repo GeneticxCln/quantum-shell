@@ -464,8 +464,8 @@ nothing else — outputs are only ever available from the `Outputs` request (see
 **Requests (shell → niri):** JSON-line requests over the socket niri names for the session —
 `$NIRI_SOCKET`, rediscovered by niri's own naming rule once that path is gone (see the restart bullet
 below) — for reads such as `Workspaces`,
-`Windows`, `Outputs` and `FocusedWindow`, and for actions such as `FocusWorkspace`, `Spawn`,
-`MoveWindowToWorkspace` and `ScreenshotScreen`. They are spelled as the variants of niri-ipc v26.04's
+`Windows`, `Outputs` and `FocusedWindow`, and for actions such as `FocusWorkspace`,
+`FocusWorkspaceUp`, `FocusWorkspaceDown`, `Spawn`, `MoveWindowToWorkspace` and `ScreenshotScreen`. They are spelled as the variants of niri-ipc v26.04's
 `Request` enum: the kebab-case names in `niri msg --help` are CLI subcommands, and sending one of
 those on the wire gets an error, not an action. A request that is a unit variant goes out as the bare
 JSON string niri expects; a request that carries fields — every action — is serialised by the client
@@ -908,8 +908,10 @@ and a bug report quotes it. `quantum.shell` is the shell's lifecycle, and `quant
 What is logged is the set of things a person debugs a shell by, not a trace: the version and protocol the
 process started with and the configuration path it read; every configuration value the schema refused and
 every key it does not know, on the watcher's own category; the compositor attaching, being lost with the
-reason, and the delay before each retry; the IPC socket it is listening on, every request it refused, and
-nothing at all about the requests it answered; and each layer-surface request it had to refuse. Nothing
+reason, and the delay before each retry; every action the shell asked the compositor to perform that did
+not happen, with niri's own reason, because the caller that left the handler out is QML and cannot hold
+one; the IPC socket it is listening on, every request it refused, and nothing at all about the requests
+it answered; and each layer-surface request it had to refuse. Nothing
 here is a place for a secret, and SYSTEM_PROMPT.md § Security is what makes PAM conversation content,
 passwords and fingerprints unloggable rather than this file's good intentions.
 
@@ -1050,8 +1052,60 @@ they look like. Three rules hold it to the same standard as the model beneath it
 
 The module URI `QuantumShell` and the type name `NiriService` are the first QML-visible names in the
 project. They are registered from C++ (`NiriService::registerQmlSingleton`) because no QML module
-exists to register them through yet; the first QML component decides whether those two names fit, and
-the registration moves into the module in the same change that creates it.
+exists to register them through yet; the registration moves into the module in the same change that
+creates it — `qml/` now exists and imports it, which is what fixed the two names, and the second
+singleton below was added to the same module rather than to one of its own.
+
+### The actions QML performs
+
+The bar does more than read: a click on a capsule focuses the workspace that capsule names, and the
+wheel over the strip moves to the workspace below or above. Both are niri actions, so they are the
+action layer the shell already had — `NiriActions` — registered into the same module as a second
+singleton instead of being wrapped in a third object that would be a second view of them to keep in
+step with the first.
+
+| Method | The gesture it exists for |
+| --- | --- |
+| `focusWorkspaceById(idText)` | a click on a capsule — `FocusWorkspace` with the id the model reported for that capsule |
+| `focusWorkspaceDown()` | a wheel tick down — niri's `FocusWorkspaceDown` |
+| `focusWorkspaceUp()` | a wheel tick up — niri's `FocusWorkspaceUp` |
+
+The type name `NiriActions` is interface by the same rule as `NiriService`: it is what a QML file
+calls, so it is declared once in `src/niri/NiriQmlModule.h` and mirrored, with a compile-time
+comparison, in both `niri_service_test` and `bar-interaction-test`.
+
+Three rules, each with a reason that is a real behaviour rather than a preference:
+
+- **The id crosses as text and is parsed back exactly.** niri documents that workspace ids need not be
+  small and may be generated at random, and QML's numbers are doubles — the same reason
+  `NiriService` reports ids as text. It is parsed back into a `u64` by checking the digits rather than
+  by asking Qt's number parser, which also accepts a sign and surrounding space, and an id above the
+  largest value the request encoding can hold exactly is refused with the reason instead of being
+  rounded into a request that names a different workspace.
+- **The gesture is niri's, not the strip's.** `focus-workspace-down` and `focus-workspace-up` are what
+  niri's own default config binds to the same wheel gesture (`Mod+WheelScrollDown cooldown-ms=150 {
+  focus-workspace-down; }`), so which workspace is below is the compositor's answer and not an index
+  computed from the strip. The bar does not walk its own model to decide where the wheel goes. One gap,
+  stated rather than hidden: niri rate-limits its bind with `cooldown-ms=150` and the bar's handler acts
+  on every wheel event it is given. A mouse wheel sends one event per notch, so the two agree there; a
+  continuous touchpad scroll is the case where a cooldown belongs once the bar has one.
+- **A click on the already-focused capsule asks for nothing.** niri resolves the reference and then
+  switches to it, and with `workspace-auto-back-and-forth` — which this project's own session sets —
+  switching to the workspace already focused lands on the previously focused one. A bar that moved a
+  person off the workspace they are on when they click the workspace they are on would be worse than one
+  that does nothing, so the click is dropped in the component.
+
+A QML caller cannot hold a result handler, so nothing the bar asks for fails silently: every action
+that is refused, or whose answer never comes, is both a signal on `NiriActions` and a record on the
+compositor's category (§ Logging).
+
+The gestures are covered by `bar-interaction-test`, which loads the shipped `qml/Workspaces.qml` into a
+real engine with the platform plugin set to offscreen — no display, no session — and delivers real click
+and wheel events, asserting what reached the compositor's end of the socket. That is the only place the
+wiring can be checked: what a click means is a property of the component, and a capsule that draws the
+right workspace and does nothing when clicked passes every assertion a C++ test can make. The two action
+names are confirmed against a running niri 26.04 by `niri-live-action-test`, which steps down a
+workspace and back up and watches the model follow.
 
 ---
 
@@ -1258,13 +1312,16 @@ passed alone, in declaration order and in reverse.
 
 It runs as **four ctest tests** rather than one, which is what its pass count was raised to fit. The test
 presets set `execution.jobs 4`, so ctest runs the four at once and the wall clock of the check is the
-slowest shard's rather than the sum: measured here, 97 s, 99 s, 97 s and 87 s against 116 s for the
-single twenty-four-pass test it replaced, so four times the orders cost less wall clock than before.
-Pinned to four cores to model a CI runner, the slowest of the four took 110 s. Without `execution.jobs`
-ctest runs the four one after another: still correct, and four times the wall clock — 400 s against 100 s
-measured here — which is why the presets and the `check` target set it. It is safe to run them together
-because the two tests that act on the desktop take a resource lock, so no two of them are ever changing
-what is on screen at once.
+slowest shard's rather than the sum: measured here, 147 s, 166 s, 166 s and 231 s, where the four add up
+to 710 s in sequence. Without `execution.jobs` ctest runs them one after another: still correct, and the
+sum's wall clock rather than the slowest shard's, which is why the presets and the `check` target set it.
+`bar-interaction-test` is what those figures are mostly made of: a pass of it costs about 400 ms where
+most binaries' passes cost tens, because every pass builds a window, loads the bar's QML into an engine
+and drives it. That is the price of a check covering what a gesture does rather than what a function
+returns, and it is paid once per pass of the shard that holds the binary rather than by all of them — the
+costs in `tests/CMakeLists.txt` are what the split is balanced from. It is safe to run them
+together because the two tests that act on the desktop take a resource lock, so no two of them are ever
+changing what is on screen at once.
 
 The shards split the binaries, **not the passes**, and that is the part that keeps the report honest. How
 a binary's slots interact is a property of that binary's own orderings, so all of a binary's passes belong
@@ -1743,6 +1800,16 @@ config without restarting, and survives a compositor restart.
 
 Bar layout, capsule groups, workspace indicator, clock, system status, audio, network, battery,
 media, gesture handling, niri workspace interaction.
+
+**Started.** The workspace strip is interactive: a click focuses the workspace a capsule names, and the
+wheel over the strip moves to the workspace below or above. Both go through the shell's actions,
+registered for QML as the `NiriActions` singleton beside the state service — see § Exposed QML API,
+where the gestures and the reason a click on the already-focused capsule asks for nothing are written
+down. The C++ side is `bar-interaction-test` (the shipped `qml/Workspaces.qml` in a real engine,
+offscreen, with real click and wheel events read back as the requests niri would receive) plus the new
+case in `niri-live-action-test`, which confirms `FocusWorkspaceUp`/`FocusWorkspaceDown` against a
+running niri 26.04. The rest of the phase — capsule groups, system status, audio, network, battery,
+media, and the idle-budget measurement that has to come last — is not started.
 
 **Exit criteria:** a fully functional daily-driver bar; no polling; workspace changes are instant
 and event-driven; idle CPU budget met.

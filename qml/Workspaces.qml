@@ -1,11 +1,15 @@
 import QtQuick
 import QuantumShell 1.0
 
-// The workspace strip: one capsule per workspace, in the order the model reports them.
+// The workspace strip: one capsule per workspace, in the order the model reports them, and the two
+// gestures that act on them.
 //
 // The model is `NiriService.workspaces`, which is niri's own workspace list — so the strip reorders and
 // marks itself focused because the compositor said so, from an event, with nothing here deciding what
-// is on screen.
+// is on screen. Acting on a capsule is `NiriActions.focusWorkspaceById(id)`, the id exactly as the model
+// reports it, and the wheel is `focusWorkspaceUp()`/`focusWorkspaceDown()` — niri's own actions, so the
+// order the wheel moves through is the compositor's and not one computed from the strip. Nothing here
+// talks to a socket or holds a workspace id of its own.
 Item {
     id: root
 
@@ -15,10 +19,37 @@ Item {
     property color urgent
     property string face
 
+    // The strip is the part of the bar a pointer can land on, so the root takes its width from it: an
+    // Item with no width of its own has none, and a pointer event is hit-tested against the bounds of the
+    // items it walks. The bar gives the height (Main.qml anchors this to fill it); nothing gives the
+    // width but this.
+    width: Math.max(strip.width, noCompositor.width)
+
     Row {
         id: strip
+        objectName: "strip"
         anchors.verticalCenter: parent.verticalCenter
         spacing: 6
+
+        // The wheel over the strip, mapped the way niri maps the same gesture on the desktop: its default
+        // config binds `WheelScrollDown` to `focus-workspace-down` and `WheelScrollUp` to
+        // `focus-workspace-up`, which is what makes scrolling over the bar behave like scrolling over a
+        // window. `TouchPad` is named explicitly because it is not the default, and a touchpad that sends
+        // scroll phases rather than wheel ticks would otherwise be ignored.
+        //
+        // One gap, stated rather than hidden: niri's own bind carries `cooldown-ms=150`, and this handler
+        // acts on every wheel event it is given. A mouse wheel sends one event per notch, so the two agree
+        // there; a continuous touchpad scroll can send several, and this is where a cooldown belongs when
+        // the bar has one.
+        WheelHandler {
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            onWheel: (event) => {
+                if (event.angleDelta.y < 0)
+                    NiriActions.focusWorkspaceDown()
+                else if (event.angleDelta.y > 0)
+                    NiriActions.focusWorkspaceUp()
+            }
+        }
 
         Repeater {
             model: NiriService.workspaces
@@ -51,6 +82,19 @@ Item {
                     color: capsule.focused ? "#12131a" : root.foreground
                     font.family: root.face
                     font.pixelSize: 12
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    // Not on the focused capsule. niri resolves the reference and then switches to it,
+                    // and with `workspace-auto-back-and-forth` — which this project's own session sets —
+                    // switching to the workspace already focused lands on the previously focused one, so
+                    // asking again would move the person somewhere else rather than nowhere.
+                    onClicked: {
+                        if (!capsule.focused)
+                            NiriActions.focusWorkspaceById(capsule.modelData.id)
+                    }
                 }
             }
         }

@@ -28,4 +28,10 @@ inline constexpr int ModuleMajorVersion = quantum::qml::ModuleMajorVersion;
 inline constexpr int ModuleMinorVersion = quantum::qml::ModuleMinorVersion;
 inline constexpr auto ServiceTypeName = "NiriService";
 
+// The second singleton in the same module, and a name of the same kind: the bar's capsules and its wheel
+// call into it to focus a workspace, so a QML file written against it keeps working only while the
+// spelling holds. `bar-interaction-test` mirrors it and compares its copy at compile time, for the same
+// reason `niri_service_test` mirrors the one above.
+inline constexpr auto ActionTypeName = "NiriActions";
+
 }  // namespace quantum::niri::qml
