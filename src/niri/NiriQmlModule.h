@@ -11,9 +11,10 @@
 // A rename cannot happen without a matching edit to that test, which is where the question "who else
 // imports this" gets asked.
 //
-// The design intends this registration to move into a real QML module once `qml/` exists
-// (QUANTUM_SHELL.md § Configuration and IPC). When it does, these constants move with it and the mirror
-// in the test follows; until then a name declared here is the whole of the interface.
+// The module these names belong to is declared once in `QmlModule.h` — the URI and both version numbers —
+// because a name declared in two services is a name that can be renamed in one of them. This header
+// re-exports that module's constants under the names it has always used, so the URI has one spelling in
+// the tree and the test that mirrors it here is unchanged.
 #pragma once
 
 #include "QmlModule.h"

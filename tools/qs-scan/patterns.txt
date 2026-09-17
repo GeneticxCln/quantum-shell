@@ -31,4 +31,12 @@ filler-text	error	all	placeholder(?!Text)|lorem ipsum|sample data|\bdummy\b
 prototype-marker	error	all	\btemporary\b|quick fix|will be replaced|for now
 empty-catch	error	all	catch\s*\([^)]*\)\s*\{\s*\}
 swallowed-exception	error	all	catch\s*\(\.\.\.\)\s*\{
+# Two spellings, because the rule was blind in one of them until they were both written down: `QTimer`
+# is the C++ one — the system status's cadence and the two reconnect backoffs are what it reports — and
+# the clock's minute wake-up is a QML `Timer`, which the first spelling never saw. A gate that can only
+# see the timer in one language cannot report the polling loop in the other, which is the whole point of
+# the rule. Both are warnings rather than errors for the reason written in SYSTEM_PROMPT.md: whether a
+# given timer is a state poll or a debounce is a judgement, and the rule's job is to make every one of
+# them visible to a person reading the run rather than to decide it.
 polling-timer	warn	all	QTimer
+polling-timer	warn	all	(^|[^A-Za-z_])(Timer)[[:space:]]*\{

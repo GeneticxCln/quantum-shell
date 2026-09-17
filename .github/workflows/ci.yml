@@ -66,7 +66,10 @@ jobs:
       # The gate on its own, so a violation is readable in the job log instead of only appearing as a
       # failing test. It runs again inside ctest, which is the copy that fails the build.
       - name: Repository scan
-        run: ./build/ci/qs-scan --root . --require tools --require CMakeLists.txt --require src --require tests --list
+        # The same five requirements the `repo-scan` test passes, so the readable copy and the failing one
+        # agree: a directory required in one and not the other is a difference nobody would notice, since
+        # this step is only here to make a violation legible in the job log.
+        run: ./build/ci/qs-scan --root . --require tools --require CMakeLists.txt --require src --require qml --require tests --list
 
       - name: Test
         run: ctest --preset ci

@@ -68,6 +68,30 @@ target_compile_definitions(niri-live-shell-restart-test PRIVATE
     QS_SHELL_PLUGIN_PATH="${CMAKE_BINARY_DIR}/plugins"
     QS_QSCTL_BINARY="$<TARGET_FILE:qsctl>")
 
+# The network module against the daemon the desktop is really using. Read-only, and it needs no compositor and
+# no display: it asks NetworkManager — through `busctl`, a different program from the Qt D-Bus the module reads
+# it with — what the manager, the active connection, the device and its access point say, and compares the
+# module's reading with those answers. A machine with no system bus or no NetworkManager skips it with the
+# reason; there is no opt-in because there is nothing here to consent to.
+#
+# It is deliberately not in the slot-order checks: a pass is a handful of process launches and a walk of the real
+# bus, and what it proves is a property of the machine rather than of the module's slot interactions.
+add_executable(network-live-test integration/network_live_test.cpp)
+target_link_libraries(network-live-test PRIVATE Qt6::Test quantum-shell-network)
+
+# The audio module against a real PipeWire daemon: the test writes the daemon's configuration into a scratch
+# directory, starts a second daemon under its own core name so its socket can never be the session's, and
+# drives the module through the three things only a daemon can show — that an external volume change arrives
+# as an event, that the shell's own write reaches the sink, and that a daemon going away and coming back is
+# survived. It needs no compositor and no display, so its opt-in is its own rather than niri's.
+#
+# It is deliberately not in the slot-order checks. Those walk the unit binaries and the two read-only niri
+# live tests, whose whole pass costs a fraction of a second; this one starts a daemon, and ninety-six passes
+# of it would be ninety-six daemons. `QS_AUDIO_TESTS` is what makes it run at all, and a plain test run
+# leaves no second audio daemon on the machine of whoever started it.
+add_executable(audio-live-test integration/audio_live_test.cpp)
+target_link_libraries(audio-live-test PRIVATE Qt6::Test quantum-shell-audio)
+
 # --- slot order -----------------------------------------------------------------------------------
 #
 # Two checks over the same binaries, because they catch the same bug — a slot whose wait is already
@@ -146,21 +170,71 @@ set(QS_ORDER_CHECK_COSTS
     ipc-protocol-test=22
     app-logging-test=20
     snapshot-reconcile-test=615
-    niri-ipc-test=925
+    # Four re-measured together, because a stale table is an unbalanced split that fails nothing: these
+    # binaries gained slots in later landings and a pass grew with them — niri-event-stream-test from 359 ms
+    # to 883 ms, niri-ipc-test from 925 to 1028, config-watcher-test from 625 to 724, niri-actions-test from
+    # 467 to 630. The cost was a shard taking 1.6× the quickest where the split below had predicted 1.0×.
+    niri-ipc-test=1028
     niri-outputs-test=660
-    config-watcher-test=625
+    config-watcher-test=724
     niri-service-test=503
-    niri-actions-test=467
+    niri-actions-test=630
     niri-reconnect-test=437
-    niri-event-stream-test=359
+    niri-event-stream-test=883
     niri-live-test=213
     niri-live-stream-test=114
-    config-test=16
+    sysmon-test=788
+    config-test=17
+    audio-test=11
+    # Pure functions of D-Bus payloads and no I/O at all, which is why it sits beside `audio-test` rather than
+    # beside the binaries that open something. Measured as the median of five passes on this machine: 9, 9, 8,
+    # 8, 8 ms.
+    battery-test=8
+    # Pure functions of MPRIS2 D-Bus payloads: metadata unwrap, playback status tokens, every refusal. No
+    # daemon, no bus, no display — like battery-test, which is why it sits beside it. Measured as the median
+    # of ten passes on this machine: 25, 26, 27, 27, 27, 29, 29, 34, 41 ms; 29 ms chosen (average of the two
+    # middle values, excluding the 41 ms outlier).
+    media-test=29
+    # Reads seven files and compares them with constants compiled into it, plus the meta-objects of the four
+    # QML singletons whose classes it links; it does no I/O beyond the read and no work that depends on the
+    # machine, which is why it is near the cheapest binary in the table. Measured as the middle of three runs:
+    # 13, 15 and 14 ms. It was 71 ms while it linked `quantum-shell-wayland` for the bar window's row, and
+    # that same build times 72, 74 and 74 ms today against 13, 15 and 14 without it: the whole difference is
+    # that library being loaded and its font caches built, which is the cost the sanitizer job made too high
+    # to keep. The row is read from its header instead, for the reason tests/unit gives at the link line.
+    spec-values-test=14
     niri-state-test=11
     niri-keyboard-layouts-test=10
     niri-version-test=10
     niri-output-test=9
-    bar-interaction-test=401)
+    # Re-measured three times on this machine, and each time because the number was wrong for a reason
+    # rather than merely old. 498 ms was a pass under the session's `QT_QPA_PLATFORM=wayland`, which this
+    # binary used to inherit: offscreen, which is what it has always claimed to be and what CI runs it as,
+    # costs 345 ms. It then gained the two configuration slots of the system status — one of which waits
+    # for a real CPU reading before it can compare a form — and a pass was 445 ms. Three more slots arrived
+    # with the volume readout, one of which waits out two hidings and two showings of a widget whose width
+    # is fed by font metrics. The three were re-measured once more against the built binaries rather than
+    # carried over — a pass of `bar-interaction-test` is 599 ms, of `config-test` 17 ms, and of the new
+    # `audio-test` 11 ms, each taken as the middle of three runs — because the earlier figures had been
+    # written from an intermediate build and a cost table is only worth what its numbers are.
+    # 599 was then carried over across the landing that grew this binary most: the system status got a `/proc`
+    # of the test's own — the slots that assert a form now write the numbers they assert and read them back
+    # through the widget — and beside them arrived the one slot that reads the *machine's* files, because a
+    # fixture proves the parsing and the binding and something has to prove that the reading is real. Measured
+    # one slot at a time against the built binary: a single system-status slot costs 140 ms with the window and
+    # the QML loaded, the fixture work is under that measurement's resolution, and the slot that reads the
+    # machine's `/proc` costs 392 ms — two readings of a real `/proc/stat`, two of its `/proc/meminfo`, and
+    # 250 ms of waits inside it. A pass is 870 ms now, the middle of three runs of this binary.
+    # Re-measured in the network landing, because placing three more widgets in the bar's trailing group and
+    # asserting their room moved the layout this test drives: a pass is now 1046 ms against the 870 it used to
+    # be, the middle of three runs. A stale figure here is an unbalanced split that fails nothing.
+    bar-interaction-test=1046
+    # The network module's test, measured the same way: 2364 ms, the middle of three runs that came out at 2363,
+    # 2364 and 2370 — a spread of seven milliseconds, which is why one figure is enough. It is the most expensive
+    # unit pass here and the reason is honest rather than incidental: it starts a bus daemon of its own, walks a
+    # real D-Bus connection four objects deep, and deliberately holds a reply in flight for 150 ms to catch the
+    # one race a fake daemon can arrange and a real one cannot be asked for.
+    network-test=2364)
 set(QS_ORDER_CHECK_SHARDS 4)
 
 # The table, checked in both directions before it is used. A target of the check with no measured cost
@@ -324,6 +398,22 @@ else()
         "the session (the overview one, and the one that maps a bar)")
 endif()
 
+# Registered on any machine: it reads, it changes nothing, and where there is no NetworkManager it skips with
+# the reason rather than passing quietly.
+add_test(NAME network-live-test COMMAND network-live-test)
+
+set(QS_AUDIO_TESTS "$ENV{QS_AUDIO_TESTS}")
+if(NOT QS_AUDIO_TESTS STREQUAL "")
+    add_test(NAME audio-live-test COMMAND audio-live-test)
+    message(STATUS
+        "audio live test registered: it starts a PipeWire daemon of its own and changes no device of the"
+        " session's")
+else()
+    message(STATUS
+        "audio live test not registered: set QS_AUDIO_TESTS=1 to run the test that starts a PipeWire "
+        "daemon of its own")
+endif()
+
 # Restarting a compositor needs its own opt-in for the same reason, and one more: it starts and stops a
 # compositor of its own, nested in the session.
 set(QS_NIRI_RESTART_TESTS "$ENV{QS_NIRI_RESTART_TESTS}")
@@ -350,7 +440,11 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/public_names.cmake)
 
 string(REPLACE ";" "|" QS_TEST_NAMES_ARG "${QS_TEST_NAMES}")
 string(REPLACE ";" "|" QS_ENVIRONMENT_NAMES_ARG "${QS_ENVIRONMENT_NAMES}")
-set(QS_PUBLIC_DOCUMENTS "${CMAKE_SOURCE_DIR}/AGENTS.md|${CMAKE_SOURCE_DIR}/QUANTUM_SHELL.md")
+# Every document that tells someone to run a test by name is read here, which is why adding a document is
+# an edit to this line: a fourth document whose names nothing checks is the document that lies. The
+# engineering spec is derived from the code, so its names are the ones most likely to be left behind by a
+# rename, and it is on the list for exactly that reason.
+set(QS_PUBLIC_DOCUMENTS "${CMAKE_SOURCE_DIR}/AGENTS.md|${CMAKE_SOURCE_DIR}/QUANTUM_SHELL.md|${CMAKE_SOURCE_DIR}/ENGINEERING_SPEC.md")
 
 add_test(NAME public-names-test
     COMMAND ${CMAKE_COMMAND}

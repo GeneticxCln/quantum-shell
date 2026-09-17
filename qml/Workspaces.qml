@@ -13,6 +13,10 @@ import QuantumShell 1.0
 Item {
     id: root
 
+    // Named the way the row of capsules below is, so the group this widget landed in can be read without
+    // counting the bar's children.
+    objectName: "workspaces"
+
     property color foreground
     property color muted
     property color accent

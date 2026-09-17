@@ -63,7 +63,7 @@ set(QT_FIND_PRIVATE_MODULES ON)
 # Concurrent arrives with the configuration watcher, which parses a changed file on a worker thread rather
 # than on the one drawing the bar. It is in the project's Qt list already (QUANTUM_SHELL.md § Technology
 # Stack).
-find_package(Qt6 6.11 REQUIRED COMPONENTS Core Network Qml Test Gui Quick Concurrent)
+find_package(Qt6 6.11 REQUIRED COMPONENTS Core Network DBus Qml Test Gui Quick Concurrent)
 find_package(Qt6 6.11 REQUIRED COMPONENTS WaylandClient WaylandScannerTools)
 qt_standard_project_setup()
 # QTP0001 is a Qt Qml policy about where a QML module's files are found. No QML module is created
@@ -141,6 +141,127 @@ target_include_directories(quantum-shell-config PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(quantum-shell-config
     PUBLIC Qt6::Core Qt6::Qml tomlplusplus::tomlplusplus quantum-shell-warnings
     PRIVATE Qt6::Concurrent quantum-shell-logging)
+
+# --- Quantum Shell: system statistics -------------------------------------------------------------
+# What the system is doing, read from /proc: the aggregate CPU counters and the memory fields. Core and Qml
+# only — a /proc read needs no display, no socket and no D-Bus — so it is testable anywhere, including in a
+# container with the rest of /proc mounted.
+#
+# The cadence this library owns is the shell's second reading with no event source, and the reason is written
+# down where the decision is: `src/system/SysMonService.h`.
+add_library(quantum-shell-system STATIC
+    src/system/SysMonService.cpp)
+target_include_directories(quantum-shell-system PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-system
+    PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings
+    PRIVATE quantum-shell-logging)
+
+# --- Quantum Shell: audio -------------------------------------------------------------------------
+# The default sink's volume and mute state, read from the PipeWire daemon and written back to it. The
+# dependency is the one QUANTUM_SHELL.md § Technology Stack states — "Audio | PipeWire >= 1.6 (C API),
+# WirePlumber >= 0.5" — and it is found through pkg-config, which is how the library is packaged on every
+# distribution this shell targets and what the design's own CMake sketch uses.
+#
+# The floor is enforced here rather than only in a comment, so a build against a library older than the
+# events this module subscribes to fails at configure time and names the version it found. The headers are
+# C and belong to another project, so they are SYSTEM includes: a warning from a library's own headers is
+# not a defect in this repository, and the -Werror policy target would make it a build failure.
+find_package(PkgConfig REQUIRED)
+# The floor is `libpipewire-0.3 >= 1.6` in pkg-config's own syntax, so the configure fails with the version
+# it found rather than a compile error somewhere in the module.
+#
+# The include directories are named as SYSTEM explicitly rather than taken from `PkgConfig::PIPEWIRE`, and
+# that is not a stylistic choice: these headers are C, they use statement expressions and compound literals
+# that `-Wpedantic` rejects in C++, and they cast away `const` in ways `-Wcast-qual` rejects. Every one of
+# those is a defect in a project's *own* code and none of them is a defect here, and a system header is how
+# the language says so.
+pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3>=1.6)
+add_library(quantum-shell-audio STATIC
+    src/audio/AudioVolume.cpp
+    src/audio/PipeWireService.cpp)
+target_include_directories(quantum-shell-audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# `SYSTEM` is a keyword of its own and cannot share a call with a scope keyword, which is why this is a
+# second call rather than a second line in the one above.
+target_include_directories(quantum-shell-audio SYSTEM PRIVATE ${PIPEWIRE_INCLUDE_DIRS})
+target_link_directories(quantum-shell-audio PRIVATE ${PIPEWIRE_LIBRARY_DIRS})
+target_link_libraries(quantum-shell-audio
+    PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings
+    PRIVATE quantum-shell-logging ${PIPEWIRE_LIBRARIES})
+
+# --- Quantum Shell: the shared D-Bus half ---------------------------------------------------------
+# What more than one D-Bus module needs, and nothing that only one of them does: an object's properties as
+# they arrived, the accessors that read a variant by the type it carries, and the in-flight buffer that keeps
+# a change which overtook a first reply from being undone by it. Its own target because it has two consumers
+# — this is not a shared library for its own sake, it is the honest shape of a thing two modules link — and
+# because compiling it into both would have put the same strong symbols in two static libraries, which is a
+# duplicate definition at link time rather than a build error.
+#
+# Core and DBus, no Qml: a module that follows a daemon and publishes nothing to QML does not need an engine.
+add_library(quantum-shell-dbus STATIC
+    src/dbus/DbusProperties.cpp)
+target_include_directories(quantum-shell-dbus PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-dbus
+    PUBLIC Qt6::Core Qt6::DBus quantum-shell-warnings)
+
+# --- Quantum Shell: network -----------------------------------------------------------------------
+# The connection NetworkManager is carrying, read from its D-Bus signals rather than by asking it. The
+# dependency is Qt's own D-Bus module, which is part of Qt rather than a library of its own — the design's
+# § Technology Stack lists `NetworkManager over D-Bus` for exactly this reason: the daemon publishes its
+# state and the shell subscribes to it, so this module adds no client library and no polling.
+#
+# The directory is `src/dbus/` and the target is `quantum-shell-network` — the same shape `src/audio/` and
+# `quantum-shell-audio` have, and the directory is named for the *transport* rather than the readout
+# because the modules still to come reach their daemons the same way: the battery and the media player are
+# both D-Bus clients, and they belong beside this one rather than in three directories that each open the
+# same bus.
+#
+# Core, DBus and Qml, no Gui: nothing here draws, and the configuration schema, the IPC and the tests can
+# all link it without an engine or a display.
+add_library(quantum-shell-network STATIC
+    src/dbus/NetworkService.cpp
+    src/dbus/NetworkStatus.cpp)
+target_include_directories(quantum-shell-network PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-network
+    PUBLIC Qt6::Core Qt6::DBus Qt6::Qml quantum-shell-dbus quantum-shell-warnings
+    PRIVATE quantum-shell-logging)
+
+# --- Quantum Shell: battery -----------------------------------------------------------------------
+# The charge UPower reports, read from its signals for the same reason and in the same shape: the daemon
+# publishes `PropertiesChanged` on the manager object and on the display device it names, so a level, a state
+# or a machine that unplugged itself arrives as a signal and nothing here asks on a schedule.
+#
+# Its own target rather than more sources in the network one, because it is a different daemon: a build that
+# wanted the connection without the battery, or the tests for one without the other, links one of them.
+#
+# Core, DBus and Qml, no Gui, and no system library: like the network module, its dependency is Qt's own
+# D-Bus module, which is why UPower appears in § Technology Stack as `UPower over D-Bus` rather than as
+# libupower-glib. The names and the enum values in `BatteryStatus.h` are UPower's own — read off the running
+# daemon's introspection and off the installed `up-types.h` — and the client library is not linked at all.
+add_library(quantum-shell-battery STATIC
+    src/dbus/BatteryService.cpp
+    src/dbus/BatteryStatus.cpp)
+target_include_directories(quantum-shell-battery PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-battery
+    PUBLIC Qt6::Core Qt6::DBus Qt6::Qml quantum-shell-dbus quantum-shell-warnings
+    PRIVATE quantum-shell-logging)
+
+# --- Quantum Shell: media -------------------------------------------------------------------------
+# The metadata MPRIS players report, read from their signals: players come and go, the service follows the
+# active one, and `PropertiesChanged` on the player interface delivers title, artist, album and playback
+# state as signals.
+#
+# Its own target rather than combined with network or battery, because it is yet another daemon: a build
+# that wanted one service without the others links the ones it needs.
+#
+# Core, DBus and Qml, no Gui, and no system library: the MPRIS names and the interface in `MediaStatus.h`
+# are the MPRIS2 specification's own, and the client is Qt D-Bus with no player library linked.
+add_library(quantum-shell-media STATIC
+    src/dbus/MediaService.cpp
+    src/dbus/MediaStatus.cpp)
+target_include_directories(quantum-shell-media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-media
+    PUBLIC Qt6::Core Qt6::DBus Qt6::Qml quantum-shell-dbus quantum-shell-warnings
+    PRIVATE quantum-shell-logging)
 
 # --- Quantum Shell: local IPC ---------------------------------------------------------------------
 # The socket, the frames and the frozen verb names (QUANTUM_SHELL.md § IPC), plus the command-line client's
@@ -284,14 +405,21 @@ add_executable(quantum-shell
 set(QS_QML_FILES
     qml/Main.qml
     qml/Bar.qml
+    qml/CapsuleGroup.qml
     qml/Clock.qml
+    qml/SystemMonitor.qml
+    qml/Volume.qml
+    qml/Network.qml
+    qml/Battery.qml
+    qml/Media.qml
     qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"
     PREFIX "/"
     FILES ${QS_QML_FILES})
 target_link_libraries(quantum-shell
     PRIVATE quantum-shell-capabilities quantum-shell-ipc quantum-shell-niri quantum-shell-config
-            quantum-shell-wayland quantum-shell-warnings)
+            quantum-shell-system quantum-shell-audio quantum-shell-network quantum-shell-battery
+            quantum-shell-media quantum-shell-wayland quantum-shell-warnings)
 # The build's version, compiled in: `qsctl version`, the startup record and the IPC handshake all report it,
 # and none of them should be quoting a copy of the number written out by hand.
 target_compile_definitions(quantum-shell PRIVATE QS_VERSION="${PROJECT_VERSION}")

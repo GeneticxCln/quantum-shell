@@ -31,6 +31,8 @@ set(QS_TEST_NAMES
     niri-live-layershell-test
     niri-live-restart-test
     niri-live-shell-restart-test
+    audio-live-test
+    network-live-test
     niri-version-test
     niri-ipc-test
     niri-event-stream-test
@@ -43,11 +45,17 @@ set(QS_TEST_NAMES
     niri-reconnect-test
     config-test
     config-watcher-test
+    sysmon-test
+    audio-test
+    network-test
+    battery-test
+    media-test
     ipc-protocol-test
     ipc-server-test
     ipc-capabilities-test
     app-logging-test
     snapshot-reconcile-test
+    spec-values-test
     bar-interaction-test)
 
 # The environment variables that change what a test run does. `NIRI_SOCKET` is niri's own and is read to
@@ -56,6 +64,7 @@ set(QS_ENVIRONMENT_NAMES
     NIRI_SOCKET
     QS_NIRI_SESSION_TESTS
     QS_NIRI_RESTART_TESTS
+    QS_AUDIO_TESTS
     QS_TEST_ORDER_SEED
     QS_TEST_ORDER_COVERAGE
     QS_TEST_ORDER_PASSES

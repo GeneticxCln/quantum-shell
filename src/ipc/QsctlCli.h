@@ -15,9 +15,11 @@
 //     that the one command with a wrapper around the answer it was asked for.
 //
 // A verb this build does not implement is refused as a *usage* error naming the words, not sent to the
-// shell to be refused there: `qsctl volume up` is a command the design document mentions and this shell has
-// no audio service for, so the honest answer is that qsctl does not take it — not a request the shell
-// receives and declines, which would read as "the shell is broken" rather than "that is not a command".
+// shell to be refused there: `qsctl volume up` is a command the design document names for the volume
+// widget, and it is still not a verb the shell answers — so the honest answer remains that qsctl does not
+// take it, not a request the shell receives and declines, which would read as "the shell is broken" rather
+// than "that is not a command". The refusal is about the verb's existence rather than about whether
+// anything is behind it, which is why it did not change when the volume module landed.
 #pragma once
 
 #include "ipc/IPCProtocol.h"

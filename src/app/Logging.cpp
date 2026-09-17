@@ -9,6 +9,11 @@ Q_LOGGING_CATEGORY(niriLog, "quantum.shell.niri")
 Q_LOGGING_CATEGORY(configLog, "quantum.shell.config")
 Q_LOGGING_CATEGORY(ipcLog, "quantum.shell.ipc")
 Q_LOGGING_CATEGORY(waylandLog, "quantum.shell.wayland")
+Q_LOGGING_CATEGORY(systemLog, "quantum.shell.system")
+Q_LOGGING_CATEGORY(audioLog, "quantum.shell.audio")
+Q_LOGGING_CATEGORY(networkLog, "quantum.shell.network")
+Q_LOGGING_CATEGORY(batteryLog, "quantum.shell.battery")
+Q_LOGGING_CATEGORY(mediaLog, "quantum.shell.media")
 
 namespace Logging {
 

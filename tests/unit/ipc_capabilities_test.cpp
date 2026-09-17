@@ -51,7 +51,23 @@ namespace {
 // The key paths the shell offers to `qsctl config get`, written out independently of `ConfigSchema.h` and
 // compared with it at compile time. The duplication is the point: these paths are what a script types, so a
 // rename in the schema must not build until it is acknowledged here and in the document that lists them.
-constexpr std::array<const char*, 2> coveredKeyPaths{"bar.height", "bar.layerNamespace"};
+constexpr std::array<const char*, 17> coveredKeyPaths{"bar.height",
+                                                       "bar.layerNamespace",
+                                                       "bar.system.sample_interval_ms",
+                                                       "bar.system.show_cpu",
+                                                       "bar.system.show_memory",
+                                                       "bar.system.memory_format",
+                                                       "bar.audio.show_volume",
+                                                       "bar.audio.volume_scale",
+                                                       "bar.audio.step_percent",
+                                                       "bar.audio.step_decibels",
+                                                       "bar.network.show_status",
+                                                       "bar.network.show_name",
+                                                       "bar.network.show_strength",
+                                                       "bar.battery.show_status",
+                                                       "bar.battery.show_percentage",
+                                                       "bar.battery.show_time",
+                                                       "bar.media.show_media"};
 
 template <std::size_t Declared, std::size_t Covered>
 constexpr bool samePaths(const std::array<const char*, Declared>& declared,
@@ -194,16 +210,40 @@ void IpcCapabilitiesTest::everyConfigurationKeyPathResolvesToTheLiveValue() {
     QCOMPARE(capabilities_->configValue(QStringLiteral("bar.height"))->toInt(), config_.bar()->height());
     QCOMPARE(capabilities_->configValue(QStringLiteral("bar.layerNamespace"))->toString(),
              config_.bar()->layerNamespace());
+    QCOMPARE(capabilities_->configValue(QStringLiteral("bar.system.sample_interval_ms"))->toInt(),
+             config_.bar()->system()->sampleIntervalMs());
+    QCOMPARE(capabilities_->configValue(QStringLiteral("bar.system.show_cpu"))->toBool(),
+             config_.bar()->system()->showCpu());
+    QCOMPARE(capabilities_->configValue(QStringLiteral("bar.system.memory_format"))->toString(),
+             config_.bar()->system()->memoryFormat());
 
     ConfigValues changed;
     changed.bar.height = 44;
     changed.bar.layerNamespace = QStringLiteral("quantum-shell-bar-two");
+    changed.bar.system.sampleIntervalMs = 750;
+    changed.bar.system.showCpu = false;
+    changed.bar.system.memoryFormat = QStringLiteral("percent");
     config_.apply(changed);
 
     QCOMPARE(capabilities_->configValue(QStringLiteral("bar.height"))->toInt(), 44);
     QCOMPARE(capabilities_->configValue(QStringLiteral("bar.height"))->toInt(), config_.bar()->height());
     QCOMPARE(capabilities_->configValue(QStringLiteral("bar.layerNamespace"))->toString(),
              QStringLiteral("quantum-shell-bar-two"));
+    // A nested key follows the same path through the tree, and it is a JSON number rather than a string: a
+    // script that does arithmetic on `qsctl config get bar.system.sample_interval_ms` gets a number.
+    QCOMPARE(capabilities_->configValue(QStringLiteral("bar.system.sample_interval_ms"))->toInt(), 750);
+    QCOMPARE(capabilities_->configValue(QStringLiteral("bar.system.sample_interval_ms"))->toInt(),
+             config_.bar()->system()->sampleIntervalMs());
+    // A flag arrives as a JSON boolean and the form as the token: a script can branch on the first without
+    // comparing a string against `true`, which is what this layer's type is for. Read here on the JSON value
+    // rather than on a `QVariant`, because that is what this interface carries — the schema's own types are
+    // `config-test`'s, where the resolver is asked directly.
+    const QJsonValue showCpu = *capabilities_->configValue(QStringLiteral("bar.system.show_cpu"));
+    QVERIFY2(showCpu.isBool(), "the IPC reported a flag as something other than a JSON boolean");
+    QCOMPARE(showCpu.toBool(), false);
+    const QJsonValue format = *capabilities_->configValue(QStringLiteral("bar.system.memory_format"));
+    QVERIFY(format.isString());
+    QCOMPARE(format.toString(), QStringLiteral("percent"));
 
     // Put back, so a later slot in the same process is not reading this slot's edit — and because the default
     // namespace is what the rest of the suite refers to.
@@ -214,7 +254,9 @@ void IpcCapabilitiesTest::aKeyThisShellDoesNotReadResolvesToNothing() {
     // Every shape of a path that is not a key the schema reads. Each must resolve to nothing rather than to
     // an empty string or a default, because the server turns "nothing" into a refusal that names the path and
     // a null value into an answer a script would have to detect for itself.
-    for (const char* path : {"bar", "bar.widht", "bar.height.px", "schema_version", "theme", ""}) {
+    for (const char* path : {"bar", "bar.widht", "bar.height.px", "bar.system", "bar.sample_interval_ms",
+                            "bar.system.sample_interval", "bar.system.show", "bar.system.memory_formats",
+                            "schema_version", "theme", ""}) {
         QVERIFY2(!capabilities_->configValue(QString::fromLatin1(path)).has_value(), path);
     }
 }

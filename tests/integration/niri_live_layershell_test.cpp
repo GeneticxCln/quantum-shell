@@ -306,6 +306,7 @@ private slots:
     void theBarAppearsInTheCompositorsLayerListAndDisappearsWithTheShell();
     void theBarAsksForItsAnchorsExclusiveZoneAndKeyboardInteractivity();
     void theConfiguredHeightAndNamespaceAreWhatTheCompositorIsGiven();
+    void theConfiguredSystemSettingsAreWhatTheRunningShellUses();
     void theInitialConfigureIsAcknowledgedBeforeAnyBufferIsAttached();
     void theFrozenSocketNameIsTheOneTheShellBound();
     void theShellAnswersQsctlOverItsOwnSocket();
@@ -415,6 +416,11 @@ bool NiriLiveLayerShellTest::startShell(const QString& configHome, const QString
     // libwayland prints every request to stderr, which is how the anchors and the exclusive zone are read
     // back: niri's layer list does not report them and no request reads them.
     environment.insert(QStringLiteral("WAYLAND_DEBUG"), QStringLiteral("1"));
+    // And the shell's own records, which Qt otherwise sends to the journal because this process's stderr is
+    // a pipe rather than a terminal. Forcing them here puts both halves of the run — the protocol traffic
+    // and the shell's account of what it did with its configuration — in the same transcript, which is what
+    // `theConfiguredSystemSettingsAreWhatTheRunningShellUses` reads.
+    environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
     // The abstract socket name is per user rather than per process, so a process already holding it would take
     // this shell's IPC away from it: the shell would log a refusal and carry on — a bar is more useful than an
     // exit — and every `qsctl` below would then be answered by *that* shell while this test asserted about this
@@ -624,6 +630,160 @@ void NiriLiveLayerShellTest::theConfiguredHeightAndNamespaceAreWhatTheCompositor
 
     qInfo("the configured bar went up as \"%s\" with an exclusive zone of %d",
           qPrintable(configuredNamespace), requests.exclusiveZone);
+}
+
+// The configuration reaching a service rather than a surface, and reaching a *running* shell rather than a
+// parser. `main.cpp` is the composition root, so the line that carries `bar.system.sample_interval_ms` to
+// `SysMonService` is not something a unit test can call — this case runs the real shell against a file that
+// names an interval no default has, and reads back both halves of that claim: the running shell's own value
+// for the key over the IPC, and the record the service wrote when it was told. The record alone would not be
+// enough (it could name a value from anywhere) and the `qsctl` answer alone would not be enough (it only
+// proves the schema read the file), so the two together are what say the file's number reached the service.
+//
+// The table's other three settings are read back here as well, because they are the same path — a file, the
+// watcher, the validated tree, and an answer from a shell that is running — and because what an *omitted*
+// key gives back is worth reading on a shell rather than in a parse function. What each setting then draws
+// is `bar-interaction-test`'s, offscreen and per token: nothing here can see a pixel, and this case does not
+// pretend otherwise.
+void NiriLiveLayerShellTest::theConfiguredSystemSettingsAreWhatTheRunningShellUses() {
+    // 750 ms: a value the build does not default to and no other case sets, so a record naming it can only
+    // have come from this file.
+    constexpr int configuredIntervalMs = 750;
+
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    QVERIFY(QDir().mkpath(home.filePath(QStringLiteral("quantum-shell"))));
+    QFile file(home.filePath(QStringLiteral("quantum-shell/config.toml")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("schema_version = 1\n\n[bar.system]\nsample_interval_ms = 750\nshow_cpu = false\n"
+               "memory_format = \"percent\"\n\n[bar.audio]\nstep_decibels = 2.5\n"
+               "volume_scale = \"decibel\"\n");
+    file.close();
+
+    QVERIFY2(startShell(home.path()), qPrintable(startFailure_));
+
+    // The file reached the running shell. This is the sentence that makes the record below about this file
+    // rather than about the record being written with some other number.
+    int exitCode = -1;
+    const QString answered = runQsctl(
+        {QStringLiteral("config"), QStringLiteral("get"), QStringLiteral("bar.system.sample_interval_ms")},
+        &exitCode);
+    QVERIFY2(exitCode == 0,
+             qPrintable(QStringLiteral("`qsctl config get bar.system.sample_interval_ms` exited %1: %2")
+                            .arg(exitCode)
+                            .arg(startFailure_.isEmpty() ? qsctlError() : startFailure_)));
+    QCOMPARE(answered, QString::number(configuredIntervalMs));
+
+    // The rest of the same table, through the same path. `show_memory` is deliberately absent from the file:
+    // what an omitted key gives back is the default, and that is worth reading on a running shell too.
+    const QString format = runQsctl(
+        {QStringLiteral("config"), QStringLiteral("get"), QStringLiteral("bar.system.memory_format")},
+        &exitCode);
+    QCOMPARE(exitCode, 0);
+    QCOMPARE(format, QStringLiteral("percent"));
+    QCOMPARE(runQsctl({QStringLiteral("config"), QStringLiteral("get"),
+                       QStringLiteral("bar.system.show_cpu")},
+                      &exitCode),
+             QStringLiteral("false"));
+    QCOMPARE(exitCode, 0);
+    QCOMPARE(runQsctl({QStringLiteral("config"), QStringLiteral("get"),
+                       QStringLiteral("bar.system.show_memory")},
+                      &exitCode),
+             QStringLiteral("true"));
+    QCOMPARE(exitCode, 0);
+
+    // And the service was told, rather than left sampling at the build's own 2000 ms: the record names the
+    // interval the shell started with. A build that never wired the key would have written 2000 here, which
+    // is the falsifier for this claim.
+    const QString started =
+        QStringLiteral("sampling /proc/stat and /proc/meminfo every %1 ms").arg(configuredIntervalMs);
+    QVERIFY2(transcript().contains(started),
+             qPrintable(QStringLiteral("the shell never recorded %1; its records and protocol traffic were:\n%2")
+                            .arg(started, transcript())));
+
+    // The audio table, which is the phase's other service and the same shape of claim: the two step keys and
+    // the unit that decides which of them a notch applies are read back through the IPC path — and then the
+    // *service's* own account of what it was given is read out of the transcript, because a `config get` says
+    // what the file holds and being handed over is a different thing from being held. `step_percent` is left
+    // out of the file for the reason `show_memory` was: what an omitted key gives back is the schema's
+    // default, and that is worth reading on a running shell rather than in a parse function.
+    constexpr double configuredStepDecibels = 2.5;
+    QCOMPARE(runQsctl({QStringLiteral("config"), QStringLiteral("get"),
+                       QStringLiteral("bar.audio.step_decibels")},
+                      &exitCode),
+             QString::number(configuredStepDecibels));
+    QCOMPARE(exitCode, 0);
+    QCOMPARE(runQsctl({QStringLiteral("config"), QStringLiteral("get"),
+                       QStringLiteral("bar.audio.volume_scale")},
+                      &exitCode),
+             QStringLiteral("decibel"));
+    QCOMPARE(exitCode, 0);
+    QCOMPARE(runQsctl({QStringLiteral("config"), QStringLiteral("get"),
+                       QStringLiteral("bar.audio.step_percent")},
+                      &exitCode),
+             QStringLiteral("5"));
+    QCOMPARE(exitCode, 0);
+
+    // Both steps and the unit reached the service. This is the half no unit test can take, because the three
+    // lines that do it live in the composition root: a bound value in `Config` is not evidence that the object
+    // which applies it was told. A build that wired neither key would have written the defaults — five points
+    // and one decibel — and nothing naming decibels at all.
+    const QString startedStep =
+        QStringLiteral("a wheel notch moves the volume by %1 dB").arg(configuredStepDecibels);
+    QVERIFY2(transcript().contains(startedStep),
+             qPrintable(QStringLiteral("the shell never recorded %1; its records and protocol traffic were:\n%2")
+                            .arg(startedStep, transcript())));
+    const QString startedUnit =
+        QStringLiteral("the volume readout and the wheel's step are both in decibel");
+    QVERIFY2(transcript().contains(startedUnit),
+             qPrintable(QStringLiteral("the shell never recorded %1; its records and protocol traffic were:\n%2")
+                            .arg(startedUnit, transcript())));
+
+    // The other half of "the cadence is the person's": an edit to the key while the shell runs, which is a
+    // different path from the startup one — the watcher has to notice the edit, the schema re-read the file
+    // and the service be told again. The shell is started again because the IPC socket and the transcript are
+    // per run; the file's second value is what this half is about.
+    //
+    // The same edit carries the audio keys, because they are wired the same way and the thing that could differ
+    // between them is which signal reaches which setter: the unit changed away from the value the shell started
+    // with, so the record below can only have been written by this edit, and the percentage step is named here
+    // for the first time — the shell's startup record for it said the default, which is what makes its absence
+    // from the first file observable rather than assumed.
+    constexpr int editedIntervalMs = 1000;
+    constexpr int editedStepPercent = 8;
+    const QByteArray editedConfig = "schema_version = 1\n\n[bar.system]\nsample_interval_ms = 1000\n"
+                                    "\n[bar.audio]\nstep_percent = 8\nvolume_scale = \"percent\"\n";
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(file.write(editedConfig), qint64(editedConfig.size()));
+    file.close();
+
+    const QString edited =
+        QStringLiteral("sampling /proc/stat and /proc/meminfo every %1 ms").arg(editedIntervalMs);
+    const QString editedStep =
+        QStringLiteral("a wheel notch moves the volume by %1 percentage points").arg(editedStepPercent);
+    const QString editedUnit =
+        QStringLiteral("the volume readout and the wheel's step are both in percent");
+    QElapsedTimer editClock;
+    editClock.start();
+    while (!(transcript().contains(edited) && transcript().contains(editedStep)
+             && transcript().contains(editedUnit))
+           && editClock.elapsed() < startUpFactTimeoutMs) {
+        QTest::qWait(50);
+    }
+    for (const QString& record : {edited, editedStep, editedUnit}) {
+        QVERIFY2(transcript().contains(record),
+                 qPrintable(QStringLiteral("editing the file to %1 while the shell ran never reached the "
+                                           "service in %2 ms; the records were:\n%3")
+                                .arg(record)
+                                .arg(editClock.elapsed())
+                                .arg(transcript())));
+    }
+
+    qInfo("the shell read %d ms for bar.system.sample_interval_ms at startup and followed an edit to %d ms, "
+          "with the wheel's step moving from %.1f dB in the decibel unit to %d points in the percentage one",
+          configuredIntervalMs, editedIntervalMs, configuredStepDecibels, editedStepPercent);
+
+    stopShell();
 }
 
 // The ordering niri disconnects a client for getting wrong, and the one this test exists because of: the

@@ -310,8 +310,33 @@ void NiriLiveActionTest::anActionTheCompositorDoesNotKnowIsReportedNotIgnored() 
     QVERIFY(!reply->isOk());
     QCOMPARE(reply->text, QStringLiteral("error parsing request"));
     // And nothing changed: a rejected action is not a performed one.
+    //
+    // When the two differ, what is asked is which side moved — because this case runs on a session a person
+    // is sitting at, niri's own default config binds the overview to a key, and somebody pressing it inside
+    // this 150 ms wait changes exactly the value being compared. Comparing the model with the model as it was
+    // would fail here and name the shell for something the person did, which is the same mistake as comparing
+    // a width against one taken before the clock ticked: a value remembered across a wait is not a baseline
+    // the outside world has agreed to hold still.
+    //
+    // The compositor is the discriminator, and it is the right one because the request being refused is the
+    // only thing this shell sent: niri answers an action it does not know with a parse error and performs
+    // nothing, so a model that agrees with the compositor was told about a change that happened, while a model
+    // that disagrees with it has moved on its own — which is the defect this case exists for, and it still
+    // fails.
     QTest::qWait(150);
-    QCOMPARE(state_.isOverviewOpen(), overviewBefore);
+    const bool overviewNow = state_.isOverviewOpen();
+    if (overviewNow != overviewBefore) {
+        const std::optional<bool> compositorNow = compositorOverviewState();
+        QVERIFY2(compositorNow.has_value(), "the compositor never answered an OverviewState request");
+        QVERIFY2(*compositorNow == overviewNow,
+                 qPrintable(QStringLiteral("the overview is %1 on the model where the compositor reports %2, "
+                                           "after a request the compositor refused")
+                                .arg(overviewNow ? QStringLiteral("open") : QStringLiteral("closed"),
+                                     *compositorNow ? QStringLiteral("open") : QStringLiteral("closed"))));
+        qInfo("the overview changed while the refused request was in flight and the compositor reports the "
+              "same change (%s): the desktop was acted on rather than the shell",
+              overviewNow ? "open" : "closed");
+    }
 }
 
 void NiriLiveActionTest::focusingAnotherWorkspaceMovesFocusAndFocusingItBackRestoresIt() {

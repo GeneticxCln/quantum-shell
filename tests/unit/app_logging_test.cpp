@@ -26,9 +26,17 @@ namespace {
 // filter a person writes is `quantum.shell.*` — is caught here rather than in a bug report where the
 // filter silently matched nothing.
 using CategoryAccessor = const QLoggingCategory& (*)();
-constexpr std::array<CategoryAccessor, 5> categories{&quantum::app::shellLog, &quantum::app::niriLog,
+// Eight, and two of them arrived over time without being added here: the audio one with the volume readout and
+// the network one with this module. That is exactly the hole this list is for — a category absent from it is a
+// category whose name nothing checks, and the shell would go on printing it while `quantum.shell.*` filters
+// everything else — so the list is read as the complete set and the slot below fails if a name here is a
+// duplicate or outside the shell's namespace. What it cannot do is notice a category that *exists* and is not
+// listed; the guard for that is that a category is added in the same change as its reader, and the diff that
+// adds one is where this line gets its next entry.
+constexpr std::array<CategoryAccessor, 8> categories{&quantum::app::shellLog, &quantum::app::niriLog,
                                                     &quantum::app::configLog, &quantum::app::ipcLog,
-                                                    &quantum::app::waylandLog};
+                                                    &quantum::app::waylandLog, &quantum::app::systemLog,
+                                                    &quantum::app::audioLog, &quantum::app::networkLog};
 
 }  // namespace
 

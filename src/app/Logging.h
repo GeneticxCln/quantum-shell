@@ -48,6 +48,36 @@ Q_DECLARE_LOGGING_CATEGORY(ipcLog)
 // The layer-shell route: a window that cannot be given a role, and a namespace the integration refuses.
 Q_DECLARE_LOGGING_CATEGORY(waylandLog)
 
+// The system readings taken from /proc: every file that could not be read and every line that was refused
+// rather than parsed. A reading that stops arriving is otherwise invisible — the widget shows its empty
+// state either way — so this category is where the reason for it is.
+Q_DECLARE_LOGGING_CATEGORY(systemLog)
+
+// The audio connection: the daemon the shell attached to, the sink it resolved as the default, every
+// param it refused to read as a volume, every write it refused to make, and the backoff between attempts
+// after a daemon went away. A volume that stops moving is otherwise indistinguishable from a volume that
+// did not change, so this category is where the difference is written down.
+Q_DECLARE_LOGGING_CATEGORY(audioLog)
+
+// The network connection: whether the bus could be reached at all, the daemon the shell attached to and the
+// unique name this process holds on the bus, the daemon leaving and arriving, and every object it refused to
+// read. This is the category that answers the two questions a network readout cannot answer for itself — why
+// there is no reading, and whether the shell is the thing that is asking — because a bar that shows nothing and
+// a bar that shows `offline` look the same from outside the process.
+Q_DECLARE_LOGGING_CATEGORY(networkLog)
+
+// The battery connection: the same three questions the network category answers, one daemon over — whether the
+// bus could be reached, the name the shell attached to, the daemon leaving and arriving, and every object or
+// property it refused to read. It has one question of its own, and it is the one a battery readout cannot
+// answer from its own state: a machine with no battery and a device that could not be read both draw nothing,
+// so this is where the difference between the two is written down.
+Q_DECLARE_LOGGING_CATEGORY(batteryLog)
+
+// The media player connection: which MPRIS players appeared and disappeared, which player is being followed,
+// track changes, and playback status updates. This category answers why a media readout shows nothing — no
+// players exist, or the active player has no track loaded.
+Q_DECLARE_LOGGING_CATEGORY(mediaLog)
+
 namespace Logging {
 
 // The pattern every record is formatted with, when the environment has not named another. Exposed so the

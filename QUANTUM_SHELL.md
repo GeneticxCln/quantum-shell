@@ -809,13 +809,92 @@ Rules:
   a warning; a file that exists and carries no `schema_version` is, because it is a file whose author
   meant to configure something.
 - **The keys that exist today**, and nothing else: `schema_version`, `bar.height` (logical pixels, at
-  least 1, also the exclusive zone reserved from the tiling area) and `bar.namespace` (which must begin
-  with `quantum-shell-`, the frozen prefix of AGENTS.md). The file is
-  `$XDG_CONFIG_HOME/quantum-shell/config.toml` — `~/.config/quantum-shell/config.toml` by default — and
-  `qml/Main.qml` binds its `height` and `exclusiveZone` to `bar.height` and its `layerNamespace` to
-  `bar.namespace`.
+  least 1, also the exclusive zone reserved from the tiling area), `bar.layerNamespace` (which must begin
+  with `quantum-shell-`, the frozen prefix of AGENTS.md), `[bar.system]`'s four —
+  `sample_interval_ms` (milliseconds between the readout's two `/proc` readings, at least 10 and at most
+  `INT_MAX`, defaulting to 2000), `show_cpu` and `show_memory` (booleans, both true, each saying whether
+  that readout is drawn) and `memory_format` (one of `used_of_total`, `used`, `available`, `percent`) —
+  and `[bar.audio]`'s four: `show_volume` (a boolean, true, whether the volume readout is drawn),
+  `volume_scale` (which of the two numbers the readout is drawn in, `percent` or `decibel`, defaulting to
+  `percent` — and the same token decides which of the two step keys a notch applies, so what is read and
+  how far a notch moves cannot disagree), `step_percent` (percentage points one wheel notch moves the
+  volume in the percentage unit, at least 1, defaulting to 5) and `step_decibels` (decibels one notch moves
+  it in the decibel unit, a number at least 0.1 — the readout's own resolution, since a shorter notch would
+  change nothing a person can see — defaulting to 1.0). Neither step has a ceiling, because a step larger
+  than the range is a request that one notch reach the end of it.
+  — and `[bar.network]`'s three: `show_status` (a boolean, true, whether the network readout is drawn at
+  all), `show_name` (a boolean, true, whether the name of the network it is on is drawn beside the signal)
+  and `show_strength` (a boolean, true, whether the signal is drawn). Three booleans rather than a strength
+  threshold or a list of networks, because the shell decides none of those: what it knows is what the daemon
+  told it, and a key that filtered it would be a second opinion about the desktop. The file is
+  `$XDG_CONFIG_HOME/quantum-shell/config.toml` —
+  `~/.config/quantum-shell/config.toml` by default — and `qml/Main.qml` binds its `height` and
+  `exclusiveZone` to `bar.height` and its `layerNamespace` to `bar.layerNamespace`.
+
+```toml
+schema_version = 1
+
+[bar]
+height = 32
+namespace = "quantum-shell-bar"
+
+[bar.system]
+sample_interval_ms = 2000       # how far apart the system readout's two /proc readings are
+show_cpu = true                 # whether each of the two readouts is drawn at all
+show_memory = true
+memory_format = "used_of_total"  # used_of_total | used | available | percent
+
+[bar.audio]
+show_volume = true              # whether the volume readout is drawn at all
+volume_scale = "percent"        # percent | decibel — the unit the number is drawn in, and the one a notch
+                                # is measured in: it selects which of the two steps below applies
+step_percent = 5                # percentage points one wheel notch moves the volume, in the percent unit
+step_decibels = 1.0             # decibels one wheel notch moves the volume, in the decibel unit
+
+[bar.network]
+show_status = true              # whether the network readout is drawn at all
+show_name = true                # whether the name of the network it is on is drawn
+show_strength = true            # whether the signal quality is drawn
+```
+
+  `bar.system` is a table rather than a set of compound keys such as `system_sample_interval_ms` because
+  the widget that owns the settings owns a table in the file, which is the shape the readouts still to come
+  will take — and the QML tree mirrors the file's tables, so `Config.bar.system.memoryFormat` is where a
+  binding writes what `bar.system.memory_format` is where a person writes. The cadence is also the one key
+  today that no QML file binds to: it is applied by the composition root, which hands the value to
+  `SysMonService` before the engine loads and follows later edits through the tree's own change signal.
+
+  Which readouts are drawn is two flags rather than one `readings = ["cpu", "memory"]` list, and that is a
+  decision with a reason: a list decides an *order*, and the order two readouts appear in is arrangement,
+  which this document gives to `qml/` — a list here would be a second place the bar's own layout is written
+  down. The form the memory readout takes *is* a token, because a token is a choice the file makes and the
+  widget renders; there is no `cpu_format` beside it, because the only honest form for a CPU percentage is a
+  percentage and a key whose every legal value draws the same thing is a key that does nothing. The token is
+  validated here rather than in QML for the reason the rest of this file exists: a widget handed a form it
+  has no branch for would silently draw the default, and a configuration value that does nothing is the
+  failure the schema reports instead.  `config-test` holds the schema's four tokens against its own copy at
+  compile time, and `bar-interaction-test` drives each of them through the shipped widget, so a token renamed
+  on either side fails a build or a test rather than reaching a screen.
+
+  `bar.audio` is the second table of the same shape, and it differs from `bar.system` in exactly one respect
+  worth stating: both of its steps are read by a *service* rather than by a widget. The distance a wheel notch
+  moves is a distance in a volume the daemon owns, so the composition root hands the two values to
+  `PipeWireService` before the engine loads and follows later edits — the same wiring the cadence has, for the
+  same reason. `show_volume` is the widget's, and like the system status's two flags it hides the readout
+  rather than switching off the reading: the service follows the default sink whether or not anything is drawn
+  from it. `volume_scale` is both halves at once, and it is the counterpart the memory form has and the CPU
+  readout does not: a volume has two honest numbers — the desktop's own convention, which is the cube root of
+  the daemon's linear factor and what `wpctl get-volume` prints, and the physical gain in decibels, which is
+  what `pactl list sinks` prints beside it — so a token decides which one is drawn, where a CPU percentage has
+  a single form there is no honest alternative to. The same token decides which step a notch applies, because
+  a step is a distance in the unit a person is reading and the two units are not proportional: a percentage
+  point is worth 0.26 dB at the top of the range and 18.06 dB at the bottom of it, so a person reading
+  decibels and moved by points would be moved by a number that depended on where they already were — by a
+  factor of thirty-six across the range. Two keys rather than one whose meaning depends on another key: a
+  schema where the same word means two things is a schema that lies about itself. See § Audio for the
+  arithmetic, the measurement behind it and what a notch from silence does.
 - **A namespace is read once.** `zwlr_layer_surface_v1`'s namespace is an argument to
-  `get_layer_surface`, and a surface may be given a role once, so a change to `bar.namespace` applies to
+  `get_layer_surface`, and a surface may be given a role once, so a change to `bar.layerNamespace` applies to
   the next start and the layer surface says so when a running shell is edited. Every other key is live:
   a change to `bar.height` resizes the surface that is on screen.
 - **`ConfigWatcher` diffs** and only changed properties emit signals:
@@ -872,7 +951,7 @@ The verbs exist only where a handler answers them, and they are declared once in
 | --- | --- | --- |
 | `version` | `name`, `shell`, `protocol` | it is the shell's own build version, the same one its startup record carries |
 | `state` | the same six values `NiriService` exposes: `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` | read from the service itself, so the keys are its property names and cannot be a second mapping |
-| `config get <path>` | `path` and `value` | the schema resolves it; `bar.height` and `bar.layerNamespace` are the paths that exist |
+| `config get <path>` | `path` and `value` | the schema resolves it; the paths that exist are its own `KeyPaths` list — `bar.height`, `bar.layerNamespace`, `bar.system.sample_interval_ms`, `bar.system.show_cpu`, `bar.system.show_memory`, `bar.system.memory_format`, `bar.audio.show_volume`, `bar.audio.volume_scale`, `bar.audio.step_percent`, `bar.audio.step_decibels`, `bar.network.show_status`, `bar.network.show_name`, `bar.network.show_strength`, each asserted against the resolver in `ipc-capabilities-test` |
 | `bar toggle` | `visible` | the bar window's own visibility, and the compositor's layer list loses and regains the surface |
 
 `qsctl` prints one line of JSON for `version`, `state` and `bar toggle`, and the bare value for
@@ -880,9 +959,11 @@ The verbs exist only where a handler answers them, and they are declared once in
 a JSON document would wrap the answer it was asked for. Its exit codes are interface, because a script
 branches on them: `0` answered, `1` refused, `2` a command line it does not take, `3` no shell listening,
 `4` a protocol mismatch. A verb this build has no handler for is refused as a *usage* error at the client,
-not sent to the shell to be refused there — `qsctl volume up` is a command this document mentions and
-there is no audio service behind it, so the honest answer is that qsctl does not take it rather than a
-request the shell receives and declines, which would read as "the shell is broken".
+not sent to the shell to be refused there — `qsctl volume up` is a command this document mentions for the
+volume widget, and it is still not a verb this shell answers, so the honest answer remains that qsctl does
+not take it rather than a request the shell receives and declines, which would read as "the shell is
+broken". The reason for the refusal changed with the volume module and the reason text had to change with
+it: the claim is about the verb's existence, not about whether a service is there to answer it.
 
 **`subscribe`** — the event feed for external widgets — is designed here and has no handler, so the shell
 refuses it as an unknown verb, naming the four it does answer. It is left out rather than declared and
@@ -900,10 +981,15 @@ new method there, which is a visible change rather than a new case in a switch.
 
 ## Logging
 
-**Landed**, in `src/app/Logging.h` / `Logging.cpp`. Five categories, declared once, because a category
+**Landed**, in `src/app/Logging.h` / `Logging.cpp`. Seven categories, declared once, because a category
 name is interface twice over: a person filters with `QT_LOGGING_RULES="quantum.shell.ipc.debug=false"`
 and a bug report quotes it. `quantum.shell` is the shell's lifecycle, and `quantum.shell.niri`,
-`.config`, `.ipc` and `.wayland` are the four parts that have something to say.
+`.config`, `.ipc`, `.wayland`, `.system` and `.audio` are the six parts that have something to say — the
+last two because a reading that stops arriving is otherwise invisible: the widget draws its empty state
+either way, so the category is where the reason for the empty state is. `.audio` carries the daemon it
+attached to, the sink it resolved as the default, every param it refused to read as a volume, every write
+it refused to make, and the backoff between attempts after a daemon went away — a volume that stops moving
+is otherwise indistinguishable from a volume that did not change.
 
 What is logged is the set of things a person debugs a shell by, not a trace: the version and protocol the
 process started with and the configuration path it read; every configuration value the schema refused and
@@ -1031,9 +1117,10 @@ names decide whether a QML file resolves at all, and they fail when a component 
 the shell builds. `registerQmlSingleton` uses the constants instead of spelling them, and
 `niri_service_test` mirrors them with compile-time assertions, so a rename does not build until the
 decision is recorded there. The mirror is what the test's own QML import line is built from, so the
-binding that follows the notify signals is not also a second copy of the names. This is the one place
-where the interface is registered from C++ rather than from a QML module, and it moves with the
-registration once `qml/` exists.
+binding that follows the notify signals is not also a second copy of the names. The module those names belong to is
+declared once in `src/QmlModule.h` — the URI and both version numbers — and `NiriQmlModule.h`
+re-exports them under the names it has always used, so the one place the URI is spelled is a file that
+is not this service's.
 
 Nothing in that service is layout, size, colour or animation: it carries values and QML decides what
 they look like. Three rules hold it to the same standard as the model beneath it.
@@ -1051,10 +1138,10 @@ they look like. Three rules hold it to the same standard as the model beneath it
   at random; QML's numbers are doubles, so an id is passed as a string it can compare exactly.
 
 The module URI `QuantumShell` and the type name `NiriService` are the first QML-visible names in the
-project. They are registered from C++ (`NiriService::registerQmlSingleton`) because no QML module
-exists to register them through yet; the registration moves into the module in the same change that
-creates it — `qml/` now exists and imports it, which is what fixed the two names, and the second
-singleton below was added to the same module rather than to one of its own.
+project, and they are registered from C++ (`NiriService::registerQmlSingleton`) into the module
+`QmlModule.h` declares, which is what every `import QuantumShell 1.0` in `qml/` resolves against and what
+`qmltestrunner`-style tooling would read. The second singleton below was added to the same module rather
+than to one of its own, for the reason a group arrives with the widget that belongs in it.
 
 ### The actions QML performs
 
@@ -1099,13 +1186,52 @@ A QML caller cannot hold a result handler, so nothing the bar asks for fails sil
 that is refused, or whose answer never comes, is both a signal on `NiriActions` and a record on the
 compositor's category (§ Logging).
 
-The gestures are covered by `bar-interaction-test`, which loads the shipped `qml/Workspaces.qml` into a
-real engine with the platform plugin set to offscreen — no display, no session — and delivers real click
-and wheel events, asserting what reached the compositor's end of the socket. That is the only place the
-wiring can be checked: what a click means is a property of the component, and a capsule that draws the
-right workspace and does nothing when clicked passes every assertion a C++ test can make. The two action
-names are confirmed against a running niri 26.04 by `niri-live-action-test`, which steps down a
-workspace and back up and watches the model follow.
+The gestures are covered by `bar-interaction-test`, which loads the shipped `qml/Bar.qml` into a real
+engine with the platform plugin set to offscreen — no display, no session — and delivers real click and
+wheel events through the groups the widgets are declared in, asserting what reached the compositor's end
+of the socket. That is the only place the wiring can be checked: what a click means is a property of the
+component, and a capsule that draws the right workspace and does nothing when clicked passes every
+assertion a C++ test can make. The two action names are confirmed against a running niri 26.04 by
+`niri-live-action-test`, which steps down a workspace and back up and watches the model follow.
+
+### How the bar is arranged
+
+A widget is not anchored into place. The bar is a small set of **named groups** — `qml/CapsuleGroup.qml`,
+one per region the bar declares — and a widget is placed by being declared inside the group it belongs
+to. The widget carries no coordinate, no anchor and no offset of its own: the group decides the order and
+the spacing of the widgets in it, and the bar decides where a group sits and how tall it is. So
+"where does the next widget go" is a line inside one of those groups, and moving a widget between regions
+is a move between groups rather than a rewrite of its geometry.
+
+Two things the group owns, and they are the reason it is a component rather than a bare `Row`:
+
+- **The height convention.** Every widget of a group is given the group's height, and a widget draws what
+  it has to draw in the middle of the height it was given. Widgets of different natural sizes therefore
+  line up along one line without any of them knowing how tall its neighbour is — which is what a bar of
+  hand-anchored items gets wrong the first time somebody adds a widget with a different font size. It is
+  enforced in the component rather than left as an instruction each widget is trusted to follow, because
+  the widget that chooses its own height is the widget that breaks the row. The clock is the one widget
+  that had to change for it: a `Text` given more height than its glyphs centres its own text, since the
+  group has stopped anchoring it.
+- **The name.** A group is named by the bar — `left`, `right` — and that name is the object's name in
+  Qt's own tree, so anything outside the component can address the group a widget landed in without
+  counting the bar's children to work out which one it has hold of.
+
+Three groups, and no fourth: there is a left one, a centre one and a right one, holding the workspace
+strip, the system status and the clock. The centre group arrived the same way the other two did — with the
+widget that belongs in it — and a group still arrives that way, so the media readout the roadmap lists will
+bring its own or join one of these rather than finding an empty region waiting. A group also does not push
+another one aside: the centre group is centred on the bar, so a bar too narrow for its side groups would
+overlap them rather than shrink them, and that decision belongs with the group that has to give way.
+
+`bar-interaction-test` is where the arrangement is checked, on the same components the application packs.
+It loads `qml/Bar.qml` rather than one widget out of it — so the click and the wheel are delivered
+*through* the groups — and reads back which group each widget landed in, that each widget is its group's
+height and sits at that group's leading edge, and that the bar's three widgets are in the groups they were
+declared in, with the centre one on the bar's own middle rather than on the room the side groups left. The
+group is also loaded on its own and given widgets of three different natural heights, which is the claim
+the bar itself cannot make: its widgets are already the height they are given, which would not tell "the
+group sized them" apart from "they happened to be that size".
 
 ---
 
@@ -1256,10 +1382,238 @@ Each phase exits only when the gate passes; a phase is not "done" because the co
 
 Wired today, before any surface exists: the root `CMakeLists.txt` and `CMakePresets.json` (presets
 `dev`, `release`, `asan`, `ci`), the policy target every target links, which carries the warning set
-with `-Werror`, the repository scan below, the C++ unit tests for `src/niri/` and `src/config/` with
-their live cases, the two slot-order checks and the public-names check described next, and the CI
-workflow. The remaining gates arrive with the code they check — a gate is not written into CI before it
+with `-Werror`, the repository scan below, the C++ unit tests for `src/niri/`, `src/config/` and
+`src/system/` with their live cases, the two slot-order checks and the public-names check described next,
+and the CI workflow. The remaining gates arrive with the code they check — a gate is not written into CI before it
 has something to run against.
+
+### System statistics (`sysmon-test`, and four slots of `bar-interaction-test`)
+
+The bar's middle group reads the machine's own CPU and memory, and the reading is the shell's second one
+with no event source. The reason is sharper than the clock's and it is what the module is shaped around:
+`/proc/stat`'s aggregate line is *cumulative jiffies since boot*, so a CPU percentage is not a value the
+kernel holds at all — it is the difference between two readings, and a difference needs two moments.
+Nothing else offers a subscription: the kernel's pressure files report stall time rather than occupancy,
+and this machine has no `/proc/pressure/memory` at all, which was read rather than assumed.
+
+So `src/system/SysMonService.cpp` takes the directory it reads from as a constructor argument, for the
+reason `ConfigWatcher` takes its path, and splits into two halves. The parsing is pure functions of the
+text — the aggregate `cpu` line rather than a per-core one; the eight counters the kernel documents summed,
+because the guest counters are already counted inside user and nice and counting them again would count
+that time twice; `MemTotal` and `MemAvailable`, where "used" is the subtraction because no such field
+exists; and a refusal rather than a value for every shape of input that is not those files.
+
+Around that half sits the cadence, and it is the person's rather than a constant: `bar.system.sample_interval_ms`
+is handed to the service by the composition root at startup and again on every edit to it, so a file's value
+reaches a running shell through the same setter the build's default does. The service writes one record each
+time it accepts a cadence — `sampling /proc/stat and /proc/meminfo every N ms while the bar is visible` —
+because the interval is otherwise invisible from outside the process, and that record is what the live test
+reads back out of a running shell to prove the configured value got there.
+
+What the widget *draws* from those readings is the configuration's too, and the split is where the boundary
+is drawn: the schema owns which forms exist and refuses anything else by name, the widget owns what a form
+looks like. So `show_cpu` and `show_memory` say whether each readout is drawn (the row, label and number, not
+just the number) and `memory_format` picks one of four renderings of the same reading — used of total, used
+alone, what is still available, or a percentage. Hiding a readout does not switch off its reading: the service
+takes both halves of every sample in one pass whatever is drawn, so a hidden readout costs no wake-up and a
+shown one is never a number waiting for a flag to change. All four memory quantities come from the one
+reading the kernel gives — `MemAvailable` is published as the field it is (`memoryAvailableKb`) rather than
+left for a widget to recompute by subtracting `memoryUsedKb` from `memoryTotalKb`.
+
+Three properties of the cadence are decisions rather than defaults. A reading
+that could not be taken is not guessed at and is not left standing: the flags go false, which is what the
+widget's dash is driven by, and the reason is recorded on `quantum.shell.system`. Nothing is sampled while
+the bar is off screen — `active` is the window's own visibility, wired in the composition root, so a hidden
+bar costs no wake-ups at all. And deactivating forgets the reading rather than keeping it: a CPU percentage
+is an average over the sampling interval, and one carried across a gap nobody was watching would be a number
+that is real but is not the one it is labelled as.
+
+This is the one place the shell departs from SYSTEM_PROMPT.md § Event-driven, which bans a `QTimer`
+re-reading state. The exception was chosen by the user over the two alternatives — readings that need no
+delta at all, refreshed only when looked at, or sampling only while the pointer is over the widget — and the
+dated line recording it belongs in § Waivers there, which only the user writes. The gate reports the five
+`polling-timer` hits in `src/system/` as warnings for a human to read; this paragraph is that reading.
+
+What the readout draws from those four settings is checked in the two places that can each see one half of it.
+`config-test` is the schema's: each of the four tokens is accepted, a token outside the list is refused with
+the list named, a flag is a boolean or it is reported, the tree announces each setting on its own signal, and
+a compile-time mirror holds the schema's token list to the test's own copy of the four — so a token renamed in
+`src/` stops the build until someone decides what it means. `bar-interaction-test` is the widget's: it writes
+each token into a real configuration file, parses it through the schema, applies the validated values to a
+real `Config`, and compares the text the shipped `qml/SystemMonitor.qml` then draws — which is the only place
+the token becomes a string a person reads. The same file's other slot turns each flag off and asserts the
+readout as a whole (its row, so label and number together) is no longer drawn, that the other one still is,
+and that with both off the widget takes no width at all rather than keeping a gap.
+
+`sysmon-test` is the module's own test: the lines and their refusals, driven by files it writes into a
+directory of its own so every shape of input can be shown, including the ones the kernel does not produce,
+with two slots reading the real `/proc` as well — because a parser only ever handed this test's own strings
+agrees with this test and nothing else. It also pins the cadence: nothing published while inactive, memory
+the moment the service is activated and a CPU percentage one interval later, an interval of zero refused,
+no signal at all when a reading did not change, and the record accepted rather than refused ones write —
+once per change, and not at all when the value it was given is the one it already had.
+
+The configuration's half of the same claim is `config-test`: the interval's default, its floor and its
+ceiling, a value of the wrong type and a key inside the table that this build does not read, each reported
+by its full path; and a compile-time guard that compares the schema's default and floor with the constants
+`SysMonService` refuses outside of, so the two spellings cannot drift apart silently. The end-to-end half is
+the case in `niri-live-layershell-test` described under § Layer shell, which is the only place the wiring
+from a file to a running service is exercised, because the composition root is where it lives. `bar-interaction-test` carries the other half: the
+widget in the centre group, and its two readouts drawing their empty state rather than a zero before a
+reading exists — compared against the service's own value once there is one, which is what tells a binding
+that reads the service apart from a string that happens to look like a reading.
+
+Those slots were the last ones in the suite whose expectations depended on something the test does not
+control, and they no longer do. The service is constructed against a `/proc` of the test's own — a `/proc/stat`
+and a `/proc/meminfo` in a scratch directory of its own, written and rewritten by the test — so the four memory
+forms, the empty state and the two percentages are compared with literals that are the answer for numbers the
+test wrote, and nothing about the machine under the test can move them. The counters in that fixture advance on
+every write, which is a rule rather than tidiness: a real `/proc` only ever goes up, so any two readings of it
+are an interval, and a fixture whose line stood still would be provoking the service's refusal — a record
+`sysmon-test` asserts on purpose, and one this file was in fact producing twice a run before the writes were
+made to advance. Determinism is the whole claim of those slots, and it is reachable only because the service
+takes the root it reads as a constructor argument; the composition root hands it `/proc`, and a test hands it
+something it owns.
+
+One slot still reads the machine's files, because a fixture proves the parsing and the binding and nothing
+fixes that nothing would then prove the reading is real. Keeping it meant making its claim sharper rather than
+weaker: it asserts that the *first* reading of the machine is a baseline and not a percentage, which is what
+says the point the second one is measured against is the machine's. That assertion is load-bearing, which was
+established by removing the baseline clearing above it and watching it fail — the pair is not refused, because
+the machine's counters are the larger and it therefore does not go backwards; what gets published instead is
+the busy share of the whole boot, 12.07% on this machine against the interval's few per cent. A slot that read
+the machine *and* remembered a fixture point would have reported the boot's average as the state of the last
+200 ms and passed. Falsifying the rest: restoring the pre-restore order in the memory-form slot fails (`50%`
+where the form it expects is `8.0/16G` — the loop leaves its last token applied, so the comparison was
+silently about the form), a fixture whose counters do not advance fails, and a live slot that keeps either its
+fixture baseline or its own machine baseline after the last assertion fails on its own closing check.
+
+That slot was also the last place this file was producing a record nobody asserted, and it was its own doing:
+a second sample taken immediately after the first, there to have a memory reading to compare, which is two
+readings microseconds apart on a `/proc/stat` the machine is writing. The service refuses that pair and says so
+on its category — correctly, since a percentage over no interval is not a measurement — so the slot was
+provoking a refusal about its own sampling. It was found by marking each of the slot's call sites and running
+it alone: the record appeared in three runs of six, and the marker named the line. The second sample is gone,
+because the first one publishes memory anyway — a value needs no interval — and the refusal cannot be provoked
+by the slot any more. This is the same rule the fixture's advancing counters keep, applied to the slot's own
+readings: a test may assert a refusal, and it may not create one and leave it in somebody else's transcript.
+
+### Audio (`audio-test`, `audio-live-test`, and three slots of `bar-interaction-test`)
+
+The bar's volume readout is the counter-example to the system status above: it is a reading with a real event
+source, and the module is shaped around using it rather than asking. `src/audio/PipeWireService.cpp` attaches
+to the PipeWire daemon, follows the sink the `default` metadata names under `default.audio.sink`, and
+subscribes to that node's `SPA_PARAM_Props` — which the installed header documents as "Automatically emit
+param events for the given ids when they are changed" — alongside the node's own `info` event, whose
+`change_mask` carries `PW_NODE_CHANGE_MASK_PARAMS` and names the ids that moved. So a volume changed by
+anything else on the desktop — `wpctl`, a mixer, a headset's own button — arrives as a callback, and nothing
+in `src/audio/` asks the daemon anything on a schedule. Nothing here needs the waiver the system status does.
+
+**The percentage is a convention, and it is the desktop's rather than this shell's.** WirePlumber's own
+`wpctl get-volume` prints `0.35` for a sink whose Props param reports `channelVolumes: [0.042872, 0.042872]`,
+and 0.042872 is 0.35 cubed — so the number a person reads is the *cube root* of the linear factor, and taking
+the linear value for the percentage would put the bar at 4% where every other volume control says 35%. That
+measurement is in the module's comment beside the function that applies it, and `audio-test` pins it:
+`percentFromLinear(0.042872) == 35`. Nothing is converted in QML — a widget that did its own arithmetic would
+be a second place the convention is written down.
+
+What the module reads and what it refuses are the same rules as everywhere else. A Props param that is not a
+Props object, or one whose `channelVolumes` is not an array of floats — four-byte elements of the wrong type
+are the case a reader that skipped the element type would turn into a volume nothing sent — is a refusal
+rather than a default, and the last reading stands with the reason on `quantum.shell.audio`. An unnamed
+default sink is `available == false` and a dash, never a fallback device: a per-sink control is the control
+centre's, and the bar has one volume to show. The Props param is the only place the reading exists — the
+sink's own property dict carries `audio.channels` and `audio.position` and *not* `audio.volume`, which was
+read off this session rather than assumed.
+
+The module's pure half is `src/audio/AudioVolume.h` / `AudioVolume.cpp`, for the reason `src/system/`'s
+parsers are separate: the Props parse, the cube-root mapping, the wheel's arithmetic, the metadata value's
+JSON object and the pod a write is are all functions of bytes, so every shape of input a daemon can send is a
+case in `audio-test` — including the shapes a healthy daemon never sends. No daemon, no socket and no
+display. The pod the module *writes* is read back by the same reader that reads the daemon's, which is what
+holds the two halves of the module to one spelling of the protocol.
+
+Three of the module's settings are the configuration's rather than constants, and the split follows the
+system status's: `bar.audio.show_volume` says whether the readout is drawn, `bar.audio.volume_scale` says
+which of the two numbers it is drawn in, and `bar.audio.step_percent` says how far one wheel notch moves the
+volume. The step is read by the *service* rather than by the widget, because the distance a notch moves is a
+distance in a value the daemon owns — a widget that computed the new level itself would be a second place the
+volume is decided. A step of zero is refused by name in both places that have an opinion about it, and the
+schema's copy and the service's are compared at compile time. There is no ceiling on the step: a step larger
+than the range is a person asking for one notch to reach the end of it, which `steppedPercent` clamps to.
+
+**The unit is a choice the file makes because a volume has two honest numbers, and this is where it differs
+from the CPU readout, which has one.** `percent` is the desktop's own convention and the shell's default: the
+cube root of the daemon's linear factor, which is what `wpctl get-volume` prints, so a bar showing it agrees
+with every other volume control on the machine. `decibel` is the physical gain the same factor represents,
+`20 * log10`, and it is not a spelling of the percentage: measured on this session, the sink whose Props
+carry `0.074087` is reported by `wpctl get-volume` as `0.42` and by `pactl list sinks` as
+`27525 /  42% / -22,61 dB` — 42% is the cube root, -22.61 dB is the gain, and the linear factor times a
+hundred (7.4) is a third number that no tool on the desktop shows a person. Both are computed in the service
+from the *same* factor, on the PipeWire thread, and cross to QML together, so a readout can never show a
+percentage and a decibel value that came from two different readings. Silence is `-INFINITY` rather than a
+floor — pulse's own printer passes `-INFINITY` through, so a zero volume prints as `-inf dB` there — which
+the widget draws as `-∞ dB`; a floor would be a volume the sink is not playing at.
+
+**The unit selects the step as well as the readout, and that was a change of mind worth recording.** It
+began as a readout-only setting on the argument that a unit which re-scaled the wheel would make one gesture
+mean two things. The measurement says the opposite is true. A percentage step is a *growing* distance in gain:
+`60 * log10((p + s) / p)`, because the percentage is the cube root of the factor, so the default five points
+is 1.28 dB at 99% and **46.69 dB at 1%** — thirty-six times as much at the bottom of the range as at the top,
+which `audio-test` pins as arithmetic rather than prose. A person reading decibels was therefore being moved by
+a number that depended on where they already were, which is the one thing a readout in a physical unit promises
+not to do. So the token now decides both what is drawn and which of the two step keys a notch applies:
+`step_percent` when the readout is in percent, `step_decibels` when it is in decibels, and the service holds
+both because how far a notch moves is a distance in a value the daemon owns rather than in a setting the widget
+could be trusted with. Nothing moves a different amount for the same reason any more — the step and the
+reading are the same unit — and the two keys are separate rather than one rescaled value, because the same
+key meaning two things depending on a third is a schema that lies about itself.
+
+The decibel step is a *ratio*, not a subtraction: the factor the daemon holds is multiplied by
+`10^(dB/20)`, and the shell writes that factor rather than a rounded percentage — a percentage-rounded write
+would be 0.26 dB at the top of the range, a quarter of the decibel that was asked for. A step shorter than the
+readout can draw is refused by name in both places that have an opinion, and the floor is the readout's own
+resolution rather than a judgement about hearing: the bar draws decibels to one decimal place, so 0.1 dB is
+the shortest notch a person could see, exactly as one point is the shortest the percentage readout can show.
+Both ends of the range are handled by what the arithmetic actually does rather than by exception: past full
+scale the result clamps, because a notch past the end of the range is a notch that is already there; a quieter
+notch never *reaches* silence from a factor that is not silence, because a ratio does not reach zero — a
+hundred-decibel notch from a factor of a ten-thousandth is `1e-9`, ten orders of magnitude below the quietest
+level the percentage unit writes, and that is the honest thing to write to a daemon; and a louder notch from a
+factor that really is zero moves to the quietest level the shell writes, one percent, because a ratio from
+nothing has no starting point and inventing an audible one would be a level nobody asked for. A wheel notch
+over the mute is the same case it always was: it changes the volume and leaves the sink muted, as
+`wpctl set-volume` does.
+
+**`audio-live-test` is the proof, and it is opt-in behind `QS_AUDIO_TESTS`.** It writes the distribution's
+own daemon configuration into a scratch directory, patches the core name so its socket is a path the
+session's shell can never reach, adds two null sinks and a `default` metadata object, starts the daemon
+itself and stops it afterwards. Everything the shell is asked whether it noticed is done by `pw-cli` and
+`pw-metadata` and read back by `pw-dump` — three other programs, so the writer, the reader and the code under
+test are three things and not one agreeing with itself. What it pins: the reading arrives at all and matches
+the daemon's own; an external volume change, an external mute, and a default-sink switch in both directions
+all arrive as events (and the sink no longer followed does not); the shell's own write reaches the sink as
+the cube of the percentage on *every* channel; the configured step and the clamp at full scale; a notch in the
+decibel unit measured on the *daemon's* factor as a `10^(1/20)` ratio rather than on the shell's own number,
+with the unit switched at run time to show which step key applies, and the dB floor and an unknown unit token
+both refused with the previous value kept; that stepping
+while muted changes the volume and leaves it muted, exacty as `wpctl set-volume` does; and that a daemon
+going away withdraws the reading and a daemon coming back is reattached to — with no reading until the new
+daemon names a default sink, because the module refuses to guess one.
+
+Falsifying it turned up the module's one honest redundancy. Removing the `Props` subscription leaves the
+suite green; removing the `info` re-enumeration leaves it green; removing *both* makes every external change
+go unnoticed. Neither mechanism is redundant in general — they are two documented routes to the same param,
+and in this daemon either alone is enough — so the pair is what is load-bearing rather than either half, and
+that is written where the code is rather than left to be discovered by whoever removes one of them.
+
+`audio-test` is the hermetic half described above. `bar-interaction-test` carries the widget: the readout
+sitting in the trailing group after which the clock still keeps the corner, its dash while the service has no
+reading, both halves of `show_volume` false (not drawn *and* taking no width, which a visibility check alone
+would not see, because a hidden row keeps its own width), and the two gestures — a real click and a real
+wheel delivered as window events, observed through the records the service writes while refusing to act with
+no daemon behind it, which is the only place the bar's QML can be seen to call it. The gestures' *effects* are
+`audio-live-test`'s, against a daemon.
 
 ### Configuration (`config-test`, `config-watcher-test`, and a case of `niri-live-layershell-test`)
 
@@ -1282,8 +1636,25 @@ be parsed, which must leave the last good values standing rather than reset the 
 The end-to-end case is in `niri-live-layershell-test`: it runs the built shell against a `config.toml`
 of its own naming a height of 44 and a namespace of its own, and reads both back — the namespace out of
 the compositor's layer list, and `set_size(0, 44)` with `set_exclusive_zone(44)` off the protocol
-traffic. The rest of that file runs the shell with an empty `XDG_CONFIG_HOME`, so a configuration its
-operator happens to have cannot change what its assertions mean.
+traffic. A second case of that file — `theConfiguredSystemSettingsAreWhatTheRunningShellUses` — covers the
+table whose values reach a *service* and a *widget* rather than a surface, since the composition root is
+where that wiring lives and no unit test can call it: the shell is run against a file naming
+`bar.system.sample_interval_ms = 750`, `show_cpu = false` and `memory_format = "percent"`; the running
+shell is asked for each of those keys over the IPC, which is what makes the values attributable to the file
+— and one key is deliberately *absent* from the file, because what an omitted key gives back is worth
+reading on a shell and not only in a parse function; and then the record `SysMonService` writes when it
+accepts a cadence is read out of the shell's own output, which is what shows the service was told rather
+than left at the build's 2000 ms. The same case edits the file to 1000 while the shell runs and waits for
+the second record, which is the other path — the watcher noticing, the schema re-reading and the service
+being told again. What each setting then *draws* is not asserted here and could not be: this case reads a
+socket and a transcript, and a pixel is `bar-interaction-test`'s, offscreen and per token. The rest of that
+file runs the shell with an empty `XDG_CONFIG_HOME`, so a configuration its operator happens to have cannot
+change what its assertions mean.
+
+Reading those records is why that file starts its shell with `QT_FORCE_STDERR_LOGGING=1`: Qt sends records
+to the journal when stderr is a pipe, as it is under `QProcess`, so without the variable the shell's own
+account of what it did would not be in the transcript beside libwayland's protocol traffic. Removing it
+was one of the falsifiers, and the case fails without it.
 
 ### Slot independence (`slot-order-independence`, and four `slot-order-randomised-shard` tests)
 
@@ -1312,14 +1683,36 @@ passed alone, in declaration order and in reverse.
 
 It runs as **four ctest tests** rather than one, which is what its pass count was raised to fit. The test
 presets set `execution.jobs 4`, so ctest runs the four at once and the wall clock of the check is the
-slowest shard's rather than the sum: measured here, 147 s, 166 s, 166 s and 231 s, where the four add up
-to 710 s in sequence. Without `execution.jobs` ctest runs them one after another: still correct, and the
+slowest shard's rather than the sum: measured here in one invocation of the split as it stands,
+200.9 s, 207.3 s, 214.6 s and 226.6 s, where the four add up to about 849 s in sequence — the figures it
+replaced, 188/196/210/214 s, belonged to the split before this landing corrected a cost-table entry that had
+been carried over across two landings, and re-measuring a cost moves binaries between shards by design. Without `execution.jobs` ctest runs them one after another: still correct, and the
 sum's wall clock rather than the slowest shard's, which is why the presets and the `check` target set it.
-`bar-interaction-test` is what those figures are mostly made of: a pass of it costs about 400 ms where
-most binaries' passes cost tens, because every pass builds a window, loads the bar's QML into an engine
-and drives it. That is the price of a check covering what a gesture does rather than what a function
-returns, and it is paid once per pass of the shard that holds the binary rather than by all of them — the
-costs in `tests/CMakeLists.txt` are what the split is balanced from. It is safe to run them
+The balance those figures show is built from a measured pass cost per binary, and three of those measurements
+were corrected in this landing — which is the argument for keeping the figures and the table side by side,
+because a stale table produces an unbalanced split that fails nothing. `niri-event-stream-test` had grown to
+883 ms a pass from the 359 ms recorded when it had fewer slots, `niri-ipc-test` to 1028 from 925,
+`config-watcher-test` to 724 from 625 and `niri-actions-test` to 630 from 467; the split built from the stale
+figures put 1,651 ms of work in one shard and 1,689 ms in another and then took 259 s and 187 s to run them,
+where the re-measured table predicts 1,884/1,887/1,887/1,881 ms and the shards come out at 188–214 s.
+`bar-interaction-test` was corrected twice, for two different reasons: it used to inherit
+`QT_QPA_PLATFORM=wayland` from the session it was run in — the shell's own choice, not the test's — so a pass
+cost 498 ms under a plugin it never meant to use and 345 ms once it forces the offscreen one, and then its own
+configuration slots took it to 445 ms. Every one of those numbers is beside its entry in
+`tests/CMakeLists.txt`.
+`sysmon-test` and `bar-interaction-test` are what those figures are mostly made of, and they are the two
+most expensive binaries there are — a pass of each costs 800 ms and 445 ms measured here, where most
+binaries' passes cost tens of milliseconds. The reasons differ. `bar-interaction-test` builds a window and
+loads the bar's QML into an engine before it can assert anything, so a single slot on its own, which is not
+what the check does but is what the `-o` figures look like, costs 170–235 ms, most of it that same window
+and engine: that is the price of a check covering what a gesture does rather than what a function returns.
+`sysmon-test` waits instead — its cadence slots run real intervals in milliseconds, and its two slots that
+read the real `/proc` wait for the kernel's own counters to advance — and a wait cannot be shortened below
+the thing being waited for. Both are paid once per pass of the shard that holds the binary rather than by
+all of them: the costs in `tests/CMakeLists.txt` are what the split is balanced from, and a binary without
+a measured cost fails the configure rather than being placed on a guess. When a slot is added to either,
+the shard holding it grows by that slot's own cost times the ninety-six passes rather than by a new window
+— the arrangement's two slots cost their shard 5 s that way. It is safe to run them
 together because the two tests that act on the desktop take a resource lock, so no two of them are ever
 changing what is on screen at once.
 
@@ -1467,6 +1860,81 @@ or not anyone chose it, and `QS_TEST_ORDER_SEED=<seed>` repeats that exact run; 
 verified to produce byte-identical orders and a different seed to differ in every one of them. It is
 drawn from the whole range the generator is exact over, and a seed outside that range is refused rather
 than quietly producing a different kind of sequence.
+
+A third kind of finding, and the first one here that was neither an order dependence nor the desktop
+racing a live read. A full run of the suite failed once with `slot-order-randomised-shard-1`, naming
+`BarInteractionTest::theVolumeReadoutFollowsItsConfiguration` and reporting a group width of 78.765625
+against the 78.296875 the slot had expected. That delta is 30/64 px, and it was not a layout defect: the
+slot hides the volume readout, puts it back, and asked whether the trailing group's width had come back
+to the number it had remembered at the top — while the group it asked about holds the clock as well.
+`Inter` does not resolve to a tabular-figure font on this machine, so `HH:mm` is a string whose width
+depends on the time: measured over every minute of a day it runs from 28.28125 px at "11:11" to 37.0625
+px at "06:06", no two consecutive minutes have the same width, one minute's change is anywhere from a
+quarter of a pixel to 2.3 px, and the set of those changes contains 30/64 — the figure the failing run
+printed. The assertion was therefore a claim that the clock had stood still across the round trip, false
+whenever a minute boundary fell inside it, and the shuffle is what made it visible: a quiet pass takes
+0.7 s and almost always misses the boundary, where the failing pass took 15.7 s — so that pass had bought
+the tick along with the order. It reproduces from the printed seed only sometimes, which is the honest
+description of a race against the clock rather than against the desktop — and unlike the earlier two
+sightings, the mechanism was established by measurement rather than by reading the failure text.
+
+The fix is in the assertion, not in the clock. Every group width in that slot is now compared with what
+the group holds *at the moment of the check* — the widget's own width, the group's spacing, and the
+clock's width read in the same expression, so the clock cannot tick between them — and while the widget
+is hidden the assertion is that the group is exactly as wide as the clock, which is what a positioner
+does with an invisible child and what a hidden readout depends on. The honest limit of that is written
+where it is used: a positioner's width is its contents, so the comparison asks whether the widget is
+counted among them, which is the fact the flag controls. Three falsifiers say it still bites: the tick
+against the assertion as it was fails 10 runs in 10, and the widget staying visible when hidden, and the
+widget keeping its width while hidden, each still fail. The clock is moved on by a minute by the slot
+itself, so the property is exercised on every run instead of waiting for a boundary: a test whose
+clock-independence is only shown by the absence of a rare tick is the same hole that let this in. The
+96 orders the failing seed gives that binary were then replayed four at a time, 96/96, and the full suite
+ran green twice — once with `QS_TEST_ORDER_SEED=184021293` pinned and once with a fresh seed.
+
+Because the defect was a *kind* of assertion rather than a widget, the kind was swept for rather than fixed
+where it was found. The class is: a value read from a live source at one moment and compared, for equality,
+after a delay that lets the source move. The sweep was mechanical first — every local bound to a call and
+then compared after a `QTRY`, a `qWait` or a loop — and then read one hit at a time, because a hop from a
+value to an assertion is not the same thing as a hazard. Two more instances turned up, both in
+`bar-interaction-test` and both here for the same reason the system status needs its waiver:
+`SysMonService` really samples `/proc` on the cadence the configuration gives it, so its readings move
+between two lines of a slot. The memory-form slot built its four expectations once and compared them across
+a loop spanning samples of a 30 ms timer; the empty-state slot built the memory text with
+`QString::number` rather than the widget's rule. The hazard was measured the way the clock's was: allocating
+and touching 0.68 GiB inside the slot moves `MemAvailable` by 0.6687 GiB — seven steps of the
+tenth-of-a-GiB digit the readout draws — the remembered comparison fails on it, and the fixed one passes.
+Expectations for these readouts are now functions of the service, computed at the comparison, in one place
+for both slots.
+
+That slot had one more thing to teach, and it is a fact about Qt Quick rather than about the clock: a
+positioner's own size is not a binding. The trailing group's width follows its children's widths when it next
+lays out, which is the next frame, and its `implicitWidth` lags with it — measured by moving the clock's text on
+a minute and reading at once, the clock widened immediately (33.671875 against 33.515625, 10/64 px) while the
+group and its implicit width stayed at 78.09375 through `qWait(1)`, and both were 78.25 once a frame had gone
+through. So the one comparison in the slot that read the group synchronously — the other three already waited —
+asserted that no frame was pending between the clock's text changing and that line, which is false on a pass
+slow enough to cross a minute boundary. It failed at 79 against 79.2344 in the shuffled check, one minute's
+change at a different hour. Every group comparison is now waited for, and the property is exercised on every
+run rather than left to the wall clock: with the clock moved on immediately before the comparison the naked form
+fails and the waited one passes, both deterministic, where the shard's failure needed a boundary to fall inside
+a slow pass. Waiting does not weaken the claim — the group agrees with its contents once the layout has settled,
+which is the fact a hidden readout depends on — and the seed that failed re-runs green.
+
+
+The third instance was not in a unit binary. `niri-live-action-test`'s case for an action the compositor
+cannot parse remembered the overview state, waited 150 ms and compared — and this session's default config
+binds the overview to a key, so a person pressing it in that window failed the case and named the shell for
+something the person did. It now asks the compositor when the two differ, which is the discriminating
+question rather than a relaxation: the refused request is the only thing the shell sent, so a model that
+agrees with a compositor that moved was told about the change, and a model that disagrees has moved on its
+own and still fails. That is where this class's boundary is drawn: the acting cases whose *claims* need the
+desktop to hold still — that the overview opened because the shell asked it to — are left as they are,
+because reporting a desktop that moved instead of failing would let a shell that did nothing pass, and the
+opt-in flag and the resource lock are what make those runs meaningful. The counts that assert nothing
+arrives after a stop, the test double the unit tests talk to, `audio-live-test`'s private daemon and
+`config-watcher-test`'s own files were each read and left, and the reasons are in the report rather than in
+a comment apiece.
 
 A second lead, found when the four-slot measure above was added and not yet acted on. That measure is the
 first here able to see that the shuffle's draws are not uniform, because the pair and triple figures
@@ -1696,6 +2164,54 @@ name is written down there.
   refuses, and the live test mirrors the default one; `api_version` does not exist yet, so nothing here
   declares it.
 
+### The engineering spec's numbers (`spec-values-test`)
+
+`ENGINEERING_SPEC.md` is derived from the code, which is what makes it useful and what makes it go stale:
+every value in it — a version floor, a default, a bound, a backoff, a cap, a test count — is a claim about
+something else, and a claim that is wrong is the "file that lies" this repository's rules are written
+against. Its names are guarded by `public-names-test`, which reads that document like the other two, and its
+numbers by `spec-values-test`, which reads it and compares what it says with the values the libraries were
+*compiled* from.
+
+The second one is deliberately not a mirror. A mirror repeats a number and compares the constant with the
+copy, so it catches a change to the constant and nothing else; this compares the document with the constant,
+so a change on either side fails. It links `quantum-shell-config`, `-system`, `-audio` and `-ipc` rather
+than parsing headers, for the reason the config keys are mirrored by a test instead of by a comment: a
+constant that was renamed or moved cannot be read out of a header by a regular expression that still
+matches, it stops the build. What it cannot reach is stated at each case rather than left to look equal —
+the `/proc` file cap and the audio retry pair are declared in a `.cpp` file, where nothing can link them,
+so those are read from the source text with the exact declaration required, which catches a changed value
+and not a constant moved elsewhere. And what no test can read at all is a sentence: a behaviour, a
+limitation, a budget that is prose, is read by people, and the ones that matter have a test of their own.
+
+It also holds the §2.6 singleton tables, in both directions and from the strongest source each row admits.
+Seven of them are read from the meta-object of the class that declares them — the meta-object is what the
+engine resolves a binding against, so it is the spelling that matters when a `Q_PROPERTY` is renamed — and
+for each of those every property and every `Q_INVOKABLE` the class declares itself must appear in its row
+while every name in its row must exist. The bar window, `LayerShellWindow`, is read from the class's own
+`Q_PROPERTY` and `Q_INVOKABLE` declarations, and the reason is a measurement rather than a preference: the
+class derives from `QQuickWindow`, so linking it into a test whose subject is a document makes the
+sanitizer job report the font stack's process-lifetime fontconfig caches as leaks of that binary — 722474
+bytes in 16702 allocations, every frame in libfontconfig or libpangocairo and none in this repository —
+where the same binary without that link exits clean. It also costs a measured 72–74 ms a pass against
+13–15 ms without, which is what that library being loaded is worth. What that header reading gives up is
+written where it reads: a `Q_PROPERTY` renamed, added or removed in the declaration fails, and a
+disagreement between a declaration and what moc built from it cannot be seen — a thing moc does not permit,
+but the weaker half does not pretend to prove it. The row's "each with NOTIFY" is checked signal by signal,
+and the counts the `Config` row states for the two nested tables — `bar.system.*` (4), `bar.audio.*` (2) —
+are compared with the properties those objects declare. That row is held in both directions too, over the
+names it writes as `bar.<name>` and `bar.<name>.*`: every property the object `bar` declares has to appear
+in it and every name in it has to be one, so a new `[bar.*]` table landing in the configuration with no row
+to describe it fails here instead of being a set of keys nobody is told about. What that cannot see is a *slot*: this project's
+QML-facing calls are `Q_INVOKABLE` on purpose, and the check treats a slot as not part of the surface rather
+than pretending otherwise.
+
+The document is read from the source tree the binary was configured against, named at configure time the
+way `bar-interaction-test` takes the shipped QML, and the configure fails if any file it reads is missing.
+That is the point of it: the four falsehoods found when the document was first audited — a count off by
+one, three stale sentences about landed work — were all things a person had to notice, and two of the
+four are now things a test notices instead.
+
 ### Repository scan (`qs-scan`)
 
 `tools/qs-scan/` implements the detector for the patterns banned in `SYSTEM_PROMPT.md` § Forbidden
@@ -1717,8 +2233,9 @@ Qt, which keeps the gate runnable on any CI image.
   reason (`--list`), so no exclusion is invisible.
 - Exit codes: `0` clean, `1` violations or structural problems, `2` usage or setup error.
 - `--require` names the paths the gate must have scanned. This is the guard against satisfying the
-  gate by deleting or renaming the code it was meant to check. `tools`, `CMakeLists.txt`, `src` and
-  `tests` are on that list; `qml` joins it in the same change that creates it.
+  gate by deleting or renaming the code it was meant to check. `tools`, `CMakeLists.txt`, `src`, `qml`
+  and `tests` are all on that list, and the CI job's own read-only run names the same five so the
+  legible copy and the failing one cannot disagree about what must exist.
 - The cases in `tests/scan/run_scan_tests.cmake` drive the built scanner over the trees in
   `tests/fixtures/`. Those trees are input data for the gate — never compiled, never part of the
   build — and cover detection, the `tests/` exemption, an explicit ignore, a missing required path, a
@@ -1733,8 +2250,18 @@ second job. The runner's CMake can predate the 3.31 floor, so the workflow pins 
 the repository scan; the matrix job prints the scan on its own first, so a violation is readable in
 the job log rather than surfacing only as a failing test.
 
-The workflow has not run yet: the repository has no remote and no commit, so there is nothing to push
-yet.
+The repository is published (`origin`), so the workflow is real rather than aspirational, and it has
+been run — but GitHub-hosted minutes are blocked on this account, so both jobs' steps are run on this
+machine instead, against the tree in `build/ci`: `CC=clang CXX=clang++` with `cmake --preset ci`,
+`cmake --build --preset ci` and `ctest --preset ci`, and `cmake --preset asan` with its build and
+ctest. That is not a workaround for an untested workflow: running the steps locally is what found the
+matrix's own setup error, since `CC` has to be the C compiler matching the matrix's C++ one and a
+`CC=clang++` job fails at configure before it builds anything. It also found something a green GCC
+tree had hidden: the audio module's pod construction used SPA's vararg macros — compound literals and
+GNU statement expressions — which clang refuses under `-Werror`, so the clang job was failing to build
+`src/audio/` while `ctest --preset dev` stayed green. Both now build with SPA's own builder functions
+instead, and `ctest --preset ci` passes 33/33 on this machine (the count moved as modules landed; the
+network module added its own test and its own read-only live test, and the read-only one needs no opt-in).
 
 Still in scope, to be added with the code each one checks: `qmllint` and `clang-tidy`/`clazy` (both
 can now read `src/`, neither is wired in yet), the QML test suite, the integration script that starts
@@ -1805,14 +2332,84 @@ media, gesture handling, niri workspace interaction.
 wheel over the strip moves to the workspace below or above. Both go through the shell's actions,
 registered for QML as the `NiriActions` singleton beside the state service — see § Exposed QML API,
 where the gestures and the reason a click on the already-focused capsule asks for nothing are written
-down. The C++ side is `bar-interaction-test` (the shipped `qml/Workspaces.qml` in a real engine,
-offscreen, with real click and wheel events read back as the requests niri would receive) plus the new
-case in `niri-live-action-test`, which confirms `FocusWorkspaceUp`/`FocusWorkspaceDown` against a
-running niri 26.04. The rest of the phase — capsule groups, system status, audio, network, battery,
-media, and the idle-budget measurement that has to come last — is not started.
+down. The C++ side is `bar-interaction-test` (the shipped `qml/Bar.qml` in a real engine, offscreen, with
+real click and wheel events read back as the requests niri would receive) plus the new case in
+`niri-live-action-test`, which confirms `FocusWorkspaceUp`/`FocusWorkspaceDown` against a running niri
+26.04.
+
+**Capsule groups are in**, as the bar's arrangement rather than as a container added for its own sake:
+`qml/CapsuleGroup.qml` is a named group, the bar declares three of them — left, centre and right — and a
+widget is placed by being declared in the group it belongs to, carrying no coordinate or anchor of its own.
+The group gives every widget of it the group's height, enforced in the component rather than described, so
+widgets of different natural sizes line up without any of them knowing where it is — see § Exposed QML
+API, where the convention and the naming are written down, and where the rule that a group arrives with
+the widget that belongs in it is what the centre one did.
+
+**The system status is in**, as the centre group's first occupant: CPU and memory read from `/proc` through
+`src/system/SysMonService.cpp` and drawn by `qml/SystemMonitor.qml`. It is the one module whose reading has
+a clock of its own, and the difference from every other reading in the shell is that the kernel holds no
+CPU percentage at all — only cumulative counters — so the reading is a difference between two moments and
+`cpuAvailable` is false until one exists. Its settings are the configuration's rather than constants —
+`[bar.system]`'s cadence, drawn readouts and memory form, the shell's first nested table, with the cadence
+applied by the composition root at startup and followed on every edit, and the rest bound in the widget
+itself — and the service writes one record per accepted interval, which is what the live case in
+`niri-live-layershell-test` reads back. See § System statistics for the three
+decisions inside it, for the empty state the widget draws instead of a zero, and for why this is the
+single sanctioned departure
+from § Event-driven.
+
+**The volume readout is in**, as the trailing group's first occupant and the phase's first reading with a
+real event source: `src/audio/PipeWireService.cpp` follows the sink the `default` metadata names and
+subscribes to its Props, so nothing in the module polls and nothing about it needs the waiver the system
+status does. See § Audio for the cube-root convention `wpctl get-volume` prints, the settings that are the
+configuration's (`show_volume`, `volume_scale` — because a volume has two honest numbers and the file decides
+which one is drawn and which one a notch is measured in — and the two steps, `step_percent` and
+`step_decibels`), and the private-daemon test that proves it. Like the system status's cadence, the audio
+service writes one record each time it accepts a step or a unit — `a wheel notch moves the volume by N dB,
+which is the step the decibel readout uses`, and `the volume readout and the wheel's step are both in
+percent` — because a running shell's wheel is otherwise invisible from outside the process; the live case in
+`niri-live-layershell-test` reads those back out of a shell it started, at startup and after a live edit,
+which is the composition root's wiring and the one thing no unit test can call.
+
+**The network readout is in**, as the counter-example that costs nothing to make: unlike the volume it is
+the same shape one daemon over, and it still needs no waiver. `src/dbus/NetworkService.cpp` finds
+NetworkManager's name on the system bus and follows `PropertiesChanged` — first on the manager, then, for
+whichever objects the manager's own answers name, on the active connection, the device behind it, its
+access point and the daemon's own connectivity. What the readout needs is a decision per property rather
+than a number: the chain is named by the daemon instead of guessed, so the module never assumes Wi-Fi,
+never assumes an access point exists, and reports no signal strength rather than a zero when the device
+has none to give. Its settings are the configuration's — `[bar.network]`'s three booleans, whether the
+readout is drawn and whether the name and the signal are drawn beside it — and its two halves are
+`network-test`, whose service half runs against a NetworkManager test double that owns the name on a
+`dbus-daemon` the test starts itself, and `network-live-test`, which compares the module's reading against
+what `busctl` prints for the same objects on the desktop's own daemon.
+
+**Battery and media are implemented.** The battery readout follows UPower; the media readout
+follows MPRIS players on the session bus and draws the selected player's title and artist.
+`media-test` covers second-player selection and a newer signal surviving a delayed initial reply
+on a private bus. The shipped bar was also observed rendering real VLC metadata on niri.
+
+**Idle measurement, 2026-09-17:** the Release binary (`build/release/quantum-shell`), with the
+bar visible on DP-3 and the default configuration, consumed 15 CPU ticks at 100 Hz over
+60.0348 seconds: **0.250% of one core**. `/proc/<pid>/stat` supplied user + system ticks;
+Python's monotonic clock supplied elapsed time. `/proc/<pid>/status` reported VmRSS rising
+from **172492 to 173548 KiB** (168.4 to 169.5 MiB). This is process RSS, not private memory
+or GPU memory. Machine: Ryzen 7 5800XT, RTX 4060 Ti, Linux 7.2.6-1-cachyos, Qt 6.11.2;
+live niri session, with other desktop applications and the remainder of the Release build running.
+`niri msg --json layers`
+confirmed `quantum-shell-bar` on the Top layer before sampling. The probe was stopped afterward.
+The earlier Debug sample was 0.367% over 60 seconds, with endpoint RSS 174504 KiB.
+
+**Phase 1 remains open:** CPU meets the <1% budget, but Release RSS exceeds the <150 MB
+budget. Memory attribution and reduction are the next engineering work; a Release build did
+not remove the excess. This single interval does not establish long-term memory stability.
+The system-sampling waiver below also remains unresolved; no rule or budget was changed.
 
 **Exit criteria:** a fully functional daily-driver bar; no polling; workspace changes are instant
-and event-driven; idle CPU budget met.
+and event-driven; idle CPU budget met. The performance row's "no polling loops" is met in the sense the
+shell reads it — nothing polls the compositor, and the one cadence in the shell exists where the kernel
+offers no alternative and is gated on the bar being on screen — but it is not met literally: see § System
+statistics for the exception and the waiver it needs.
 
 ### Phase 2 — Shell Components
 
