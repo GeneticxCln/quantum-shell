@@ -917,11 +917,14 @@ Consequences:
   rather than as the absence of a timer. Battery and media are now implemented. The media
   service's private-bus regressions cover second-player selection and a newer signal surviving
   a delayed initial reply; the shipped bar rendered real VLC metadata on niri.
-  Idle measurement on 2026-09-17: Release bar visible, default configuration, 15 CPU ticks
-  at 100 Hz over 60.0348 seconds = 0.250% of one core; endpoint VmRSS 173548 KiB (169.5 MiB).
-  CPU passes; RSS exceeds the 150 MB budget. Phase 1 remains open for memory attribution
-  and reduction and the unresolved system-sampling waiver. Method and machine are recorded
-  in `QUANTUM_SHELL.md` Phase 1 and `ENGINEERING_SPEC.md` §7.
+  Idle measurement on 2026-09-17, with the shipped software-rendered 2D default (the
+  user's renderer decision; `QSG_RHI_BACKEND=opengl` stays the opt-in for the hardware
+  path and the Phase 2 3D work): Release bar visible, default configuration, 0.183% of
+  one core over 60.0537 seconds and VmRSS 87372 → 87496 KiB (85.4 MB) — CPU and RSS
+  budgets both pass. The hardware path idled at 0.250% and 169.5 MiB with ~56 MB of
+  NVIDIA driver mappings, the attribution that drove the decision; both measurements
+  and the opt-in are recorded in `QUANTUM_SHELL.md` Phase 1 and `ENGINEERING_SPEC.md` §7.
+  The system-sampling waiver remains the user's to write.
 - The gate requires `tools`, `CMakeLists.txt`, `src`, `qml` and `tests`, and reads all five: `src`
   and `qml` were added in the same change that created them, as the rule above requires.
 - One decision is pending and must not be made by an agent unilaterally: whether the Qt floor is
@@ -1192,6 +1195,10 @@ ctest --preset dev -R app-logging-test             # the record format and the c
 # The shell and its client, by hand, on the session above: the second command needs the first one
 # running, and `qsctl` addresses the shell by the frozen abstract name rather than by a process.
 cd build/dev && QT_PLUGIN_PATH="$PWD/plugins" QT_WAYLAND_SHELL_INTEGRATION=quantum-shell ./quantum-shell
+# The shell defaults to Qt's software renderer, which is what meets the idle RSS budget; naming a
+# backend explicitly overrides it, and `QSG_RHI_BACKEND=opengl` is the documented hardware path
+# (and the one the Phase 2 3D work needs):
+cd build/dev && QT_PLUGIN_PATH="$PWD/plugins" QT_WAYLAND_SHELL_INTEGRATION=quantum-shell QSG_RHI_BACKEND=opengl ./quantum-shell
 ./build/dev/qsctl version                          # the shell's version and the protocol it speaks
 ./build/dev/qsctl state                            # what the bar is drawn from, one line of JSON
 ./build/dev/qsctl config get bar.height            # the bare value: 32 unless configured otherwise

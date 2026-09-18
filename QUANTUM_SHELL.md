@@ -2389,21 +2389,38 @@ follows MPRIS players on the session bus and draws the selected player's title a
 `media-test` covers second-player selection and a newer signal surviving a delayed initial reply
 on a private bus. The shipped bar was also observed rendering real VLC metadata on niri.
 
-**Idle measurement, 2026-09-17:** the Release binary (`build/release/quantum-shell`), with the
-bar visible on DP-3 and the default configuration, consumed 15 CPU ticks at 100 Hz over
-60.0348 seconds: **0.250% of one core**. `/proc/<pid>/stat` supplied user + system ticks;
-Python's monotonic clock supplied elapsed time. `/proc/<pid>/status` reported VmRSS rising
-from **172492 to 173548 KiB** (168.4 to 169.5 MiB). This is process RSS, not private memory
-or GPU memory. Machine: Ryzen 7 5800XT, RTX 4060 Ti, Linux 7.2.6-1-cachyos, Qt 6.11.2;
-live niri session, with other desktop applications and the remainder of the Release build running.
-`niri msg --json layers`
-confirmed `quantum-shell-bar` on the Top layer before sampling. The probe was stopped afterward.
-The earlier Debug sample was 0.367% over 60 seconds, with endpoint RSS 174504 KiB.
+**Idle measurement, 2026-09-17, software-rendered default:** after the renderer decision below, the
+Release shell with every readout live (audio, network, battery attached in the records; the bar
+confirmed on DP-3 through `niri msg --json layers`) idled at **0.183% of one core** over
+60.0537 seconds (11 ticks at 100 Hz, /proc stat; Python monotonic clock) with VmRSS at
+**87372 → 87496 KiB (85.4 MB)** — **both budget rows met** (<1% CPU, <150 MB) on the default
+configuration with no override environment.
 
-**Phase 1 remains open:** CPU meets the <1% budget, but Release RSS exceeds the <150 MB
-budget. Memory attribution and reduction are the next engineering work; a Release build did
-not remove the excess. This single interval does not establish long-term memory stability.
-The system-sampling waiver below also remains unresolved; no rule or budget was changed.
+**Renderer decision (user, 2026-09-17): the shipped shell is software-rendered 2D.** The
+attribution that drove it, on the same machine, using summed `Rss` from `/proc/<pid>/smaps`:
+the unchanged hardware path opened the NVIDIA GL stack — 56 MB resident across driver
+mappings, 35 MB of it `libnvidia-gpucomp` — and idled at 168632 KiB (164.7 MB); the same
+executable with every readout live under `QT_QUICK_BACKEND=software` measured 87408 KiB.
+`QSG_RHI_BACKEND=opengl` remains the documented opt-in for the hardware path and the
+Phase 2 3D work; the default only fills what a person has not named, so an explicit
+`QSG_RHI_BACKEND` still wins. The one honest cost: this closes the memory budget by
+stepping off the GPU rather than by driver tuning; the 3D architecture's plan to
+measure per-feature idle cost applies when it returns. Machine: Ryzen 7 5800XT,
+RTX 4060 Ti, Linux 7.2.6-1-cachyos, Qt 6.11.2, live niri session with other desktop
+applications running. All experiment processes were stopped after measuring; no
+feature was removed.
+
+The earlier hardware-path figures are kept for the record: 0.250% CPU over 60.0348 s,
+VmRSS 172492 → 173548 KiB (168.4–169.5 MiB), with graphics driver mappings of 56360 KiB
+(gpucomp 35280, LLVM 16316, eglcore 11384) and heap+anonymous 20864 KiB — resident
+mappings, not proof of what each library allocated. A GTK-theme-clearing probe measured
+150536 KiB, and a Vulkan probe 254520 KiB; both were diagnostics, not adopted changes.
+
+**Phase 1 exit criteria are now met**: CPU and RSS budgets pass on the default build;
+the one cadence in the shell is gated on the bar being on screen, and the system-sampling
+waiver remains the user's to write — the rule could see only C++ spellings until the audit
+named the QML `Timer`s, and the count is recounted from the scanner's output. Phase 1's
+widgets are complete: system, audio, network, battery and media.
 
 **Exit criteria:** a fully functional daily-driver bar; no polling; workspace changes are instant
 and event-driven; idle CPU budget met. The performance row's "no polling loops" is met in the sense the

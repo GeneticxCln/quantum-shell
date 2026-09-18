@@ -34,6 +34,8 @@
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QUrl>
 #include <QWindow>
 
@@ -68,6 +70,22 @@ int main(int argc, char **argv)
     qCInfo(quantum::app::shellLog) << "quantum-shell" << QCoreApplication::applicationVersion()
                                    << "starting; ipc protocol" << quantum::ipc::ProtocolVersion << "config"
                                    << quantum::config::ConfigWatcher::defaultPath();
+    // The graphics API is chosen here rather than left to Qt's platform default, because the memory
+    // budget is a written row (QUANTUM_SHELL.md § Quality gates) and the measurement says the choice
+    // matters: with the hardware path the process opens the NVIDIA GL stack — 56 MB of resident
+    // mappings, 35 MB of it the driver's shader compiler — and idled at 168.6 MB RSS against the
+    // <150 MB budget, while the same executable with every readout live idled at 87.4 MB under the
+    // software renderer. The bar is 2D, and the software renderer draws that scene without the
+    // driver; the attribution behind the decision is recorded in QUANTUM_SHELL.md § Phase 1.
+    //
+    // A person who names QSG_RHI_BACKEND explicitly gets what they asked for instead — that is the
+    // opt-in the hardware path and the Phase 2 3D plans remain reachable through — so this call only
+    // fills the default and never overrides a stated choice. It must run before the first
+    // QQuickWindow exists, and the bar window below is the first.
+    if (qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND")) {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+    }
+
 
     // The window the bar is built on. Registered before the engine loads anything, because a QML file
     // naming a type has to resolve it at load time.

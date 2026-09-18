@@ -335,6 +335,13 @@ is fixed by construction), `NoKeyboard`, `height == exclusiveZone == Config.bar.
 (live), `layerNamespace` from config (once). Non-`LayerShellWindow` and off-prefix
 namespaces get no surface, with records.
 
+Graphics API: the shell calls `QQuickWindow::setGraphicsApi(QSGRendererInterface::Software)`
+before the first window, and only when `QSG_RHI_BACKEND` is unset — so the default is the
+software renderer (measured idle RSS 85.4 MB, both budgets met) and an explicit choice wins
+(`QSG_RHI_BACKEND=opengl` is the hardware path, kept for Phase 2 3D). Records confirm both
+directions: `Loading backend software` by default, `Creating QRhi with backend OpenGL` with
+the variable set. §7 carries the measurement and the attribution behind it.
+
 Arrangement law: widgets declare into named groups (`left`, `centre`, `right`),
 carry no coordinates/anchors/offsets; `CapsuleGroup.fit()` (on completed, children
 change, height change, guarded to settle) gives every child the group height; content
@@ -486,20 +493,32 @@ config path, socket bind result) on `quantum.shell`.
 
 ## 7. Budgets
 
-Measured on 2026-09-17: Release bar visible on niri DP-3, default configuration,
-Ryzen 7 5800XT / RTX 4060 Ti, Linux 7.2.6-1-cachyos, Qt 6.11.2. Over 60.0348 seconds
-(Python monotonic clock), `/proc/<pid>/stat` user + system time increased by 15 ticks
-at 100 Hz: **0.250% of one core**. VmRSS from `/proc/<pid>/status` increased from
-172492 to 173548 KiB (168.4 to 169.5 MiB). CPU passes <1%; RSS fails <150 MB.
-Other desktop applications and the remainder of the Release build were running; this is process RSS, not private or GPU memory.
-Phase 1 is not closed. See `QUANTUM_SHELL.md` Phase 1 for the workload and remaining work.
+Measured on 2026-09-17 with the shipped **software-rendered 2D default** (the user's
+decision after the attribution below; `QSG_RHI_BACKEND=opengl` remains the opt-in for
+the hardware path): Release bar visible on niri DP-3, default configuration, no override
+environment, Ryzen 7 5800XT / RTX 4060 Ti, Linux 7.2.6-1-cachyos, Qt 6.11.2. Over
+60.0537 seconds (Python monotonic clock), `/proc/<pid>/stat` user + system time
+increased by 11 ticks at 100 Hz: **0.183% of one core**. VmRSS from `/proc/<pid>/status`
+was 87372 → 87496 KiB (85.4 MB). **Both budgets pass: CPU <1%, RSS <150 MB.**
+Other desktop applications were running; this is process RSS, not private or GPU memory.
 
-Idle: hidden bar = zero wake-ups from sampling; visible bar wakes once per accepted
+The hardware path remains reachable and is recorded for the decision it required: the
+same Release executable idled at 0.250% CPU with VmRSS 172492 → 173548 KiB (168.4–169.5 MiB)
+under the default OpenGL/NVIDIA stack, whose driver mappings totalled 56360 KiB RSS
+(`libnvidia-gpucomp` 35280, `libLLVM` 16316, `libnvidia-eglcore` 11384 — resident
+mappings, not an allocation breakdown). A Vulkan probe measured 254520 KiB and a
+GTK-theme-cleared probe 150536 KiB; both were diagnostics, not adopted changes.
+The software default closes the memory budget by stepping off the GPU for the 2D bar;
+per-feature idle-cost measurement (§ 3D) applies when the hardware path returns for 3D.
+
+Idle wake-ups: hidden bar = zero wake-ups from sampling; visible bar wakes once per accepted
 cadence plus the clock's once-per-minute single-shot. Shard wall clock ≈ slowest
 shard: ~230 s in the five runs of the current split (230.8, 229.6, 229.4 replaying a pinned
 seed, 228.3, 226.6), with the shards of one invocation spanning 200.6–230.8 s, and
 204.8–252.7 s across the runs on a machine shared with other work, which is the variance
-to expect from the figure; ~853 s when the four are run in sequence. `bar-interaction-test` ≈ 1046 ms/pass;
+to expect from the figure; ~853 s when the four are run in sequence.
+
+`bar-interaction-test` ≈ 1046 ms/pass;
 `network-test` ≈ 2364 ms, the most expensive unit pass in the suite because it starts a `dbus-daemon`
 of its own and holds a reply in flight;
 `sysmon-test` ≈ 788 ms; full default suite per AGENTS.md command reference. Numbers
@@ -531,7 +550,8 @@ neither is an oversight, and saying so is the point of the section.
    is a comment inside `src/`, so it was fixed there and in the document together.
 4. `QUANTUM_SHELL.md` Phase 1 said audio was not started — it has a section of its own
    in that document now, and the roadmap paragraph names what is left (network, battery,
-   media, the idle-budget measurement) instead of listing audio among the absent ones.
+  media, the renderer decision with its measured budget, and the unresolved
+  system-sampling waiver) instead of listing audio among the absent ones.
 
 **Open, and not for an agent to close:**
 
