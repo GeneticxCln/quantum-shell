@@ -50,6 +50,7 @@ set(QS_TEST_NAMES
     network-test
     battery-test
     media-test
+    notification-test
     ipc-protocol-test
     ipc-server-test
     ipc-capabilities-test

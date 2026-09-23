@@ -14,6 +14,7 @@ Q_LOGGING_CATEGORY(audioLog, "quantum.shell.audio")
 Q_LOGGING_CATEGORY(networkLog, "quantum.shell.network")
 Q_LOGGING_CATEGORY(batteryLog, "quantum.shell.battery")
 Q_LOGGING_CATEGORY(mediaLog, "quantum.shell.media")
+Q_LOGGING_CATEGORY(notificationLog, "quantum.shell.notification")
 
 namespace Logging {
 

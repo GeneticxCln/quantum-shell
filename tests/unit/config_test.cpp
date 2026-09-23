@@ -119,7 +119,7 @@ static_assert(quantum::config::MinVolumeStepDecibels == coveredMinVolumeStepDeci
 // The key paths the shell offers to `qsctl config get`, mirrored the same way and for a sharper reason: a
 // path is what a script types. It is interface, so a rename has to be acknowledged here — and in the
 // document that lists the keys — rather than being free to happen in the schema alone.
-constexpr std::array<const char*, 17> coveredKeyPaths{"bar.height",
+constexpr std::array<const char*, 18> coveredKeyPaths{"bar.height",
                                                        "bar.layerNamespace",
                                                        "bar.system.sample_interval_ms",
                                                        "bar.system.show_cpu",
@@ -135,7 +135,8 @@ constexpr std::array<const char*, 17> coveredKeyPaths{"bar.height",
                                                        "bar.battery.show_status",
                                                        "bar.battery.show_percentage",
                                                        "bar.battery.show_time",
-                                                       "bar.media.show_media"};
+                                                       "bar.media.show_media",
+                                                       "bar.notifications.show_notifications"};
 
 template <std::size_t Declared, std::size_t Covered>
 constexpr bool samePaths(const std::array<const char*, Declared>& declared,
@@ -276,7 +277,13 @@ void ConfigTest::readsEveryKeyTheBarUses() {
         "[bar.battery]\n"
         "show_status = true\n"
         "show_percentage = false\n"
-        "show_time = true\n"));
+        "show_time = true\n"
+        "\n"
+        "[bar.media]\n"
+        "show_media = false\n"
+        "\n"
+        "[bar.notifications]\n"
+        "show_notifications = false\n"));
 
     QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QStringLiteral("; "))));
     QVERIFY2(result.warnings.isEmpty(), qPrintable(result.warnings.join(QStringLiteral("; "))));
@@ -297,6 +304,9 @@ void ConfigTest::readsEveryKeyTheBarUses() {
     QCOMPARE(result.values.bar.battery.showStatus, true);
     QCOMPARE(result.values.bar.battery.showPercentage, false);
     QCOMPARE(result.values.bar.battery.showTime, true);
+    // The sixth table, read in the same pass: a flag the file set false is false, and a table that was
+    // never dispatched would show here as the default true.
+    QCOMPARE(result.values.bar.notifications.showNotifications, false);
 }
 
 void ConfigTest::refusesABatterySettingItCannotHonour() {
@@ -559,6 +569,30 @@ void ConfigTest::aValueOfTheWrongTypeIsReportedAndTheDefaultKept() {
     QVERIFY(mentions(notATable.warnings, QStringLiteral("bar.system")));
     QVERIFY(mentions(notATable.warnings, QStringLiteral("a table")));
     QCOMPARE(notATable.values.bar.system.sampleIntervalMs, coveredDefaultSampleIntervalMs);
+
+    // The notifications table follows the same rule as the five before it: a boolean expected, a string
+    // found, and the default kept. A key this build does not read inside it is reported by its own path,
+    // and a number where the table belongs is reported as a table — which is the whole of what a person
+    // can get wrong in a one-key table.
+    const ParseResult notifications = parseConfig(QByteArray(
+        "schema_version = 1\n"
+        "[bar.notifications]\n"
+        "show_notifications = \"yes\"\n"
+        "show_notificatons = false\n"));
+    QVERIFY(notifications.errors.isEmpty());
+    QCOMPARE(notifications.warnings.size(), 2);
+    QVERIFY(mentions(notifications.warnings, QStringLiteral("bar.notifications.show_notifications")));
+    QVERIFY(mentions(notifications.warnings, QStringLiteral("a boolean")));
+    QVERIFY(mentions(notifications.warnings, QStringLiteral("bar.notifications.show_notificatons")));
+    QCOMPARE(notifications.values.bar.notifications.showNotifications, true);
+
+    const ParseResult notANotificationsTable =
+        parseConfig(QByteArrayLiteral("schema_version = 1\n[bar]\nnotifications = 3\n"));
+    QVERIFY(notANotificationsTable.errors.isEmpty());
+    QCOMPARE(notANotificationsTable.warnings.size(), 1);
+    QVERIFY(mentions(notANotificationsTable.warnings, QStringLiteral("bar.notifications")));
+    QVERIFY(mentions(notANotificationsTable.warnings, QStringLiteral("a table")));
+    QCOMPARE(notANotificationsTable.values.bar.notifications.showNotifications, true);
 }
 
 void ConfigTest::refusesANamespaceOutsideTheFrozenPrefix() {
@@ -914,7 +948,9 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
                          QStringLiteral("Config.bar.battery.showPercentage"),
                          QStringLiteral("Config.bar.battery.showTime"),
                          QStringLiteral("Config.bar.media"),
-                         QStringLiteral("Config.bar.media.showMedia")};
+                         QStringLiteral("Config.bar.media.showMedia"),
+                         QStringLiteral("Config.bar.notifications"),
+                         QStringLiteral("Config.bar.notifications.showNotifications")};
 
     Config config;
     const QMetaObject* rootMeta = config.metaObject();
@@ -965,6 +1001,14 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
     for (int index = mediaMeta->propertyOffset(); index < mediaMeta->propertyCount(); ++index) {
         const QMetaProperty property = mediaMeta->property(index);
         actual.append(QStringLiteral("Config.bar.media.") + QString::fromLatin1(property.name()));
+        QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
+    }
+
+    const QMetaObject* notificationsMeta = config.bar()->notifications()->metaObject();
+    for (int index = notificationsMeta->propertyOffset(); index < notificationsMeta->propertyCount();
+         ++index) {
+        const QMetaProperty property = notificationsMeta->property(index);
+        actual.append(QStringLiteral("Config.bar.notifications.") + QString::fromLatin1(property.name()));
         QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
     }
 

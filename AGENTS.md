@@ -122,8 +122,16 @@ Real files in this repository:
                          zero, and a decibel step shorter than the tenth the readout draws, are refused
                          by name in both places, and the schema's spelling and the service's are compared
                          at compile time
-  src/dbus/              the network, battery and media, read from the daemons that own them rather
-                         than asked for: `NetworkService` finds NetworkManager on the system bus,
+  src/dbus/              the notification daemon the shell *is*, and the network, battery and media,
+                         read from the daemons that own them rather than asked for. `NotificationService`
+                         takes `org.freedesktop.Notifications` on the session bus with `QueueService`
+                         rather than stealing it, answers the spec's four methods — `Notify` returning
+                         the id it answered, `CloseNotification`, `GetCapabilities`,
+                         `GetServerInformation` — and publishes the sender's own application name,
+                         summary and body plus a running count through the `NotificationService` QML
+                         singleton, withdrawing the reading when the bus says the name is not this
+                         connection's; every registration, queue, `Notify` and close is a record on
+                         `quantum.shell.notification`. `NetworkService` finds NetworkManager on the system bus,
                          subscribes to `PropertiesChanged` on the manager and then, per object, on the
                          active connection, the device behind it, its access point and the daemon's own
                          connectivity — everything `state`, `connectionName`, `interfaceName`,
@@ -156,7 +164,8 @@ Real files in this repository:
                          is a case in media-test
   src/app/               main.cpp, the composition root that joins the niri stack, the configuration,
                          the system readings, the audio service, the network service, the battery
-                         service, the media service and the IPC server to the QML engine; the logging
+                         service, the media service, the notification daemon and the IPC server to the
+                         QML engine; the logging
                          categories and the record format every other library logs through; and the
                          three capabilities the IPC exposes, each a delegation to the service, the
                          schema or the bar window
@@ -173,21 +182,28 @@ Real files in this repository:
                          names, drawn from BatteryService (percentage, state, time-to-empty or
                          time-to-full, warning level, a dash while there is no reading), the media
                          readout `Config.bar.media` names, drawn from MediaService (title, artist,
-                         player name, a dash while there is no player or no track), and the clock. The
+                         player name, a dash while there is no player or no track), the notification
+                         readout `Config.bar.notifications` names, drawn from NotificationService (the
+                         sender's own application name and summary while the shell is the notifications
+                         daemon, a dash when it is the daemon and has been sent nothing, and nothing at
+                         all while the shell is not the daemon or the readout is switched off), and the
+                         clock. The
                          arrangement is the named groups of CapsuleGroup.qml — a widget is placed by
                          being declared in the group it belongs to, and carries no coordinate, anchor or
                          offset of its own — and a group gives every widget of it its own height, so
                          widgets of different natural sizes line up without each of them knowing where
                          it is. There are three groups — left, centre and right — holding the workspace
-                         strip, the system status and its volume and network and battery and media and
-                         the clock: CPU and memory read through SysMonService, each drawn readout
+                         strip, the system status and, at the trailing edge, the network and battery and
+                         media and notification readouts and the volume and the clock: CPU and memory
+                         read through SysMonService, each drawn readout
                          drawing a dash rather than a number while there is no reading to show, and a
                          readout the configuration turns off not drawn at all. The window's height and
                          namespace are bindings onto `Config`, not literals
   tools/qs-scan/         qs-scan, the repository real-code gate: scanner source + pattern table
   tests/unit/            unit tests for each library; the compositor's end of the socket, and the
                          daemon's end of the bus, are test doubles (in-process for niri, a private
-                         `dbus-daemon` owning NetworkManager's name for the network)
+                         `dbus-daemon` owning NetworkManager's name for the network, and another the
+                         notification binaries start for themselves, where the shell takes the name)
   tests/integration/     the seven tests that run against something real: five against a live
                          compositor — two that only read, one that acts on the session, and two that
                          start and restart their own, one reattaching its own connections and one
@@ -197,6 +213,10 @@ Real files in this repository:
                          through `busctl` and needs no compositor either
   tests/scan/            black-box cases for the gate
   tests/fixtures/        input trees for those cases; never compiled
+  tests/support/         headers more than one binary includes: `SnapshotReconcile.h`, the
+                         reconciliation every model-against-the-compositor comparison runs through, and
+                         `NotificationBus.h`, the private `dbus-daemon` the two notification binaries
+                         start for themselves
   tests/*.cmake          the two slot-order checks: a binary's slots read from the binary itself, then
                          run one at a time and in reverse order, and again as a seeded shuffle split
                          into shards that ctest runs at once; plus public_names.cmake, the declared test
@@ -206,7 +226,8 @@ Real files in this repository:
 Source code:      src/niri/, src/config/, src/system/, src/audio/, src/dbus/, src/wayland/,
                   src/ipc/, src/app/ and qml/ — the shell now builds and runs, answers qsctl,
                   writes records and reads the desktop's volume from PipeWire, network from
-                  NetworkManager, battery from UPower, and media from MPRIS2 players; there is no
+                  NetworkManager, battery from UPower and media from MPRIS2 players, and is the
+                  desktop's notification daemon itself; there is no
                   layer-surface code for anything but a bar
 Build system:     CMake 3.31 floor (4.4.3 tested), C++23, Qt 6.11 floor (6.11.2 tested); targets:
                   qs-scan, quantum-shell-niri, quantum-shell-config (the schema, the QObject tree and
@@ -230,7 +251,7 @@ Build system:     CMake 3.31 floor (4.4.3 tested), C++23, Qt 6.11 floor (6.11.2 
                   language for wayland-scanner's output alone; Qt Concurrent is used for the off-thread
                   config parse, and PipeWire's own thread loop is where its callbacks run, so nothing
                   in src/audio/ blocks the GUI thread
-Tests:            ctest, thirty-three tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
+Tests:            ctest, thirty-four tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
                   gate), public-names-test (the test names and environment variables the documents tell
                   people to run, against the declarations in tests/public_names.cmake), then two order
                   checks that read each test binary rather than its source:
@@ -253,15 +274,15 @@ Tests:            ctest, thirty-three tests without a compositor socket or opt-i
                   and each shard reports which slot pairs it exercised in both
                   orders and which slot triples in all six — the measures that matter, since the share
                   of the n! orderings a run visits is vanishing and says nothing. At ninety-six passes
-                  every pair and every one of the suite's 3545 triples comes out complete, so the
+                  every pair and every one of the suite's 10130 triples comes out complete, so the
                   section naming the triples left short is empty by design, and QS_WORST_TRIPLES_SHOWN
                   sets how many a run names when it is not (10 per binary by default, 0 to name none).
                   Each shard also reports the measure those two cannot give — four slots at a time,
                   because a four-slot dependency needs a particular one of twenty-four relative orders
-                  while any three of its slots can hold every order there is. That is 13,373 four-slot
-                  subsets and 320,952 orders across the suite, and at ninety-six passes a run reached
-                  314,744 of the orders (98.07%) and exercised 8,209 subsets in all twenty-four of
-                  theirs (61.38%): the one measure here that does not come out complete, so the section
+                  while any three of its slots can hold every order there is. That is 37,396 four-slot
+                  subsets and 897,504 orders across the 27 binaries the check walks, and at ninety-six
+                  passes a run reached 880,216 of the orders (98.07%) and exercised 23,087 subsets in all
+                  twenty-four of theirs (61.74%): the one measure here that does not come out complete, so the section
                   naming the four-slot subsets left short is where a run's findings are, and
                   QS_WORST_QUADS_SHOWN sets how many a run names per binary (10 by default, 0 to name
                   none). The measured figures sit below the uniform models printed beside them — about
@@ -274,7 +295,7 @@ Tests:            ctest, thirty-three tests without a compositor socket or opt-i
                   combination flakier than one in a hundred thousand — six passes with that floor, say
                   — is refused before it runs) —
                   and
-                  twenty-four unit tests that need no compositor or session daemon: niri-version-test, niri-ipc-test,
+                  twenty-five unit tests that need no compositor or session daemon: niri-version-test, niri-ipc-test,
                   niri-event-stream-test, niri-state-test, niri-actions-test, niri-output-test,
                   niri-keyboard-layouts-test, niri-outputs-test, niri-reconnect-test and
                   niri-service-test (which loads a QML binding in a real engine, and still needs no
@@ -288,12 +309,33 @@ Tests:            ctest, thirty-three tests without a compositor socket or opt-i
                   parsed by the schema and applied before the text the widget draws is compared, which
                   is what makes a token renamed on either side fail here rather than draw a fallback,
                   and a flag is turned off to assert the readout as a whole disappears while the other
-                  one stays. So what a click and a
+                  one stays. And the notification readout, which the other readouts' services cannot be
+                  asked for — its daemon is the shell itself — is driven end to end on a `dbus-daemon`
+                  of this process's own (`tests/support/NotificationBus.h`, the same harness
+                  notification-test uses, with the config written per process because two binaries of
+                  this suite run at once): the shipped service takes the notifications name, a second
+                  connection delivers a real `Notify`, the sender's application name and summary are
+                  read back off the widget, and `show_notifications = false` is then asserted to hide
+                  the readout and give the room it took back to its group — with the daemon still the
+                  daemon, so a widget that stood it down to hide itself fails. That last slot used to be
+                  the empty state three times over, every assertion `width() == 0`, which the flag could
+                  have been ignored through; the name is handed to the test's own sender connection at
+                  the end of each of the two slots, so the shell is not the daemon while the bar's other
+                  slots read the arrangement. So what a click and a
                   wheel ask the compositor for is asserted rather than assumed, and the arrangement read
                   back off it — each widget in its named group, and `CapsuleGroup.qml` driven on its own
                   with widgets of three different natural heights, because a bar holding widgets of one
                   size would not tell "the group sized them" apart from "they happened to be that
-                  size"), sysmon-test (the /proc lines the system readings come from: the aggregate cpu
+                  size"), notification-test (the one service here that is a daemon rather than a
+                  reader of one: a `dbus-daemon` of the process's own — the harness both notification
+                  binaries share, `tests/support/NotificationBus.h` — on which the shell takes the
+                  notifications name, `Notify` is answered with an id and publishes the sender's own
+                  text, `replaces_id` is answered with the caller's own id, the spec's other two
+                  methods answer, the demotion ordering `stop()` and the bus's own report can arrive in
+                  is pinned as a slot, and the machine's real `notify-send` — libnotify's program,
+                  probed before it is depended on — is the Phase 2 smoke test, skipping that one slot
+                  by name on a machine where it cannot run at all), sysmon-test (the /proc lines the
+                  system readings come from: the aggregate cpu
                   line rather than a per-core one, the eight counters the kernel documents summed so the
                   guest time counted inside user and nice is not counted twice, and a refusal rather than
                   a value for every shape of input that is not those files — driven by files the test
@@ -357,13 +399,13 @@ Tests:            ctest, thirty-three tests without a compositor socket or opt-i
                   are named by the caller, so a failure says `the shell` where the shell's own report is
                   being compared and `the model` where it is the event-fed one. With
                   NIRI_SOCKET set, niri-live-test and niri-live-stream-test join them
-                  (27), and the shuffled check covers those two as well, because a slot of either only
+                  (28), and the shuffled check covers those two as well, because a slot of either only
                   reads the compositor. niri-live-stream-test's comparisons of the model against a fresh
                   reading of the compositor each go through the reconciliation the shuffled check forced
                   into existence: they read again until the two agree, and a run that had to is reported
                   rather than failed, because the desktop can change between the two paths and being
                   overtaken by a rename is not a defect. Two tests act on the session and both need
-                  QS_NIRI_SESSION_TESTS as well (29): niri-live-action-test opens and closes the
+                  QS_NIRI_SESSION_TESTS as well (30): niri-live-action-test opens and closes the
                   overview on screen, and niri-live-layershell-test starts the built shell, waits for
                   its bar to reach the compositor, and checks that surface against the compositor's
                   own layer list and against the protocol requests the shell sent — which is the only
@@ -419,8 +461,8 @@ Tests:            ctest, thirty-three tests without a compositor socket or opt-i
                   its access point with what that prints, so the reader and the code under test are
                   two things; it needs no opt-in because it only reads, and where the machine has no
                   system bus with NetworkManager it skips with the reason rather than passing
-                  quietly. The counts: 35 registered
-                  with a socket, 33 without one; QS_NIRI_SESSION_TESTS adds its two and
+                  quietly. The counts: 36 registered
+                  with a socket, 34 without one; QS_NIRI_SESSION_TESTS adds its two and
                   QS_NIRI_RESTART_TESTS its own two, both needing a socket, while QS_AUDIO_TESTS adds
                   one and needs neither; all
                   three acting tests take the resource lock so a parallel run never has two of them on
@@ -440,8 +482,8 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                   slot-order check now runs as four parallel shards at
                   ninety-six passes, which found nothing left short of its pair and triple measures; it
                   also now reports and names a four-slot measure — the first here that is not complete
-                  at any practical pass count (98.07% of 320,952 four-slot orders reached, 61.38% of the
-                  13,373 subsets exercised in all twenty-four of their orders) — and building it turned
+                  at any practical pass count (98.07% of 897,504 four-slot orders reached, 61.74% of the
+                  37,396 subsets exercised in all twenty-four of their orders) — and building it turned
                   up a lead: replaying the shuffle outside the check shows the relative orders it
                   produces are measurably non-uniform, which the pair and triple measures could not see
                   because both saturate. Two of twelve parallel runs of the Clang tree's suite during an
@@ -884,9 +926,53 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    `ENGINEERING_SPEC.md` quotes, so the document moved with the table, which is the whole
                    point of `spec-values-test`.
 
-                   `main`'s two most recent commits are `bcdd521` and `a449a39`. Everything landed since —
-                   the system status's configured readouts, the volume module, the spec-values test, the
-                   deterministic fixture and this fix — is uncommitted.
+                   The notification daemon is the last landing, and it is the one service here that is a
+                   daemon rather than a reader of one: `src/dbus/NotificationService.*` takes
+                   `org.freedesktop.Notifications` on the session bus with `QueueService` — so a desktop
+                   running another notifier keeps the name — answers the spec's four methods, and
+                   publishes the sender's own application name, summary and body plus a running count
+                   through the `NotificationService` QML singleton; `qml/Notifications.qml` draws that in
+                   the bar's trailing group, gated by the new `[bar.notifications] show_notifications`,
+                   and `quantum.shell.notification` records every registration, queue, `Notify` and
+                   close. `notification-test` drives the daemon on a `dbus-daemon` of its own, and
+                   `bar-interaction-test` drives the readout end to end against the shell as the daemon:
+                   a second connection delivers a real `Notify`, the sender's application name and
+                   summary are read off the widget, the flag is turned off with that reading in hand and
+                   asserted to take both the readout and its room away, and the notifications name is
+                   then handed to the test's own connection so the shell is deliberately not the daemon
+                   while the bar's other slots read the arrangement. One defect surfaced by that landing
+                   is fixed: `stop()` releases the name, and the bus reports the release on a queued
+                   signal that can arrive after a later `start()` has taken the name back, so demotion
+                   now follows the bus's own answer about who owns the name, with the ordering pinned as
+                   a slot of the test. A second was open and is now fixed and pinned: the handover
+                   `QueueService` exists for. A shell that queued
+                   for the name while another daemon held it used to stop at its second export of the
+                   bus object — Qt refuses a second export at the same path, measured — and so carried
+                   the desktop's notifications while its bar said it was not the daemon. An export that
+                   is already this connection's is now taken as done, and the ask that follows is what
+                   publishes: measured, asking for a name this connection already owns answers
+                   `ServiceRegistered` rather than a queue position, so the second entry reaches the
+                   same line as the first. `notification-test`'s
+                   `aQueuedShellBecomesTheDaemonWhenTheHolderLeaves` holds the name with its own
+                   connection, starts the shipped service behind it, releases the name and asserts the
+                   shell publishes *and* answers a `Notify` sent to the name — and with the export
+                   tolerance removed it fails on exactly that, which is the falsifier. Publishing is
+                   guarded by the value it sets, so a registration that changes nothing emits nothing.
+                   A third is still open, and recorded rather than patched: after a `stop()`, a report
+                   of the shell's own earlier registration re-registers it, which is why
+                   `stop()` is not final and why nothing in the shipped shell calls it except a
+                   shutdown. What the service does not do at all is recorded beside them:
+                   `CloseNotification` only logs, the ids it issues are not tracked, and
+                   `GetCapabilities` advertises `body` and `body-markup` over a body that is carried and
+                   published but that nothing draws yet. The open one is in `ENGINEERING_SPEC.md` §6 with
+                   the rest of the honest limitations, and the fix is in `QUANTUM_SHELL.md` with its
+                   measurement.
+
+                   `main`'s most recent commits are `a848eb5`, `474d8e1`, `bcdd521`, `a449a39`,
+                   `3420d9b` and `f89873f`. The notification daemon and the changes that go with it are
+                   uncommitted; everything through `3420d9b` — the bar's wiring, the IPC and the
+                   logging, the arrangement, the system status, the volume module and the battery and
+                   media readouts — is committed.
 ```
 
 Consequences:
@@ -1147,7 +1233,7 @@ The build system is CMake with presets; every command below was run in this chec
 ```sh
 cmake --preset dev && cmake --build --preset dev   # configure and build; -Werror comes from the
                                                    # quantum-shell-warnings interface target
-ctest --preset dev                                 # thirty-three tests with no session; the two read-only
+ctest --preset dev                                 # thirty-four tests with no session; the two read-only
                                                    # live tests join them only when NIRI_SOCKET is set,
                                                    # and the preset runs four tests at a time
 ctest --preset dev -R audio-test                   # the volume module's pure half: the Props pod parse,
@@ -1191,6 +1277,13 @@ ctest --preset dev -R ipc-server-test              # the IPC server over a real 
 ctest --preset dev -R ipc-protocol-test            # the wire format as pure functions, ~0.02 s
 ctest --preset dev -R ipc-capabilities-test        # what the IPC may reach, against a real service
 ctest --preset dev -R app-logging-test             # the record format and the category names
+ctest --preset dev -R notification-test            # the daemon the shell is, against a dbus-daemon
+                                                   # the test starts: the name taken, Notify answered
+                                                   # with an id and the sender's own text published,
+                                                   # replaces_id answered with the caller's id, the
+                                                   # spec's other two methods, the demotion ordering,
+                                                   # and the smoke test against the real notify-send,
+                                                   # probed first, ~0.5 s, no compositor
 
 # The shell and its client, by hand, on the session above: the second command needs the first one
 # running, and `qsctl` addresses the shell by the frozen abstract name rather than by a process.

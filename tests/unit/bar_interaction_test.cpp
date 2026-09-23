@@ -20,10 +20,19 @@
 // QML. So a real `Config` is registered for this engine and driven the way the watcher drives it — by
 // applying validated values.
 //
+// The notification readout is the one widget here whose daemon is the shell itself, so this binary is also the
+// desktop's notification daemon for the two slots that ask it to be: a `dbus-daemon` of this process's own
+// (`tests/support/NotificationBus.h`), the shipped service taking the notifications name on it, a second
+// connection delivering a real `Notify`, and — at the end of each of those slots — the name handed to that
+// connection, so the shell is *not* the daemon while the rest of the file reads the bar's arrangement. Both
+// slots skip, naming the reason, when this machine has no `dbus-daemon`: without one the readout is dark
+// whatever a slot does, so the claim is untestable rather than false, which is what the other live halves of
+// this suite say for an unusable external program too.
+//
 // No display and no session: the platform plugin is the offscreen one, and the fake compositor owns the
-// socket. The five names a QML file is written against — the import, `NiriService`, `NiriActions`,
-// `SysMonService` and `Config` — are mirrored below and compared at compile time, on the same rule the
-// service test mirrors the first two for.
+// socket. The names a QML file is written against — the import and the singletons `NiriService`, `NiriActions`,
+// `SysMonService`, `PipeWireService`, `NetworkService`, `BatteryService` and `Config` — are mirrored below and
+// compared at compile time, on the same rule the service test mirrors the first two for.
 #include "config/Config.h"
 #include "config/ConfigSchema.h"
 #include "niri/NiriActions.h"
@@ -33,6 +42,7 @@
 #include "niri/NiriService.h"
 #include "niri/NiriState.h"
 #include "app/Logging.h"
+#include "dbus/NotificationService.h"
 #include "audio/PipeWireService.h"
 #include "dbus/BatteryService.h"
 #include "dbus/NetworkService.h"
@@ -41,7 +51,16 @@
 
 #include "FakeNiriServer.h"
 #include "NiriProtocolTestData.h"
+#include "NotificationBus.h"
 
+#include <QCoreApplication>
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusMessage>
+#include <QDBusPendingCall>
+#include <QDBusPendingCallWatcher>
+#include <QDBusReply>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -310,6 +329,8 @@ private slots:
     void theNetworkReadoutDrawsWhatTheDaemonReportsAndTheConfigurationNames();
     void theNetworkReadoutFollowsItsConfiguration();
 
+    void theNotificationReadoutDrawsWhatTheSenderWrote();
+    void theNotificationReadoutFollowsItsConfiguration();
     void theBatteryReadoutSitsInTheTrailingGroupAndShowsItsEmptyState();
     void theBatteryReadoutDrawsWhatTheDaemonReportsAndTheConfigurationNames();
 
@@ -330,6 +351,22 @@ private:
 
     int requestsSent() const;
     QString lastRequest() const;
+
+    // Whether a group's width is exactly what its drawn widgets come to, gaps included — the one place "the
+    // room it took is back" is visible, since a widget's own width says nothing about the gap it sat in. A
+    // caller waits for it rather than reading it once: a positioner's width follows its children on the next
+    // frame, which is the lag the volume and network slots were both caught by.
+    bool groupHoldsExactlyItsDrawnChildren(QQuickItem* group) const;
+
+    // The three steps of driving the shell's notification daemon, and they are the shell's own sequence
+    // rather than a value pushed into the service: the daemon registers, a sender puts a notification on the
+    // wire, and the shell stands down again. Each is used by both notification slots, so the reading and the
+    // configuration are asserted against the same driver.
+    //
+    // `deliverNotification` returns the id the daemon answered with, or zero when it did not answer.
+    void theShellBecomesTheNotificationDaemon();
+    quint32 deliverNotification(const QString& application, const QString& summary, const QString& body);
+    void theShellStopsBeingTheNotificationDaemon();
 
     // One reading of the fixture, both files at once: `availableKb` of the fixture's 16 GiB, and the
     // aggregate counters advanced by `jiffies` with `idleJiffies` of them idle. The deltas are the caller's
@@ -380,6 +417,21 @@ private:
     // widget's own rule for it, because producing it from a service needs an upowerd.
     std::unique_ptr<BatteryService> battery_;
     std::unique_ptr<quantum::dbus::MediaService> media_;
+    // The notification daemon, the one service here that is *driven* rather than left in its empty state, and
+    // the two pieces of the desktop it needs: a bus of this process's own, and a second connection to it that
+    // plays both parts a sender plays — it delivers the `Notify` call, and between slots it holds the
+    // notifications name so the shell is not the daemon while the bar's other slots read the arrangement.
+    qstest::NotificationBus notificationBus_;
+    // The bus the shell's notification daemon registers on, and a second connection to it for the sender.
+    // `QDBusConnection` has no default constructor — every one of them names a bus — so what is held before
+    // `initTestCase` has made them is the value Qt gives for a name no connection was made under: not
+    // connected, and every call on it failing rather than reaching somewhere unintended. That is what the
+    // service is constructed with when this machine has no `dbus-daemon`, so a busless run leaves the readout
+    // dark instead of reaching the desktop's own bus.
+    QDBusConnection notificationConnection_{QString()};
+    QDBusConnection notificationSender_{QString()};
+    bool senderHoldsTheNotificationsName_ = false;
+    std::unique_ptr<quantum::dbus::NotificationService> notifications_;
     Config config_;
     std::unique_ptr<QQmlEngine> engine_;
     std::unique_ptr<QObject> bar_;
@@ -425,6 +477,25 @@ void BarInteractionTest::initTestCase() {
     BatteryService::registerQmlSingleton(*battery_);
     media_ = std::make_unique<quantum::dbus::MediaService>();
     quantum::dbus::MediaService::registerQmlSingleton(*media_);
+    // The notification daemon, which is the one service here this binary *drives* rather than leaving in its
+    // empty state: both of the readout's states are real, and the slot that asks for a reading is the slot that
+    // takes the desktop's notifications name. So this binary needs a bus of its own — `NotificationBus`, the
+    // same harness `notification-test` uses — and when this machine has no `dbus-daemon` to start one the
+    // service is constructed on a connection that was never made and never started: the readout is then dark
+    // exactly as the rest of this file expects, and the two slots that need a daemon skip and say why.
+    //
+    // It is deliberately not the desktop's session bus. A service watching the notifications name there would
+    // ask for it the moment the desktop's own notifier restarted — that is what the service's registration
+    // path does on any `serviceRegistered` it hears — and a test binary has no business becoming the desktop's
+    // notification daemon.
+    if (notificationBus_.start(QStringLiteral(FIXTURES))) {
+        notificationConnection_ = QDBusConnection::connectToBus(
+            notificationBus_.address(), QStringLiteral("quantum-shell-bar-interaction-test"));
+        notificationSender_ = QDBusConnection::connectToBus(
+            notificationBus_.address(), QStringLiteral("quantum-shell-bar-interaction-test-sender"));
+    }
+    notifications_ = std::make_unique<quantum::dbus::NotificationService>(notificationConnection_);
+    quantum::dbus::NotificationService::registerQmlSingleton(*notifications_);
     // The defaults, which is the state a shell starts in: both readouts drawn, memory as used of total. The
     // slots below that change it put it back, so no slot reads another's edit.
     Config::registerQmlSingleton(config_);
@@ -661,17 +732,19 @@ void BarInteractionTest::theBarPlacesItsWidgetsInNamedGroups() {
     const QList<QQuickItem*> leftWidgets = left->childItems();
     const QList<QQuickItem*> rightWidgets = right->childItems();
     QCOMPARE(leftWidgets.size(), 1);
-    QCOMPARE(rightWidgets.size(), 5);
+    QCOMPARE(rightWidgets.size(), 6);
     QCOMPARE(leftWidgets.first()->objectName(), QStringLiteral("workspaces"));
-    // The trailing group holds the network, the battery, the volume and then the clock, in that order: the group
-    // decides the order, the machine's own condition is read together at the outside of it — the connection it is
-    // on, then the power it has left — the control a person changes by hand follows, and the time keeps the corner.
+    // The trailing group holds the network, the battery, the media player, the notification, the volume and then
+    // the clock, in the order they were declared in `qml/Bar.qml`: the group decides that order, the machine's
+    // own condition is read together at the outside of it — the connection it is on, then the power it has left
+    // — then what the desktop is doing — what is playing, and what was just said — then the one control a person
+    // changes by hand, and the time keeps the corner.
     QCOMPARE(rightWidgets.at(0)->objectName(), QStringLiteral("network"));
     QCOMPARE(rightWidgets.at(1)->objectName(), QStringLiteral("battery"));
     QCOMPARE(rightWidgets.at(2)->objectName(), QStringLiteral("media"));
-    QCOMPARE(rightWidgets.at(3)->objectName(), QStringLiteral("volume"));
-    QCOMPARE(rightWidgets.at(4)->objectName(), QStringLiteral("clock"));
-
+    QCOMPARE(rightWidgets.at(3)->objectName(), QStringLiteral("notifications"));
+    QCOMPARE(rightWidgets.at(4)->objectName(), QStringLiteral("volume"));
+    QCOMPARE(rightWidgets.at(5)->objectName(), QStringLiteral("clock"));
     // The height convention as it lands on the real widgets: each is its group's height, whatever the widget
     // would have been on its own, and each sits at the group's leading edge — which together mean no part of
     // either position was written down by the widget.
@@ -682,8 +755,10 @@ void BarInteractionTest::theBarPlacesItsWidgetsInNamedGroups() {
         QCOMPARE(widget->height(), right->height());
         QCOMPARE(widget->y(), 0.0);
     }
-    // The two are beside each other rather than on top of each other, which is the group's own spacing doing
-    // the work: neither widget carries a coordinate.
+    // The widgets that are drawn are beside each other in the order they were declared rather than on top of
+    // each other, and that order is the group's own doing: none of them carries a coordinate. Positions are
+    // compared rather than widths, because a positioner can lay two widgets out at the same `x` and still
+    // report a width for both.
     //
     // Waited for, and the shuffled slot-order check is why. What is claimed is the *settled* arrangement, and a
     // positioner that has just been re-flowed by another slot's configuration edit holds the old positions until
@@ -692,17 +767,30 @@ void BarInteractionTest::theBarPlacesItsWidgetsInNamedGroups() {
     // widget of the group (which is what `theNetworkReadoutFollowsItsConfiguration` does) happens to run
     // earlier than it; the check found the one order where it does not and this read a frame that was still
     // moving. A group that never places them in order still fails, however long this waits.
+    //
+    // The two widgets those comparisons step over are `media` and `notifications`, which this binary holds dark:
+    // no player is playing, and the shell is not the notification daemon — the two notification slots take that
+    // name and hand it back at the end of each, and this is the state they leave. A positioner lays out nothing
+    // for an invisible child, so the four that are drawn are the four that are compared, in declaration order:
+    // network, battery, volume, clock.
     QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(1)->x() > rightWidgets.at(0)->x(), 5000);
-    QVERIFY(!rightWidgets.at(2)->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(4)->x() > rightWidgets.at(1)->x(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(5)->x() > rightWidgets.at(4)->x(), 5000);
+
+    // And a widget that is not drawn holds no room rather than a width with nothing in it — the other half of
+    // what being hidden has to mean, which is what stops it being an empty gap in the bar. Asserted for both of
+    // this group's dark widgets here, not only for the one whose own readout has a slot of its own, so that a
+    // group that stopped skipping an invisible child fails in the slot about arrangement.
+    QVERIFY2(!rightWidgets.at(2)->isVisible(), "the media readout is drawn with no player");
     QCOMPARE(rightWidgets.at(2)->width(), 0.0);
-    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(3)->x() > rightWidgets.at(1)->x(), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(4)->x() > rightWidgets.at(3)->x(), 5000);
+    QVERIFY2(!rightWidgets.at(3)->isVisible(), "the notification readout is drawn while the shell is not the daemon");
+    QCOMPARE(rightWidgets.at(3)->width(), 0.0);
 
     // The clock is a Text that has been given more height than its glyphs, so being on the same line as the
     // capsules is a matter of its own alignment rather than of the bar anchoring it. That alignment is what
     // is read here, and it is the declaration rather than a measured pixel: nothing in this test renders.
     // Qt reports the same number the QML `Text.AlignVCenter` names, so the two forms can be compared.
-    QCOMPARE(rightWidgets.at(4)->property("verticalAlignment").toInt(), int(Qt::AlignVCenter));
+    QCOMPARE(rightWidgets.at(5)->property("verticalAlignment").toInt(), int(Qt::AlignVCenter));
 }
 
 void BarInteractionTest::theVolumeReadoutSitsInTheTrailingGroupAndShowsNoValue() {
@@ -1111,14 +1199,34 @@ void BarInteractionTest::theNetworkReadoutFollowsItsConfiguration() {
     // "not drawn": the widget is hidden, its own width is zero, and the room it took is back in the bar — the
     // last being the one a visibility check alone would miss, because a hidden item keeps whatever width it
     // declares.
+    //
+    // The group's own width is compared with what it holds *at that moment*, read in one expression, and the
+    // reason is worked out in full above `theVolumeReadoutFollowsItsConfiguration`: the clock that ends this
+    // group is a wall clock whose text — and, with proportional figures, whose width — changes with the minute,
+    // so a group width remembered before a round trip and compared after it is a claim that the time stood
+    // still. Waiting does not weaken that: what is asserted is that the group agrees with its contents once the
+    // layout has settled, which is the fact the flag controls. This widget is the *first* of the group, so its
+    // absence and its return move every widget after it, and the group is therefore the only place the room it
+    // took is visible at all.
     QQuickItem* group = itemNamed(QStringLiteral("right"));
     QVERIFY2(group != nullptr, "the bar has no trailing group");
+    QQuickItem* battery = itemNamed(QStringLiteral("battery"));
+    QVERIFY2(battery != nullptr, "the bar has no battery readout");
+    QQuickItem* volume = itemNamed(QStringLiteral("volume"));
+    QVERIFY2(volume != nullptr, "the bar has no volume readout");
     const qreal widgetWidth = widget->width();
     const qreal spacing = group->property("spacing").toReal();
     QVERIFY2(widgetWidth > 0, "the network readout occupies no room to reclaim");
+    QVERIFY2(spacing > 0, "the group reported no spacing, so the sum below could not tell a gap from a widget");
+
+    // What the group's four drawn widgets come to, gaps included: this readout, the battery, the volume and the
+    // clock. Its other two — the media and notification readouts — are dark in this binary, so a positioner lays
+    // out no space and no gap for either, which is why neither is in the sum: the assertion is what says they
+    // stayed out of it, since a group that reserved room for an invisible child would report a width this does
+    // not match.
     QTRY_VERIFY_WITH_TIMEOUT(
-        sameWidth(group->width(), widgetWidth + spacing + itemNamed(QStringLiteral("battery"))->width() + spacing
-                                      + itemNamed(QStringLiteral("volume"))->width() + spacing + clock->width()),
+        sameWidth(group->width(), widgetWidth + spacing + battery->width() + spacing + volume->width() + spacing
+                                      + clock->width()),
         5000);
 
     ConfigValues values;
@@ -1129,29 +1237,286 @@ void BarInteractionTest::theNetworkReadoutFollowsItsConfiguration() {
     QVERIFY2(!itemNamed(QStringLiteral("networkValue"))->isVisible(),
              "the widget is hidden but its value is still visible");
     QTRY_COMPARE_WITH_TIMEOUT(widget->width(), 0.0, 5000);
-    // The room it took is gone, and the group is exactly what is left in it — clock-proof by construction, since
-    // every width is read in one evaluation.
-    QTRY_VERIFY_WITH_TIMEOUT(sameWidth(group->width(),
-                                       itemNamed(QStringLiteral("battery"))->width()
-                                           + spacing + itemNamed(QStringLiteral("volume"))->width() + spacing
-                                           + clock->width()),
-                            5000);
+    // The room it took is gone rather than merely shrunk: the group is holding the battery, the volume and the
+    // clock and nothing else — not the widget at zero width, and not the gap it sat in. Clock-proof by
+    // construction, since every width is read in one evaluation.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        sameWidth(group->width(), battery->width() + spacing + volume->width() + spacing + clock->width()), 5000);
     QVERIFY2(clock->isVisible(), "hiding the network readout hid the clock as well");
 
     // Put back: the widget comes back with the width it had and the group with the room it had, so nothing
     // about its absence was permanent. The group's whole width is waited for and not just the widget's: this
-    // widget is the first of the group, so its return moves the two after it, and a slot that read their
+    // widget is the first of the group, so its return moves the three after it, and a slot that read their
     // positions while that was still pending would be reading a layout mid-change rather than the bar's.
     config_.apply(ConfigValues{});
     QTRY_VERIFY_WITH_TIMEOUT(widget->isVisible(), 5000);
     QTRY_COMPARE_WITH_TIMEOUT(widget->width(), widgetWidth, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(sameWidth(group->width(), widgetWidth + spacing
-                                                        + itemNamed(QStringLiteral("battery"))->width() + spacing
-                                                        + itemNamed(QStringLiteral("volume"))->width() + spacing
-                                                        + clock->width()),
-                            5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        sameWidth(group->width(), widgetWidth + spacing + battery->width() + spacing + volume->width() + spacing
+                                      + clock->width()),
+        5000);
     QVERIFY2(clock->isVisible(), "hiding the network readout hid the clock as well");
     QCOMPARE(textOf(QStringLiteral("networkValue")), QString::fromUtf8("—"));
+}
+
+// Whether a group's width is exactly what its drawn widgets come to, gaps included.
+//
+// A positioner lays out no space for an invisible child and no gap for one either — `CapsuleGroup.qml` states
+// that as its own behaviour — so this is the whole of what a group's width is, and it is the only place the
+// room a widget took is visible at all: a widget's own width says nothing about the gap it sat in. Every width
+// is read in one evaluation, so the clock that ends the trailing group cannot tick between the group's width
+// and its contents' — the failure the volume and network slots in this file were both caught by. A caller
+// waits for it rather than reading it once, because a positioner's width follows its children on the next
+// frame.
+bool BarInteractionTest::groupHoldsExactlyItsDrawnChildren(QQuickItem* group) const {
+    Q_ASSERT(group != nullptr);
+    const qreal spacing = group->property("spacing").toReal();
+    qreal drawn = 0.0;
+    int count = 0;
+    for (QQuickItem* child : group->childItems()) {
+        if (!child->isVisible())
+            continue;
+        drawn += child->width();
+        ++count;
+    }
+    return sameWidth(group->width(), drawn + spacing * (count > 0 ? count - 1 : 0));
+}
+
+// The shell takes the desktop's notifications name on this test's bus: the composition root's own sequence —
+// the service registers, and the bar's binding to it follows — rather than a value pushed into the service.
+//
+// The two steps before the registration are what make the state a slot finds independent of any slot that ran
+// earlier in the same process, and neither is decoration:
+//
+//   * the sender letting go of the name, if it is holding it. `theShellStopsBeingTheNotificationDaemon` hands
+//     the name to the sender so that the shell cannot quietly become the daemon again between slots, and a
+//     slot that wants the daemon asks for it back.
+//   * `stop()` before `start()`, so the bring-up is the same two calls whatever the previous state was. It is
+//     also what the service's own contract needs for a *handover*: a bare `start()` while the sender holds the
+//     name would leave the shell queued behind it, and this slot wants the shell to be the daemon now rather
+//     than whenever the sender lets go. (Qt refuses a second export of an object at the same path — measured:
+//     the second `registerObject` returns false while the first still holds — which the service answers by
+//     treating an export that is already its own as done, so a bare `start()` is no longer the dead end it was;
+//     releasing first is still what makes this slot's state independent of the one before it.)
+void BarInteractionTest::theShellBecomesTheNotificationDaemon() {
+    if (senderHoldsTheNotificationsName_) {
+        notificationSender_.unregisterService(QString::fromLatin1(quantum::dbus::NotificationsServiceName));
+        senderHoldsTheNotificationsName_ = false;
+    }
+    notifications_->stop();
+    notifications_->start();
+    QTRY_VERIFY_WITH_TIMEOUT(notifications_->notificationAvailable(), 5000);
+}
+
+// A `Notify` call the way a sender makes it: a second connection to the same bus, the spec's arguments, and an
+// event loop turning while the reply is in flight.
+//
+// That shape is forced rather than chosen. The daemon this calls is in this process and on this thread, so a
+// blocking `call()` would hold the very loop that has to dispatch the message it sent, and the wait would end
+// in a timeout reported as a refusal by a daemon that was never asked. What the round trip buys is that the
+// reading arrived over the wire — marshalled and dispatched by Qt's bus layer and applied to the properties the
+// widget binds — rather than being a value this test wrote into the service.
+quint32 BarInteractionTest::deliverNotification(const QString& application, const QString& summary,
+                                                const QString& body) {
+    QDBusMessage call = QDBusMessage::createMethodCall(
+        QString::fromLatin1(quantum::dbus::NotificationsServiceName),
+        QString::fromLatin1(quantum::dbus::NotificationsObjectPath),
+        QString::fromLatin1(quantum::dbus::NotificationsInterface), QStringLiteral("Notify"));
+    call << application << quint32(0) << QString() << summary << body << QStringList() << QVariantMap()
+         << qint32(-1);
+
+    QDBusPendingCallWatcher watcher(notificationSender_.asyncCall(call));
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!watcher.isFinished() && elapsed.elapsed() < 5000)
+        QCoreApplication::processEvents();
+    if (!watcher.isFinished())
+        return 0;
+
+    const QDBusMessage reply = watcher.reply();
+    if (reply.type() != QDBusMessage::ReplyMessage)
+        return 0;
+    return reply.arguments().constFirst().toUInt();
+}
+
+// The shell stops being the daemon, and stays stopped — which is the state the readout's rule is about, and the
+// state the rest of this file reads the bar's arrangement in.
+//
+// `stop()` is the service's own standing down: it releases the name and the object and withdraws the reading.
+// Then the *sender* takes the name, and that is the half that makes the state stable rather than merely
+// current. A shell that hears a report of its own registration asks for the name again — the report can arrive
+// after the release — and a request for a name another connection already holds queues instead of being
+// granted, so while this holds it the shell stays dark and no slot after this one can find the readout drawn
+// with a dash nobody asked for. It is a real desktop situation rather than a trick: another daemon running
+// alongside the shell is what the service's own header describes, and it is what the widget's comment means by
+// the readout being drawn only while the shell is the daemon.
+void BarInteractionTest::theShellStopsBeingTheNotificationDaemon() {
+    notifications_->stop();
+
+    const QDBusReply<QDBusConnectionInterface::RegisterServiceReply> taken =
+        notificationSender_.interface()->registerService(
+            QString::fromLatin1(quantum::dbus::NotificationsServiceName),
+            QDBusConnectionInterface::DontQueueService);
+    senderHoldsTheNotificationsName_ =
+        taken.isValid() && taken.value() == QDBusConnectionInterface::ServiceRegistered;
+    QVERIFY2(senderHoldsTheNotificationsName_,
+             qPrintable(QStringLiteral("this test's sender could not take the notifications name, so the state "
+                                       "the readout is read in afterwards would be whatever the shell did next: "
+                                       "%1")
+                            .arg(taken.isValid()
+                                     ? QStringLiteral("the bus answered %1").arg(int(taken.value()))
+                                     : taken.error().message())));
+
+    QVERIFY2(!notifications_->notificationAvailable(),
+             "the shell is still the desktop's notification daemon after standing down");
+}
+
+// The readout end to end: a sender puts a notification on the wire, the shell answers as the desktop's
+// notification daemon, and the text the sender wrote is what the bar draws.
+//
+// Every other readout in this file is asserted against a service left in its empty state, because a daemon
+// behind it would need root, a session or a compositor. This one is different in the one way that matters:
+// the daemon is the shell, so this binary can be it — on a bus of its own, which is what `NotificationBus`
+// exists for. What the round trip buys over comparing the widget with a rule is the whole chain at once: the
+// name on the bus, the marshalled arguments, the service's properties, the QML binding and the text a person
+// sees, with nothing in that chain a test wrote by hand.
+void BarInteractionTest::theNotificationReadoutDrawsWhatTheSenderWrote() {
+    // No bus, no daemon, and a readout that is dark whatever a slot does: the claim is then not testable rather
+    // than false, which is what a skip says. Every other slot in this file runs without a bus at all.
+    if (!notificationBus_.isRunning())
+        QSKIP(qPrintable(notificationBus_.error()));
+
+    QQuickItem* widget = itemNamed(QStringLiteral("notifications"));
+    QVERIFY2(widget != nullptr, "the bar has no notification readout");
+
+    // The state before the shell is the daemon: a bar whose notification daemon is another process draws
+    // nothing at all. This is half of the widget's rule — `showNotifications && notificationAvailable` — and it
+    // is asserted here, where both halves can be produced, rather than in the arrangement slot where it cannot
+    // be told apart from a widget that never draws.
+    QVERIFY2(!widget->isVisible(), "the notification readout is drawn before the shell is the daemon");
+    QCOMPARE(widget->width(), 0.0);
+
+    theShellBecomesTheNotificationDaemon();
+
+    // Being the daemon and having something to say are two different states, which is what the readout's own
+    // comment is about: the widget is drawn as soon as the name is the shell's, and what it draws before any
+    // notification arrives is a dash. The service's own reading is asserted first, so the dash below is the
+    // state the bring-up made (it released the reading a previous slot may have left) rather than a summary
+    // that happens to be missing.
+    QTRY_VERIFY_WITH_TIMEOUT(widget->isVisible(), 5000);
+    QVERIFY2(widget->width() > 0, "the notification readout is drawn with no room to draw in");
+    QVERIFY2(notifications_->notificationSummary().isEmpty(),
+             "the bring-up left a reading behind, so the dash below would not be the empty state");
+    QCOMPARE(textOf(QStringLiteral("notificationSummary")), QString::fromUtf8("—"));
+
+    // The sender's own words, over the bus. Three distinct strings, and distinct from every other literal in
+    // this file, so a widget drawing the wrong one of them cannot pass by coincidence.
+    const QString application = QStringLiteral("Quantum Shell Bar Test");
+    const QString summary = QStringLiteral("The summary the sender wrote");
+    const QString body = QStringLiteral("The body the sender wrote");
+    QVERIFY2(deliverNotification(application, summary, body) != 0,
+             "the shell's notification daemon did not answer a Notify call");
+
+    // What the service published: the spec's three text arguments verbatim. `notification-test` owns the wire
+    // contract; this is the same reading asserted here because the claim below is about *those* values.
+    QCOMPARE(notifications_->notificationApplication(), application);
+    QCOMPARE(notifications_->notificationSummary(), summary);
+    QCOMPARE(notifications_->notificationBody(), body);
+
+    // And what the bar draws from it. Waited for, because the text follows the notify signal through the
+    // binding on the next turn of the event loop rather than inside the call that moved it. The application
+    // name is drawn because it is the sender's attribution of its own message; the body is deliberately not
+    // drawn at all — the service publishes it and the bar has room for the subject line.
+    QTRY_COMPARE_WITH_TIMEOUT(textOf(QStringLiteral("notificationApplication")), application, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(textOf(QStringLiteral("notificationSummary")), summary, 5000);
+
+    theShellStopsBeingTheNotificationDaemon();
+
+    // The reading goes with the daemon: a summary drawn after the shell stopped holding the name would be a
+    // claim about a life of the daemon that is not this one.
+    QTRY_VERIFY_WITH_TIMEOUT(!widget->isVisible(), 5000);
+    QCOMPARE(widget->width(), 0.0);
+    QVERIFY2(notifications_->notificationSummary().isEmpty(),
+             "the shell stood down but kept the reading it was last sent");
+}
+
+// The readout's configuration, with a reading in hand.
+//
+// What makes this slot evidence is the notification in it. It used to be the empty state three times over: the
+// service was registered and never started, so the widget was hidden whatever the file said and every
+// assertion was `width() == 0` — which passes with `show_notifications` deleted, and passed with it ignored.
+// So the readout is driven *drawn* first, and then the file says not to draw it.
+void BarInteractionTest::theNotificationReadoutFollowsItsConfiguration() {
+    if (!notificationBus_.isRunning())
+        QSKIP(qPrintable(notificationBus_.error()));
+
+    QQuickItem* widget = itemNamed(QStringLiteral("notifications"));
+    QQuickItem* group = itemNamed(QStringLiteral("right"));
+    QVERIFY2(widget != nullptr, "the bar has no notification readout");
+    QVERIFY2(group != nullptr, "the bar has no trailing group");
+    QCOMPARE(widget->parentItem(), group);
+
+    theShellBecomesTheNotificationDaemon();
+    QTRY_VERIFY_WITH_TIMEOUT(widget->isVisible(), 5000);
+
+    // A reading for the flag to be about, in this slot's own words: nothing here depends on what any other
+    // slot delivered, which is what keeps the slot order-independent.
+    const QString application = QStringLiteral("Quantum Shell Configuration Test");
+    const QString summary = QStringLiteral("The readout this slot turns off");
+    QVERIFY2(deliverNotification(application, summary, QStringLiteral("A body the bar does not draw")) != 0,
+             "the shell's notification daemon did not answer a Notify call");
+    QTRY_COMPARE_WITH_TIMEOUT(textOf(QStringLiteral("notificationSummary")), summary, 5000);
+
+    // Drawn, with the group accounting for it. This is the state the flag is checked against, and the state a
+    // widget that ignored the flag would still be in after the edit below.
+    QVERIFY2(widget->width() > 0, "the notification readout is drawn with no room to draw in");
+    QCOMPARE(textOf(QStringLiteral("notificationApplication")), application);
+    QTRY_VERIFY_WITH_TIMEOUT(groupHoldsExactlyItsDrawnChildren(group), 5000);
+
+    // The flag off. Two halves of "not drawn": the widget, and the room it took — the second being the one a
+    // visibility check alone would miss, because a hidden item keeps whatever width it declares and the gap it
+    // sat in is the group's to give back.
+    ConfigValues values;
+    values.bar.notifications.showNotifications = false;
+    config_.apply(values);
+
+    QVERIFY2(!widget->isVisible(), "the notification readout is still drawn with show_notifications false");
+    QTRY_COMPARE_WITH_TIMEOUT(widget->width(), 0.0, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(groupHoldsExactlyItsDrawnChildren(group), 5000);
+
+    // And the flag is about the readout rather than about the daemon: the shell is still the name's owner and
+    // still holds what the sender sent, so a readout that came back would have something to draw. A widget that
+    // stood the daemon down in order to hide itself fails here.
+    QVERIFY2(notifications_->notificationAvailable(),
+             "show_notifications false stood the shell down as the notification daemon");
+    QCOMPARE(notifications_->notificationSummary(), summary);
+
+    // Back to what the shell ships: the readout returns with the sender's text rather than with an empty state,
+    // and the group accounts for it again. Nothing about its absence was permanent.
+    config_.apply(ConfigValues{});
+    QTRY_VERIFY_WITH_TIMEOUT(widget->isVisible(), 5000);
+    QVERIFY2(widget->width() > 0, "the notification readout came back with no room to draw in");
+    QTRY_COMPARE_WITH_TIMEOUT(textOf(QStringLiteral("notificationSummary")), summary, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(groupHoldsExactlyItsDrawnChildren(group), 5000);
+
+    // The other half of the widget's rule, with the flag in both states. `showNotifications` is the
+    // configuration's half and `notificationAvailable` is the daemon's, and they are separate questions: this
+    // is the one the bus answers rather than the file. The readout goes, and it stays gone with the flag off as
+    // well — which is the state every other slot in this file reads the bar's arrangement in.
+    theShellStopsBeingTheNotificationDaemon();
+
+    QTRY_VERIFY_WITH_TIMEOUT(!widget->isVisible(), 5000);
+    QCOMPARE(widget->width(), 0.0);
+    values.bar.notifications.showNotifications = false;
+    config_.apply(values);
+    QVERIFY2(!widget->isVisible(), "the notification readout is drawn with no daemon and the flag off");
+    QCOMPARE(widget->width(), 0.0);
+    QVERIFY2(!notifications_->notificationAvailable(), "the shell is the notification daemon again");
+
+    // The defaults, so a slot running after this one reads the configuration the shell ships rather than this
+    // slot's last edit. The daemon itself is already left in the state the rest of the file expects: the shell
+    // is not the name's owner.
+    config_.apply(ConfigValues{});
 }
 
 void BarInteractionTest::theBatteryReadoutSitsInTheTrailingGroupAndShowsItsEmptyState() {

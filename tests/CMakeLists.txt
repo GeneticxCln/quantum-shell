@@ -195,6 +195,26 @@ set(QS_ORDER_CHECK_COSTS
     # of ten passes on this machine: 25, 26, 27, 27, 27, 29, 29, 34, 41 ms; 29 ms chosen (average of the two
     # middle values, excluding the 41 ms outlier).
     media-test=29
+    # A bus of its own, and it is `NotificationBus` — the header in tests/support — so this binary and
+    # `bar-interaction-test` start the same daemon the same way rather than two spellings of it: a
+    # `dbus-daemon` with a config this process writes, naming a service directory of its own holding the
+    # shell's service file, so the name resolves to this shell and not the desktop's notifier (a service file
+    # using `SystemdService=` is not redirected by `XDG_DATA_DIRS`, which is why `--session` is not enough).
+    # Most of a pass is that daemon starting and the address being read from it; the rest is the one slot
+    # that waits out a bus-delayed demotion signal, which is why the binary is a half-second rather than
+    # the tens of milliseconds the pure-D-Bus-payload binaries cost. Measured as the median of seven
+    # passes on this machine: 521, 522, 520, 521, 521, 521, 521 ms. Re-measured once that slot stopped
+    # assuming the desktop's sender can run and started probing it first — the probe is one more process
+    # launch a pass, so the figure moved by about what a launch costs: 524 ms, the middle of six passes
+    # on this machine that came out at 522, 524, 524 with the sender unusable and 524, 530, 524 with it
+    # working, which is one figure for both because the difference is inside the spread. Re-measured once
+    # the bus moved into that shared header, where the config is written per process instead of copied out
+    # of the fixtures: 522 ms, the middle of seven passes at 523, 524, 523, 522, 522, 522 and 521 — the same
+    # work either way, so the difference is the spread rather than the change. Re-measured once the daemon
+    # learned to publish itself on a handover, which is one more name grant, one more `Notify` round trip and
+    # the waits around them in a pass: 528 ms, the middle of seven passes at 526, 527, 527, 528, 528, 529 and
+    # 529 — six milliseconds of real work, not a wider spread.
+    notification-test=528
     # Reads seven files and compares them with constants compiled into it, plus the meta-objects of the four
     # QML singletons whose classes it links; it does no I/O beyond the read and no work that depends on the
     # machine, which is why it is near the cheapest binary in the table. Measured as the middle of three runs:
@@ -226,9 +246,19 @@ set(QS_ORDER_CHECK_COSTS
     # machine's `/proc` costs 392 ms — two readings of a real `/proc/stat`, two of its `/proc/meminfo`, and
     # 250 ms of waits inside it. A pass is 870 ms now, the middle of three runs of this binary.
     # Re-measured in the network landing, because placing three more widgets in the bar's trailing group and
-    # asserting their room moved the layout this test drives: a pass is now 1046 ms against the 870 it used to
-    # be, the middle of three runs. A stale figure here is an unbalanced split that fails nothing.
-    bar-interaction-test=1046
+    # asserting their room moved the layout this test drives: a pass was 1046 ms against the 870 it used to be,
+    # the middle of three runs. Re-measured again once the two slots' assertions that landing had deleted were
+    # restored — the arrangement slot's ordering comparisons and the network slot's group-width sums — because a
+    # table written against the binary that was left behind describes one that no longer exists: a pass is 1029
+    # ms, the middle of three runs of the restored binary that came out at 1029, 1030 and 1028. A stale figure
+    # here is an unbalanced split that fails nothing.
+    #
+    # Then re-measured again for the landing that gave this binary the notification readout end to end, and that
+    # is the one that moved it most since the fixtures: this binary now starts a `dbus-daemon` of its own
+    # (`NotificationBus`, the same harness `notification-test` uses) and drives the shell as the desktop's
+    # notification daemon — two bring-ups, two `Notify` round trips and the widget waits that follow them — so a
+    # pass is 1192 ms, the middle of seven runs that came out at 1187, 1189, 1193, 1192, 1195, 1193 and 1191.
+    bar-interaction-test=1192
     # The network module's test, measured the same way: 2364 ms, the middle of three runs that came out at 2363,
     # 2364 and 2370 — a spread of seven milliseconds, which is why one figure is enough. It is the most expensive
     # unit pass here and the reason is honest rather than incidental: it starts a bus daemon of its own, walks a

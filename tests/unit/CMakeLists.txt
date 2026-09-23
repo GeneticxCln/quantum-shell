@@ -77,9 +77,17 @@ qs_unit_test(bar-interaction-test
 # against `BatteryService`, so the service is registered for this engine — never started, which is the dash the
 # widget draws while the daemon has not answered — and the rules it publishes are what the slots exercise.
 # `quantum-shell-dbus` arrives through the two of them rather than being named here.
-target_link_libraries(bar-interaction-test PRIVATE Qt6::Quick quantum-shell-system quantum-shell-config
+#
+# `qs-test-support` for `NotificationBus.h`, and the notification daemon is the second service here that is
+# *driven* rather than left in its empty state: `qml/Notifications.qml` reads `NotificationService`, and what
+# the readout draws is a sender's text arriving over a real bus. So this binary starts a `dbus-daemon` of its
+# own (the same harness `notification-test` uses), takes the notifications name with the service, hands it
+# back at the end of the slot that asked, and — with a real reading in hand — tells the readout's
+# configuration slot apart from one that would pass with the flag ignored.
+target_link_libraries(bar-interaction-test PRIVATE Qt6::Quick quantum-shell-system quantum-shell-config quantum-shell-notifications
                                                  quantum-shell-audio quantum-shell-network
-                                                 quantum-shell-battery quantum-shell-media quantum-shell-logging)
+                                                 quantum-shell-battery quantum-shell-media quantum-shell-logging
+                                                 qs-test-support)
 # The components are taken out of the one list the application's resources are built from, so there is no
 # second copy of them to keep in step and no name written down twice. They are read from the source tree
 # rather than from a resource of this binary because that resource set belongs to the application; that the
@@ -107,6 +115,9 @@ endif()
 target_compile_definitions(bar-interaction-test PRIVATE
     QS_BAR_QML="${QS_BAR_QML}"
     QS_GROUP_QML="${QS_GROUP_QML}")
+# Where `NotificationBus` takes the shell's notification service file from. The same fixtures directory
+# `notification-test` is given, because it is the same file: the name a sender reaching that bus resolves.
+target_compile_definitions(bar-interaction-test PRIVATE FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
 
 # The system's own readings: the /proc lines they come from, what a refusal looks like, and the cadence the
 # service owns. The service takes the directory it reads from, so the parsing is driven by files this test
@@ -147,6 +158,12 @@ target_link_libraries(battery-test PRIVATE quantum-shell-battery)
 # test cannot reach. `quantum-shell-media` carries the functions.
 qs_unit_test(media-test media_test.cpp)
 target_link_libraries(media-test PRIVATE quantum-shell-media)
+qs_unit_test(notification-test notification_test.cpp)
+# `qs-test-support` for `NotificationBus.h`: the private `dbus-daemon` this test's daemon registers on, which
+# `bar-interaction-test` drives the same way — one spelling of the bus config, the service directory it names
+# and the address the daemon prints, rather than two that can drift.
+target_link_libraries(notification-test PRIVATE quantum-shell-notifications qs-test-support)
+target_compile_definitions(notification-test PRIVATE FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
 
 # The configuration schema, the QObject tree QML binds to, and the watcher that keeps the two in step
 # with the file. Nothing here needs a compositor or a display: the schema is a pure function of a string,
@@ -197,7 +214,7 @@ target_link_libraries(snapshot-reconcile-test PRIVATE qs-test-support)
 # header by a regular expression that happened to still match.
 qs_unit_test(spec-values-test spec_values_test.cpp)
 target_link_libraries(spec-values-test PRIVATE
-    quantum-shell-config
+    quantum-shell-config quantum-shell-notifications
     quantum-shell-system
     quantum-shell-audio
     quantum-shell-network

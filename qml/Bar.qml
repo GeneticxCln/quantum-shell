@@ -3,8 +3,10 @@ import QtQuick
 // What the bar shows and how it is arranged.
 //
 // It holds no value of its own: the colours and the type below describe how the bar looks, and every string
-// and number drawn comes from `NiriService`, from `SysMonService` or from the system clock. There is nothing
-// here that would still be shown if the compositor stopped answering and /proc stopped being readable.
+// and number drawn comes from a service behind one of the readouts — `NiriService` for the workspaces,
+// `SysMonService` for the system status, `PipeWireService`, `NetworkService`, `BatteryService`,
+// `MediaService` and `NotificationService` for the groups at the trailing edge, and the system clock.
+// There is nothing here that would still be shown if those stopped answering.
 //
 // The arrangement is the groups below and nothing else. A widget is placed by being declared inside the
 // group it belongs to, carrying no coordinate, no anchor and no offset of its own; the bar decides where
@@ -13,8 +15,8 @@ import QtQuick
 //
 // Three groups, and the middle one arrived the way the other two did — with the widget that belongs in it.
 // There is still no group for a widget that does not exist: a region exists when something is declared in
-// it, so the media readout the roadmap lists will arrive with its own group or in one of these, and not
-// before.
+// it, so the toast surface notifications still owe the roadmap will arrive with its own group or in one of
+// these, and not before.
 Item {
     id: bar
 
@@ -57,8 +59,8 @@ Item {
 
     }
 
-    // The trailing edge: the network, the battery, the media player, the volume, the clock, and whatever
-    // else belongs after everything else. Each of these arrived in this group rather than one of their own
+    // The trailing edge: the network, the battery, the media player, the notification readout, the volume,
+    // the clock, and whatever else belongs after everything else. Each of these arrived in this group rather than one of their own
     // because a group arrives with the widget that belongs in it, and these belong at the trailing edge
     // with the other system state.
     CapsuleGroup {
@@ -71,7 +73,8 @@ Item {
         // clock. The network is the outermost of those facts — a connection is what everything else on this
         // edge is happening through — and the battery is the other one about the machine's own state, so the
         // two read together and the media follows them as what is happening, and the volume follows that as
-        // the one widget here a person changes by hand. The time keeps the corner.
+        // the one widget here a person changes by hand; the notification readout sits between the media
+        // player and the volume as the other thing a person only reads. The time keeps the corner.
         Network {
             foreground: bar.foreground
             muted: bar.muted
@@ -90,6 +93,12 @@ Item {
             foreground: bar.foreground
             muted: bar.muted
             accent: bar.accent
+            face: bar.face
+        }
+
+        Notifications {
+            foreground: bar.foreground
+            muted: bar.muted
             face: bar.face
         }
 

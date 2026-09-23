@@ -51,7 +51,7 @@ namespace {
 // The key paths the shell offers to `qsctl config get`, written out independently of `ConfigSchema.h` and
 // compared with it at compile time. The duplication is the point: these paths are what a script types, so a
 // rename in the schema must not build until it is acknowledged here and in the document that lists them.
-constexpr std::array<const char*, 17> coveredKeyPaths{"bar.height",
+constexpr std::array<const char*, 18> coveredKeyPaths{"bar.height",
                                                        "bar.layerNamespace",
                                                        "bar.system.sample_interval_ms",
                                                        "bar.system.show_cpu",
@@ -67,7 +67,8 @@ constexpr std::array<const char*, 17> coveredKeyPaths{"bar.height",
                                                        "bar.battery.show_status",
                                                        "bar.battery.show_percentage",
                                                        "bar.battery.show_time",
-                                                       "bar.media.show_media"};
+                                                       "bar.media.show_media",
+                                                       "bar.notifications.show_notifications"};
 
 template <std::size_t Declared, std::size_t Covered>
 constexpr bool samePaths(const std::array<const char*, Declared>& declared,

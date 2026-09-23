@@ -20,7 +20,7 @@ bool isKnownTopLevelKey(std::string_view key) {
 
 bool isKnownBarKey(std::string_view key) {
     return key == "height" || key == "namespace" || key == "system" || key == "audio" ||
-           key == "network" || key == "battery" || key == "media";
+           key == "network" || key == "battery" || key == "media" || key == "notifications";
 }
 
 // `[bar.system]`'s keys, in the file's spelling and in the order a warning names them, so that the list a
@@ -114,6 +114,24 @@ QString knownMediaKeysText()
 {
     QStringList names;
     for (const std::string_view key : mediaKeys)
+        names.append(QString::fromUtf8(key.data(), static_cast<int>(key.size())));
+    return names.join(QStringLiteral(", "));
+}
+
+// `[bar.notifications]`'s key, in the same shape as the tables above. One flag, for the same reason the
+// media table's is one: the readout's only configurable choice is whether it is drawn, because the
+// summary, the body and the application name are a sender's facts and not this shell's settings.
+constexpr std::array<std::string_view, 1> notificationsKeys{"show_notifications"};
+
+bool isKnownNotificationsKey(std::string_view key)
+{
+    return std::find(notificationsKeys.begin(), notificationsKeys.end(), key) != notificationsKeys.end();
+}
+
+QString knownNotificationsKeysText()
+{
+    QStringList names;
+    for (const std::string_view key : notificationsKeys)
         names.append(QString::fromUtf8(key.data(), static_cast<int>(key.size())));
     return names.join(QStringLiteral(", "));
 }
@@ -330,6 +348,33 @@ void readMediaTable(const toml::table& table, MediaConfig& media, QStringList& w
     }
 }
 
+// `[bar.notifications]` key, read by the same rule as every other table here: a key of the wrong type
+// is reported rather than coerced, for the same reason a string `height` is.
+void readNotificationsTable(const toml::table& table, NotificationsConfig& notifications,
+                            QStringList& warnings)
+{
+    for (const auto& [key, node] : table) {
+        const std::string_view name = keyText(key);
+        if (!isKnownNotificationsKey(name)) {
+            warnings.append(QStringLiteral("%1 is not a key this shell reads; known keys in "
+                                           "[bar.notifications]: %2")
+                                .arg(keyPath("bar.notifications", name), knownNotificationsKeysText()));
+            continue;
+        }
+
+        const QString path = keyPath("bar.notifications", name);
+        const toml::value<bool>* shown = node.as_boolean();
+        if (shown == nullptr) {
+            warnings.append(QStringLiteral("%1: expected a boolean, found %2; keeping %3")
+                                .arg(path, typeName(node),
+                                     notifications.showNotifications ? QStringLiteral("true")
+                                                                      : QStringLiteral("false")));
+            continue;
+        }
+        notifications.showNotifications = shown->get();
+    }
+}
+
 // `[bar]` keys. Each known key is read if it is present and of a usable type; anything else leaves the
 // default standing and says so. A key of the wrong type is reported and not coerced: `height = "32"`
 // is a mistake, and reading it as 32 would hide it.
@@ -409,16 +454,17 @@ void readAudioTable(const toml::table& table, AudioConfig& audio, QStringList& w
             // reason the boolean above is read through `as_boolean` too.
             const auto* asFloating = node.as_floating_point();
             const auto* asInteger = node.as_integer();
-            if (asFloating == nullptr && asInteger == nullptr) {
+            if (!asFloating && !asInteger) {
                 warnings.append(QStringLiteral("%1: expected a number, found %2; keeping %3")
                                     .arg(path, typeName(node))
                                     .arg(audio.stepDecibels));
                 continue;
             }
-            const double decibels = asFloating != nullptr ? static_cast<double>(asFloating->get())
+            // The unit's own tenth is the readout's resolution, so a step shorter than that is a step the
+            // widget cannot show a person. Refused by name in the service as well, and the two spellings
+            // are compared at compile time in `bar-interaction-test`.
+            const double decibels = asFloating != nullptr ? asFloating->get()
                                                           : static_cast<double>(asInteger->get());
-            // `!(x >= floor)` rather than `x < floor`: a NaN in the file is not a small step either, and this
-            // is the shape `decibelsFromLinear` and `PipeWireService` use for theirs.
             if (!(decibels >= MinVolumeStepDecibels)) {
                 warnings.append(QStringLiteral("%1: %2 is not a volume step (the shortest is %3 dB, which is "
                                                "the resolution the readout draws decibels at); keeping %4")
@@ -460,7 +506,8 @@ void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warning
         const std::string_view name = keyText(key);
         if (!isKnownBarKey(name)) {
             warnings.append(QStringLiteral("%1 is not a key this shell reads; known keys in [bar]: "
-                                           "height, namespace, system, audio, network")
+                                           "height, namespace, system, audio, network, battery, media, "
+                                           "notifications")
                                 .arg(keyPath("bar", name)));
             continue;
         }
@@ -525,6 +572,18 @@ void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warning
                 continue;
             }
             readMediaTable(*mediaTable, bar.media, warnings);
+            continue;
+        }
+
+        // The sixth table inside `[bar]`, for the sixth readout to own one.
+        if (name == "notifications") {
+            const toml::table* notificationsTable = node.as_table();
+            if (notificationsTable == nullptr) {
+                warnings.append(QStringLiteral("%1: expected a table, found %2; keeping the defaults for it")
+                                    .arg(path, typeName(node)));
+                continue;
+            }
+            readNotificationsTable(*notificationsTable, bar.notifications, warnings);
             continue;
         }
 
@@ -678,6 +737,8 @@ std::optional<QVariant> configValueForPath(const ConfigValues& values, QStringVi
         return QVariant(values.bar.battery.showTime);
     if (path == QLatin1StringView(KeyBarMediaShowMedia))
         return QVariant(values.bar.media.showMedia);
+    if (path == QLatin1StringView(KeyBarNotificationsShowNotifications))
+        return QVariant(values.bar.notifications.showNotifications);
     return std::nullopt;
 }
 

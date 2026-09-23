@@ -224,6 +224,34 @@ private:
     MediaConfig& values_;
 };
 
+// The `[bar.notifications]` table as QML reads it: `Config.bar.notifications`. One property, one signal,
+// the shape every other readout's table takes.
+class ConfigNotifications : public QObject {
+    Q_OBJECT
+
+    Q_PROPERTY(bool showNotifications READ showNotifications NOTIFY showNotificationsChanged)
+
+public:
+    explicit ConfigNotifications(NotificationsConfig& values, QObject* parent = nullptr);
+
+    // Whether the readout is drawn at all. Read by the widget and not by the service, for the same reason
+    // `showMedia` is: owning the notifications name is not switched by drawing, and the shell takes the
+    // name whether or not the readout is on screen.
+    bool showNotifications() const { return values_.showNotifications; }
+
+    const NotificationsConfig& values() const { return values_; }
+
+    // Applies validated values, emitting a signal for each property whose value actually changed.
+    void apply(const NotificationsConfig& values);
+
+Q_SIGNALS:
+    void showNotificationsChanged();
+
+private:
+    NotificationsConfig& values_;
+};
+
+
 // The `[bar]` table as QML reads it: `Config.bar`.
 class ConfigBar : public QObject {
     Q_OBJECT
@@ -232,6 +260,7 @@ class ConfigBar : public QObject {
     Q_PROPERTY(QString layerNamespace READ layerNamespace NOTIFY layerNamespaceChanged)
     // Constant, like `Config.bar` itself: the object is stable for the shell's life and the values inside
     // it speak through their own signals.
+    Q_PROPERTY(quantum::config::ConfigNotifications* notifications READ notifications CONSTANT)
     Q_PROPERTY(quantum::config::ConfigSystem* system READ system CONSTANT)
     Q_PROPERTY(quantum::config::ConfigAudio* audio READ audio CONSTANT)
     Q_PROPERTY(quantum::config::ConfigNetwork* network READ network CONSTANT)
@@ -258,6 +287,7 @@ public:
     // Applies validated values, emitting a signal for each property whose value actually changed and
     // nothing at all for the rest.
     void apply(const BarConfig& values);
+    ConfigNotifications* notifications() { return &notifications_; }
 
 Q_SIGNALS:
     void heightChanged();
@@ -266,12 +296,13 @@ Q_SIGNALS:
 private:
     BarConfig values_;
     // Declared after `values_` because each refers to a field of it, and constructed with that reference.
-    // The order here is also the construction order, which is why all five follow the struct they point into.
+    // The order here is also the construction order, which is why all six follow the struct they point into.
     ConfigSystem system_;
     ConfigAudio audio_;
     ConfigNetwork network_;
     ConfigBattery battery_;
     ConfigMedia media_;
+    ConfigNotifications notifications_;
 };
 
 // The whole configuration, registered with QML as the `Config` singleton.

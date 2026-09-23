@@ -35,6 +35,7 @@
 #include "dbus/NetworkService.h"
 #include "dbus/BatteryService.h"
 #include "dbus/MediaService.h"
+#include "dbus/NotificationService.h"
 #include "system/SysMonService.h"
 #include "niri/NiriActions.h"
 #include "niri/NiriProtocol.h"
@@ -743,13 +744,14 @@ void SpecValuesTest::everySingletonRowNamesExactlyWhatTheCodeExposes()
     // and every property and invokable the class declares is named by the row. The second direction is the
     // one that catches an addition — a property that arrived in the code and not in the document is a name
     // nobody is told about — which is why the rows are exhaustive rather than illustrative.
-    const std::array<SingletonCheck, 7> singletons{{
+    const std::array<SingletonCheck, 8> singletons{{
         {"| `NiriService` |", &quantum::niri::NiriService::staticMetaObject},
         {"| `NiriActions` |", &quantum::niri::NiriActions::staticMetaObject},
         {"| `SysMonService` |", &quantum::system::SysMonService::staticMetaObject},
         {"| `PipeWireService` |", &quantum::audio::PipeWireService::staticMetaObject},
         {"| `NetworkService` |", &quantum::dbus::NetworkService::staticMetaObject},
         {"| `BatteryService` |", &quantum::dbus::BatteryService::staticMetaObject},
+        {"| `NotificationService` |", &quantum::dbus::NotificationService::staticMetaObject},
         {"| `MediaService` |", &quantum::dbus::MediaService::staticMetaObject},
     }};
 

@@ -20,6 +20,7 @@
 #include "dbus/BatteryService.h"
 #include "dbus/MediaService.h"
 #include "dbus/NetworkService.h"
+#include "dbus/NotificationService.h"
 #include "ipc/IPCProtocol.h"
 #include "ipc/IPCServer.h"
 #include "niri/NiriActions.h"
@@ -200,6 +201,18 @@ int main(int argc, char **argv)
     // session with no players is not a special case — the widget draws nothing until a player appears.
     quantum::dbus::MediaService media;
     quantum::dbus::MediaService::registerQmlSingleton(media);
+
+    // The notification daemon. This service is the inverse of the three above it: the shell is the
+    // daemon rather than a reader of one, so it takes `org.freedesktop.Notifications` on the session
+    // bus rather than subscribing to another process. It takes no configuration — what it publishes is
+    // what a sender sent, and the readout decides only how to draw it, which is not this file's
+    // business. Registered before the engine loads so a widget naming `NotificationService` resolves,
+    // and started here rather than late like the daemons above, because it owns a name on the bus: a
+    // desktop with no other notifier has nothing sending notifications until this one is listening, so
+    // the name is taken before the bar exists rather than after the first frame.
+    quantum::dbus::NotificationService notifications;
+    quantum::dbus::NotificationService::registerQmlSingleton(notifications);
+    notifications.start();
 
     QQmlApplicationEngine engine;
     // A QML file that fails to load must fail the process rather than leave a half-built shell running

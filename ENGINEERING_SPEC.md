@@ -1,10 +1,17 @@
 # Quantum Shell — Engineering Spec
 
-**Status:** derived from source at `main a449a39` plus the uncommitted volume landing
-observed in `git status` (new `src/audio/`, `src/system/`, `qml/Volume.qml`,
-`qml/SystemMonitor.qml`, `qml/CapsuleGroup.qml`). Contracts below are stated from the
-code as read; live/compositor behaviors were not re-executed in this audit and are
-marked where they rest on the listed live tests.
+**Status:** derived from source at `main f89873f` plus the uncommitted notification
+landing observed in `git status` (new `src/dbus/NotificationService.h/.cpp`,
+`qml/Notifications.qml`, `tests/unit/notification_test.cpp`,
+`tests/support/NotificationBus.h`, `tests/fixtures/notification-bus/`; `Config`, the
+logging categories, `main.cpp` and `Bar.qml` changed with it). Contracts below are
+stated from the code as read; live/compositor behaviors were not re-executed while
+deriving this file and are marked where they rest on the listed live tests. What was
+measured rather than read is the bus's own vocabulary: which of Qt's three
+`registerService` replies means what, one case at a time against a `dbus-daemon` of a
+test's own — a free name and a name this connection already owns both answer
+`ServiceRegistered`, a name another connection holds answers `ServiceQueued` — which is
+what makes a queued shell publish itself the moment the bus hands it the name.
 
 **Authority order:** `SYSTEM_PROMPT.md` (behaviour) › `QUANTUM_SHELL.md` (design) ›
 `AGENTS.md` (repo state) › this file (frozen surface + contracts, derived). This file
@@ -109,6 +116,7 @@ File: `$XDG_CONFIG_HOME/quantum-shell/config.toml` (`~/.config/...` fallback).
 | `[bar.battery] show_percentage` | `bar.battery.show_percentage` | `true` | strict boolean | yes |
 | `[bar.battery] show_time` | `bar.battery.show_time` | `true` | strict boolean | yes |
 | `[bar.media] show_media` | `bar.media.show_media` | `true` | strict boolean | yes |
+| `[bar.notifications] show_notifications` | `bar.notifications.show_notifications` | `true` | strict boolean | yes |
 
 Rules: unknown keys warn with full path; missing keys keep defaults; wrong type or
 refused value warns naming key, value found, and value kept (never silent, never
@@ -117,7 +125,7 @@ coerced). Unusable file (non-TOML, bad `schema_version`) applies nothing.
 ### 2.6 QML singletons (module `QuantumShell 1.0`, one place: `QmlModule.h`)
 
 | Name | Properties / calls | Notes |
-| `Config` | `bar.height`, `bar.layerNamespace`, `bar.system.*` (4), `bar.audio.*` (4), `bar.network.*` (3), `bar.battery.*` (3), `bar.media.*` (1); per-leaf NOTIFY; `bar`/`system`/`audio`/`network`/`battery`/`media` objects CONSTANT | no engine reload, ever |
+| `Config` | `bar.height`, `bar.layerNamespace`, `bar.system.*` (4), `bar.audio.*` (4), `bar.network.*` (3), `bar.battery.*` (3), `bar.media.*` (1), `bar.notifications.*` (1); per-leaf NOTIFY; `bar`/`system`/`audio`/`network`/`battery`/`media`/`notifications` objects CONSTANT | no engine reload, ever |
 | `NiriService` | `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` — each with NOTIFY, emitted only on real change | absent = empty map/list, never plausible zero; ids as text |
 | `NiriActions` | `focusWorkspaceById(idText)`, `focusWorkspaceUp()`, `focusWorkspaceDown()`; signal `actionFailed` | every non-`handled` outcome also logged |
 | `SysMonService` | `cpuPercent`, `cpuAvailable`, `memoryUsedKb`, `memoryTotalKb`, `memoryAvailableKb`, `memoryAvailable`, `active`, `sampleIntervalMs` | `cpuPercent` 0 while `cpuAvailable` false; read the flags |
@@ -125,6 +133,7 @@ coerced). Unusable file (non-TOML, bad `schema_version`) applies nothing.
 | `NetworkService` | `available`, `state`, `connectionName`, `interfaceName`, `deviceKind`, `hasStrength`, `strength`, `connectivity` | `state`/`deviceKind`/`connectivity` are tokens (`disconnected\|connecting\|connected`, `wifi\|ethernet\|other`, `none\|portal\|limited\|full`); `connectivity` is empty when the daemon has not said, which is not `full`. `strength` 0 while `hasStrength` false — read the flag. No `Q_INVOKABLE`: the shell has no control centre to open, so there is no gesture to offer |
 | `BatteryService` | `available`, `present`, `onBattery`, `hasPercentage`, `percentage`, `state`, `warning`, `hasTimeRemaining`, `timeRemaining` | all 0/empty/false while `available` false; `percentage`/`timeRemaining` 0/empty while their `has*` flag false; `present` false on desktop (no battery). `state` tokens: `unknown\|charging\|discharging\|fully-charged\|empty\|pending-charge\|pending-discharge`. `warning` tokens: `unknown\|none\|discharging\|low\|critical\|action`. No `Q_INVOKABLE`: the shell has no power panel to open |
 | `MediaService` | `available`, `title`, `artist`, `playerName`, `playbackStatus` | all empty/false while `available` false — the widget draws nothing, not a dash, because "no media" is a complete reading; `playbackStatus` tokens: `playing\|paused\|stopped` (empty = unknown). No player or player with no track = `available` false. No `Q_INVOKABLE`: transport controls are Phase 2 |
+| `NotificationService` | `notificationAvailable`, `notificationSummary`, `notificationBody`, `notificationApplication`, `notificationCount` | all empty/false while `notificationAvailable` false; `notificationSummary` is the sender's own text, `notificationBody` is the sender's own body, `notificationApplication` is the sender's own application name. `notificationCount` is a running total for the life of the service: it counts what this process has been sent, so it is deliberately **not** withdrawn with the reading when the name is released, and no widget draws it today. Every one of them moves together and only on a real change: a repeat registration emits nothing, and the queued handover publishes availability as soon as the bus makes the name the shell's |
 | `LayerShellWindow` | `layer`, `anchors`, `exclusiveZone`, `keyboardInteractivity`, `layerNamespace`, `margins`; `present()` | QML calls `present()`, not `show()`; set all props first |
 
 Every row above is checked against code by `spec-values-test`, in both directions: every
@@ -157,18 +166,22 @@ rename; a rename here = a rename everywhere + approval.
 (layer-surface refusals) · `.system` (every unreadable file / refused line + cadence
 record) · `.audio` (daemon, sink, refused params/writes, backoff) · `.network`
 (bus reachability, the unique bus name this process holds, the daemon leaving and
-arriving, every object that refused to be read). Pattern
+arriving, every object that refused to be read) · `.battery` (the display device it
+followed, the bus name this process holds, every refusal) · `.media` (the bus it
+monitors, the player it follows, every discovery, subscription and metadata refusal) ·
+`.notification` (the notifications name taken, queued behind another daemon or refused,
+every `Notify` with the id answered, every close, and the name released). Pattern
 `%{time yyyy-MM-dd HH:mm:ss.zzz} [%{type}] %{category}: %{message}` unless
 `QT_MESSAGE_PATTERN` is set. Destination is Qt's: terminal when stderr is one,
 journal otherwise (`journalctl --user _COMM=quantum-shell`). Secrets are never logged.
 
 ### 2.8 Test and environment names (declared once, `tests/public_names.cmake`)
 
-40 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
+41 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
 `slot-order-independence`, `slot-order-randomised-shard-{1..4}`, `niri-live-test`,
 `niri-live-stream-test`, `niri-live-action-test`, `niri-live-layershell-test`,
 `niri-live-restart-test`, `niri-live-shell-restart-test`, `audio-live-test`,
-`network-live-test`, `niri-version-test`, `niri-ipc-test`, `niri-event-stream-test`,
+`network-live-test`, `notification-test`, `niri-version-test`, `niri-ipc-test`, `niri-event-stream-test`,
 `niri-state-test`, `niri-actions-test`, `niri-output-test`,
 `niri-keyboard-layouts-test`, `niri-outputs-test`, `niri-service-test`,
 `niri-reconnect-test`, `config-test`, `config-watcher-test`, `sysmon-test`,
@@ -375,7 +388,7 @@ same objects QML reads (service values verbatim, schema resolver, weak bar point
 
 ## 4. Verification matrix
 
-Default `ctest --preset dev` (jobs 4): gate + order checks + 21 unit binaries, no
+Default `ctest --preset dev` (jobs 4): gate + order checks + 25 unit binaries, no
 session. Live layers need a session and opt-ins; acting tests take the
 `niri-desktop` resource lock and never run two at once.
 
@@ -386,9 +399,10 @@ session. Live layers need a session and opt-ins; acting tests take the
 | No slot passes on a sibling's leftovers | `slot-order-independence` (each slot solo + reverse) | `ctest --preset dev -R slot-order-independence` |
 | Order robustness, 96 seeded passes × 4 shards | `slot-order-randomised-shard-{1..4}` (pair floor 95%, triple + quad coverage reported) | `ctest --preset dev -R slot-order-randomised` |
 | niri wire, events, model, actions, outputs, layouts, reconnect | `niri-*-test` (10 binaries, test-double end of the socket) | `ctest --preset dev -R 'niri-(version\|ipc\|event-stream\|state\|actions\|output\|keyboard\|outputs\|service\|reconnect)-test'` |
-| Bar gestures + arrangement + each of the four memory forms and the empty state drawn from a `/proc` of the test's own with fixed numbers + volume widget states + both volume units drawn from readings the test hands the widget's own rule (silence, mute and no-reading included) with the token driven through a real file + the volume round trip measured against the group's live contents with a minute moved on mid-trip, each group width waited for because a positioner lays out a frame later + one slot that reads the machine's `/proc` and asserts the first reading is a baseline rather than a percentage + the network readout's three flags driven through a real file and its whole rendering rule exercised with the daemon's tokens (every state, wifi/ethernet, a signal of zero against no signal, portal/limited/absent, the empty state) | `bar-interaction-test` (shipped QML, real engine offscreen, real window events) | `ctest --preset dev -R bar-interaction-test` |
+| Bar gestures + arrangement + each of the four memory forms and the empty state drawn from a `/proc` of the test's own with fixed numbers + volume widget states + both volume units drawn from readings the test hands the widget's own rule (silence, mute and no-reading included) with the token driven through a real file + the volume round trip measured against the group's live contents with a minute moved on mid-trip, each group width waited for because a positioner lays out a frame later + one slot that reads the machine's `/proc` and asserts the first reading is a baseline rather than a percentage + the network readout's three flags driven through a real file and its whole rendering rule exercised with the daemon's tokens (every state, wifi/ethernet, a signal of zero against no signal, portal/limited/absent, the empty state) + the notification readout end to end, against the shell as the desktop's notification daemon on a `dbus-daemon` of the test's own: a sender's `Notify` over the wire, the application name and the summary the widget then draws, the empty state as a dash before anything is sent, the flag hiding the readout and giving its room back **with a reading in hand**, and the readout dark again once another connection holds the notifications name | `bar-interaction-test` (shipped QML, real engine offscreen, real window events) | `ctest --preset dev -R bar-interaction-test` |
 | `/proc` parsers, refusals, cadence + its record | `sysmon-test` (fixtures + 2 real-`/proc` slots) | `ctest --preset dev -R sysmon-test` |
 | Props parse, cube-root, decibel conversion (unity 0, silence `-INFINITY`, above-unity positive), wheel math in both units (a dB notch as a fixed gain, its clamp, the percentage notch's growing dB span, silence), write pod, refusals, the unit's token round trip, `[bar.audio]` rules incl. the two scale tokens | `audio-test` (no daemon) | `ctest --preset dev -R audio-test` |
+| The notifications name taken on a bus of the test's own, `Notify` answered with an id, `replaces_id` echoed as the caller's own id, the sender's text published verbatim, the spec's other two methods, a queued shell publishing when the holder leaves, the shell dark while another connection holds the name, and the real `notify-send` reaching it (probed first, that one slot skipped by name on a machine that cannot run it) | `notification-test` (starts a `dbus-daemon` of its own; the shell takes the name there) | `ctest --preset dev -R notification-test` |
 | Every D-Bus name against the daemon's own spelling, its state/connectivity/device-type numbers as the widget's tokens (unknown refused, not guessed), the property map read through its variants (bare and `QDBusVariant` both, text for a number and a number for text refused, `ao` arriving as a raw `QDBusArgument`), a change that overtakes an object's first read not undone by the reply, the reading the chain adds up to (wifi/ethernet/unassociated/offline/clamped/unknown state), and the service against a NetworkManager test double on a private bus: the reading arriving, following `PropertiesChanged` with **zero** calls to the daemon counted after the first read, a chain that moves with the objects it left no longer followed, a daemon leaving and arriving, a reply from a daemon that is gone dropped, an object that refuses leaving the rest standing, an unreachable bus refused with a record | `network-test` (starts a `dbus-daemon` of its own; the test double owns the name there) | `ctest --preset dev -R network-test` |
 | Schema, diffing, `Config` bindings, compile-time mirrors (defaults, floors, token list, key paths) | `config-test`, `config-watcher-test` (scratch dirs) | `ctest --preset dev -R config` |
 | IPC frames, refusals, server over a real socket, capabilities vs real service | `ipc-protocol-test`, `ipc-server-test`, `ipc-capabilities-test` | `ctest --preset dev -R ipc` |
@@ -418,7 +432,11 @@ coerced · action outcomes on `actionFailed` + `quantum.shell.niri`. Config: §2
 warning/error split, all on `quantum.shell.config`. System: §3.3 refusals on
 `quantum.shell.system`. Audio: §3.4 refusals on `quantum.shell.audio`. Wayland:
 role/namespace refusals on `quantum.shell.wayland`. IPC: every refusal on
-`quantum.shell.ipc` with reason; answers silent. Shell lifecycle (version, protocol,
+`quantum.shell.ipc` with reason; answers silent. Notification daemon — the one
+service the shell *is* rather than a reader of — the name taken, queued behind
+another daemon or refused (including a bus that was never connected), every `Notify`
+with the id answered, every `CloseNotification`, and the reading withdrawn on the
+bus's own answer, all on `quantum.shell.notification`. Shell lifecycle (version, protocol,
 config path, socket bind result) on `quantum.shell`.
 
 ---
@@ -431,6 +449,23 @@ config path, socket bind result) on `quantum.shell`.
 - Wheels (strip + volume) act per event with no cooldown; niri's own bind rate-limits
   at 150 ms. Mouse 1:1; touchpad flings multi-step.
 - Narrow bar: centre group overlaps side groups rather than yielding.
+- Notifications: the daemon is real, the surface is not. `NotificationService` owns
+  `org.freedesktop.Notifications` (queued, never stolen) and answers the spec's four methods, but
+  `CloseNotification` only logs — the readout keeps the summary it was sent, because a close does not
+  make the text that was in it into something else — and the ids the daemon issues are not tracked, so a
+  close for an id it never sent is accepted too. `GetCapabilities` advertises `body` and `body-markup`  and nothing else: the body is carried and published exactly as sent, nothing strips or parses it, and
+  nothing draws it yet — the readout draws the application name and the summary; `actions`, `icons`,
+  `hints` and `expire_timeout` are ignored, so a sender cannot offer a button and nothing in the shell
+  acts on a notification after it arrives. The readout
+  draws one notification — the sender's application name and summary — and there is no history, while
+  the planned `qml/notification/` toast stack and `History.qml` are not landed at all. A shell that is
+  queued behind another notifier publishes nothing and draws nothing, which is a life the shell can
+  spend entirely on a desktop that runs its own daemon — measured on the author's, where `swaync` holds
+  the name and the shell's own record says so.
+- A shell stood down with `stop()` can come back. The bus's own report of a registration is what re-enters
+  `registerService()`, so a report of the shell's own earlier registration arriving after `stop()`
+  re-registers it. Nothing in the shipped shell calls `stop()` except a shutdown; `bar-interaction-test`
+  hands the name to its own connection so the shell stays dark for the slots that need that state.
 - Reconcile cannot catch a dropped event later overwritten by a newer one on the same
   field — agreement after the fact is agreement.
 - Volume writes refuse past 64 channels; above-unity volumes are read, never written
@@ -513,12 +548,19 @@ per-feature idle-cost measurement (§ 3D) applies when the hardware path returns
 
 Idle wake-ups: hidden bar = zero wake-ups from sampling; visible bar wakes once per accepted
 cadence plus the clock's once-per-minute single-shot. Shard wall clock ≈ slowest
-shard: ~230 s in the five runs of the current split (230.8, 229.6, 229.4 replaying a pinned
-seed, 228.3, 226.6), with the shards of one invocation spanning 200.6–230.8 s, and
-204.8–252.7 s across the runs on a machine shared with other work, which is the variance
-to expect from the figure; ~853 s when the four are run in sequence.
+shard: ~330 s, measured as 324.8 s then 329.9 s in the two runs of the current split, whose four
+shards spanned 284.4–324.8 s and 289.7–329.9 s. Two things account for it, and only one of them is
+this landing. The split's own numbers grew: the per-binary pass costs in `tests/CMakeLists.txt` now
+sum to ≈269 s of a shard's 96 passes, against the ≈230 s of the five runs this paragraph used to
+record (228.3–230.8 s), because four of those binaries have been re-measured upward as landings added
+slots to them — `bar-interaction-test` among them, whose notification slots drive the shell as the
+desktop's notification daemon and cost it the 163 ms a pass it grew by here (1029 → 1192 ms, which
+is 16 s of the 96). The measured span then sits 6–23% above that ≈269 s, which is the spread this
+figure has always had on a machine doing other work: a single pass of this binary was timed at 1.2 s
+to 9.0 s under that load, so the shards are the figure to read and not a per-run constant.
+~1230 s when the four are run in sequence (1221.5 s and 1239.7 s).
 
-`bar-interaction-test` ≈ 1046 ms/pass;
+`bar-interaction-test` ≈ 1192 ms/pass;
 `network-test` ≈ 2364 ms, the most expensive unit pass in the suite because it starts a `dbus-daemon`
 of its own and holds a reply in flight;
 `sysmon-test` ≈ 788 ms; full default suite per AGENTS.md command reference. Numbers

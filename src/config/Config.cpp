@@ -103,9 +103,20 @@ void ConfigMedia::apply(const MediaConfig& values) {
     }
 }
 
+ConfigNotifications::ConfigNotifications(NotificationsConfig& values, QObject* parent)
+    : QObject(parent), values_(values) {}
+
+void ConfigNotifications::apply(const NotificationsConfig& values) {
+    if (values_.showNotifications != values.showNotifications) {
+        values_.showNotifications = values.showNotifications;
+        emit showNotificationsChanged();
+    }
+}
+
 ConfigBar::ConfigBar(QObject* parent)
     : QObject(parent), system_(values_.system, this), audio_(values_.audio, this),
-      network_(values_.network, this), battery_(values_.battery, this), media_(values_.media, this) {}
+      network_(values_.network, this), battery_(values_.battery, this), media_(values_.media, this),
+      notifications_(values_.notifications, this) {}
 
 void ConfigBar::apply(const BarConfig& values) {
     // Each property is compared on its own, so an edit to one key emits exactly one signal. Assigning
@@ -126,6 +137,7 @@ void ConfigBar::apply(const BarConfig& values) {
     audio_.apply(values.audio);
     network_.apply(values.network);
     battery_.apply(values.battery);
+    notifications_.apply(values.notifications);
     media_.apply(values.media);
 }
 

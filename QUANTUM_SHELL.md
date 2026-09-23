@@ -543,6 +543,11 @@ Typical surfaces:
 | Launcher | overlay | exclusive | `quantum-shell-launcher` |
 | Lock surface | session-lock (not layer-shell) | exclusive | `quantum-shell-lock` |
 
+One of those rows is partly real. The bar exists, and the notification daemon that landed draws on it —
+`qml/Notifications.qml` sits in the bar's trailing group — so `quantum-shell-notification` is the planned
+toast surface rather than something the shell creates today; the rest of the table is the plan, and
+AGENTS.md's repository state is the authority on what exists.
+
 Stable **namespaces** are part of the public interface: users write niri `layer-rule` blocks against
 them (blur, shadow, size, placement), so namespaces must be documented and never renamed casually.
 
@@ -951,7 +956,7 @@ The verbs exist only where a handler answers them, and they are declared once in
 | --- | --- | --- |
 | `version` | `name`, `shell`, `protocol` | it is the shell's own build version, the same one its startup record carries |
 | `state` | the same six values `NiriService` exposes: `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` | read from the service itself, so the keys are its property names and cannot be a second mapping |
-| `config get <path>` | `path` and `value` | the schema resolves it; the paths that exist are its own `KeyPaths` list — `bar.height`, `bar.layerNamespace`, `bar.system.sample_interval_ms`, `bar.system.show_cpu`, `bar.system.show_memory`, `bar.system.memory_format`, `bar.audio.show_volume`, `bar.audio.volume_scale`, `bar.audio.step_percent`, `bar.audio.step_decibels`, `bar.network.show_status`, `bar.network.show_name`, `bar.network.show_strength`, each asserted against the resolver in `ipc-capabilities-test` |
+| `config get <path>` | `path` and `value` | the schema resolves it; the paths that exist are its own `KeyPaths` list — `bar.height`, `bar.layerNamespace`, `bar.system.sample_interval_ms`, `bar.system.show_cpu`, `bar.system.show_memory`, `bar.system.memory_format`, `bar.audio.show_volume`, `bar.audio.volume_scale`, `bar.audio.step_percent`, `bar.audio.step_decibels`, `bar.network.show_status`, `bar.network.show_name`, `bar.network.show_strength`, `bar.battery.show_status`, `bar.battery.show_percentage`, `bar.battery.show_time`, `bar.media.show_media`, `bar.notifications.show_notifications`, each asserted against the resolver in `ipc-capabilities-test` |
 | `bar toggle` | `visible` | the bar window's own visibility, and the compositor's layer list loses and regains the surface |
 
 `qsctl` prints one line of JSON for `version`, `state` and `bar toggle`, and the bare value for
@@ -1217,10 +1222,12 @@ Two things the group owns, and they are the reason it is a component rather than
   Qt's own tree, so anything outside the component can address the group a widget landed in without
   counting the bar's children to work out which one it has hold of.
 
-Three groups, and no fourth: there is a left one, a centre one and a right one, holding the workspace
-strip, the system status and the clock. The centre group arrived the same way the other two did — with the
-widget that belongs in it — and a group still arrives that way, so the media readout the roadmap lists will
-bring its own or join one of these rather than finding an empty region waiting. A group also does not push
+Three groups, and no fourth: a left one holding the workspace strip, a centre one holding the system
+status and a right one holding the trailing readouts — network, battery, media, notifications — and the
+volume and the clock. The centre group arrived the same way the other two did, with the widget that
+belongs in it, and so did each readout since: a group still arrives that way, so a widget the roadmap
+lists without a home — the toast stack notifications still owes this document — will bring its own group
+or join one of these rather than finding an empty region waiting. A group also does not push
 another one aside: the centre group is centred on the bar, so a bar too narrow for its side groups would
 overlap them rather than shrink them, and that decision belongs with the group that has to give way.
 
@@ -1723,12 +1730,12 @@ fraction of a figure whose whole is a union of shards that no single shard can s
 figure a shard prints is the figure for the binaries it holds, and the run's figures are those added up.
 Which binary goes where is decided at configure time from a measured cost per pass — greedy, heaviest
 first — because the binaries differ by two orders of magnitude in what a pass costs them, and an
-unbalanced split hands back the wall clock the sharding was done to save. Over the twelve binaries here
-the shards cost 925, 913, 974 and 904 ms a pass, so the slowest is 7% above the quickest, and the
-configure prints those figures: a measurement that has gone stale shows up there as a lopsided split. What
-is balanced is the cost and not the count of binaries, which is why one shard here holds a single
-binary — `niri-ipc-test` — and another six cheap ones: the wall clock is the cost, and the number of
-binaries per shard follows from it. A
+unbalanced split hands back the wall clock the sharding was done to save. Over the 27 binaries here
+the shards cost 2809, 2808, 2808 and 2804 ms a pass, so the slowest is within a rounding of the quickest,
+and the configure prints those figures: a measurement that has gone stale shows up there as a lopsided
+split. What is balanced is the cost and not the count of binaries, which is why the four shards hold 3, 11,
+9 and 4 of them rather than an even split: the wall clock is the cost, and the number of binaries per shard
+follows from it. A
 target of the check with no measured cost fails the configure rather than being placed on a guess, and the
 partition is checked too — every binary in exactly one shard, no shard empty — because a binary in no
 shard would be ordered by nothing while the rest of the check stayed green.
@@ -1985,16 +1992,16 @@ directly for the cases where that is what is wanted — reproducing a printed se
 the run then reports the count its request would have derived instead.
 
 Ninety-six is where the **triple** findings stop: the expected number of triples
-left short of their six orders, over every triple in the suite — 3545 of them, each short with probability
+left short of their six orders, over every triple in the suite — 10130 of them, each short with probability
 about `6 * (5/6)^k` — is about 268 at twenty-four passes, 3.4 at forty-eight and 0.0005 at ninety-six, so
 past roughly ninety-three passes a clean run has no short triple to report at all.
 
 The four-slot measure is the other way round, and that is why it was added: at ninety-six passes it is
-**never** complete, so its findings section is the one a run actually reports. The twelve binaries have
-13,373 four-slot subsets between them — `C(n,4)` summed over slot counts of four to twenty-one — and
-320,952 relative orders. Measured on this checkout at ninety-six passes, a whole run reached 314,744 of
-those orders (98.07%) and exercised 8,209 of the subsets in all twenty-four of theirs (61.38%), against the
-uniform model's 98.31% and 65.63%. Completing this measure is not reachable at the price of this check:
+**never** complete, so its findings section is the one a run actually reports. The 27 binaries the check
+walks have 37,396 four-slot subsets between them — `C(n,4)` summed over slot counts of three to twenty-two
+— and 897,504 relative orders. Measured on this checkout at ninety-six passes, a whole run reached 880,216
+of those orders (98.07%) and exercised 23,087 of the subsets in all twenty-four of theirs (61.74%), against
+the uniform model's 98.31% and 65.63%. Completing this measure is not reachable at the price of this check:
 half of the subsets complete needs 85 passes, 95% of them needs 145 and 99.9% needs 237. So unlike the pair
 floor it is **reported, not enforced** — and that is not a slack decision. The pair floor is enforceable
 because Markov's inequality bounds the chance a correct run falls below it against an allowance of misses;
@@ -2048,15 +2055,15 @@ them is the better lead than one exercised in five — up to `QS_WORST_TRIPLES_S
 default, 0 to keep the counts and drop the names). Each is one line, labelled with the number of orders
 it was exercised in and written as its three slots in declared order, followed by how many more were left
 at least as well explored. The four-slot subsets are named the same way under `QS_WORST_QUADS_SHOWN`, and
-that section is the one that is never empty: at the default a whole run named 5,164 short subsets across
-the twelve binaries, capped at ten each, the worst of them exercised in 19 of 24 orders. A name there is a
+that section is the one that is never empty: at the default a whole run reported 14,309 short subsets
+across the 27 binaries, naming ten of each, the worst of the named exercised in 20 of 24 orders. A name there is a
 lead for a following run rather than a property of the subset — replayed over twenty-four seeds the
 per-subset mean ranged from 22.9 to 23.9 of 24, the correlation between one half of the seeds and the
 other was 0.09, and none of the hundred worst was short in all twenty-four — which is the same standing
 the triple names have. Measured on this checkout at ninety-six passes over four seeds, nothing is
-short: all 3545 triples came out with all six relative orders, so a default run has no findings section
+short: all 10130 triples came out with all six relative orders, so a default run has no findings section
 at all, and the cap below matters only for a run asked to do fewer passes. At twenty-four passes the same
-report named 239 of the 3545 short — 6 of them in four of their six orders and 233 in five, capped at ten
+report named 239 of them short — 6 of them in four of their six orders and 233 in five, capped at ten
 per binary — which is what the pass count was raised to stop doing. Two checks keep it honest: every label is held to the
 band it was filed under, and the bands' total is held to the completeness figure printed above it, so a
 report that named a different set of triples from the counts would fail the run rather than read
@@ -2070,8 +2077,8 @@ the report is made of are checked from both ends: what the passes wrote down is 
 reading side found, so a recording loop that quietly missed pairs or triples fails the run instead of
 lowering a percentage.
 
-Measured on this checkout at ninety-six passes, across four seeds: 100% of the 763 slot pairs exercised
-in both orders, and 100% of the 3545 slot triples with all six relative orders, against the 99.99% and
+Measured on this checkout at ninety-six passes, over the four shards of one run: 100% of the 2,134 slot
+pairs exercised in both orders, and 100% of the 10,130 slot triples with all six relative orders, against the 99.99% and
 100.00% the models expect for that many passes — both at their ceiling, which is exactly why neither could
 say anything about the four-slot measure above, and why the run's findings are there.
 
@@ -2358,7 +2365,7 @@ decisions inside it, for the empty state the widget draws instead of a zero, and
 single sanctioned departure
 from § Event-driven.
 
-**The volume readout is in**, as the trailing group's first occupant and the phase's first reading with a
+**The volume readout is in**, as an occupant of the trailing group and the phase's first reading with a
 real event source: `src/audio/PipeWireService.cpp` follows the sink the `default` metadata names and
 subscribes to its Props, so nothing in the module polls and nothing about it needs the waiver the system
 status does. See § Audio for the cube-root convention `wpctl get-volume` prints, the settings that are the
@@ -2418,9 +2425,94 @@ mappings, not proof of what each library allocated. A GTK-theme-clearing probe m
 
 **Phase 1 exit criteria are now met**: CPU and RSS budgets pass on the default build;
 the one cadence in the shell is gated on the bar being on screen, and the system-sampling
-waiver remains the user's to write — the rule could see only C++ spellings until the audit
-named the QML `Timer`s, and the count is recounted from the scanner's output. Phase 1's
-widgets are complete: system, audio, network, battery and media.
+waiver remains the user's to write — the `polling-timer` rule could see only the C++ spelling of
+a timer until the QML one was added to the pattern table, and the count is recounted from the
+scanner's own output rather than from a list of modules. Phase 1's widgets are complete: system,
+audio, network, battery and media — and the notification readout landed with the daemon below,
+which is Phase 2's surface.
+
+**The notification daemon is implemented — the shell is the daemon, not a reader of one.**
+`NotificationService` in `src/dbus/` takes `org.freedesktop.Notifications` on the session bus and
+answers the spec's four methods (`Notify`, `CloseNotification`, `GetCapabilities`,
+`GetServerInformation`), publishing the sender's own summary, body, application and a running count
+through the `NotificationService` QML singleton, and withdrawing it — availability, summary, body and
+application, while the count is kept, because it counts what this process was sent — when the bus's own
+answer about who owns the name stops being this connection. A queued name behind another notifier
+publishes nothing, because a summary drawn while another daemon answers would be a claim about a life
+of the daemon that is not this one.
+The readout landed with it, as `qml/Notifications.qml` in the bar's trailing group: drawn while the
+shell is the name's owner, a dash when it has been sent nothing, and off when
+`bar.notifications.show_notifications` says so — and the service stayed the half that owns the bus, so
+nothing in the widget knows a D-Bus name, an interface or a spec. What landed is not the notification
+surface this document plans: it is one notification at a time, the most recent, with no history and
+nothing acting on it, and it draws *inside the bar* rather than creating a surface of its own — the
+`qml/notification/` toast stack with `History.qml` and the `quantum-shell-notification` overlay are
+still the plan, and the section above is explicit about which rows of that table exist today.
+
+`notification-test` starts a `dbus-daemon` of its own in a scratch directory carrying the shell's own service file (a
+`--session` bus with an emptied `XDG_DATA_DIRS` is not isolation, because the desktop's notifications
+service file uses `SystemdService=`, which that variable does not redirect), drives the real
+`notify-send` at it, and reads the name's owner back off the bus. That sender is probed before it is
+depended on, because it is libnotify's program rather than this project's: a `notify-send` that is not
+installed, or one that is installed and cannot load — a `libnotify.so.4` earlier on `LD_LIBRARY_PATH`
+than the system's one makes the dynamic loader refuse it before `main` runs, which is exit 127 and a
+symbol lookup error on stderr — skips that one slot naming the exit code and the message, rather than
+failing a suite that the daemon is not responsible for. That test's own order check found a
+real defect in the service, fixed rather than worked around: `stop()` releases the name, and the bus
+reports the release through the service watcher, but not synchronously — the signal is queued on the
+bus, so it arrives after a later `start()` has retaken the name, and clearing the reading on the
+signal alone withdrew a reading the shell owned. Demotion now follows the bus's own answer, and the
+ordering is pinned as a slot of the test rather than as a property of the order its slots run in.
+
+That bus is now one header both notification binaries use — `tests/support/NotificationBus.h` — and the
+config it writes is per process rather than checked in, because the service directory it names has to be
+this process's own: `ctest -j4` and the four shuffled shards run two of these binaries at once, and a
+shared path would have one of them rewriting the service file while the other's bus was reading it.
+
+That work also turned up two things about the service that could not stand as they were, and only one of
+them is still open. The first is the handover the `QueueService` request exists for, and it is now fixed
+and pinned. Qt refuses a second export of an object at the same path — measured: the second
+`registerObject` returns false while the first still holds — and `registerService()` used to return there,
+so its second entry, which is the one the bus's report of a handover makes, stopped before publishing: a
+shell could carry the desktop's notifications while its own bar said it was not the daemon. It now treats
+an export that is already this connection's as done, and publishes on the ask that follows. Both halves
+are measured rather than reasoned about: asking for a name this connection already owns answers
+`ServiceRegistered`, not a queue position, so the second ask reaches the same line as the first.
+`notification-test`'s `aQueuedShellBecomesTheDaemonWhenTheHolderLeaves` holds the name with a connection
+of its own, starts the shell behind it, releases the name, and asserts the shell publishes *and* answers a
+`Notify` addressed to the name; with the export tolerance taken back out it fails on exactly that, which
+is the falsifier. The publish is guarded by the value it sets, so a registration that changes nothing
+emits nothing. The second is still open: a report of the shell's own registration, delivered after
+`stop()` released the name, re-registers it — which is why `stop()` is not final in that direction, and
+why nothing in the shipped shell calls it except a shutdown. It is recorded here and in
+`ENGINEERING_SPEC.md` §6 rather than patched in passing, because the fix belongs with a case that pins it
+— a shell stood down and a report from before the stand-down — which is the service's own test's work.
+The bar's test does not depend on either mechanism: it hands the notifications name to a connection of its
+own so that the readout's dark state cannot drift between slots.
+
+`bar-interaction-test` drives the readout end to end with it, which is the half the service's own test
+cannot reach: the widget. The slot takes the notifications name with the shipped service, has a second
+connection deliver a real `Notify` over the wire, and reads the sender's application name and summary
+back off the widget — then, with that reading in hand, asserts what `bar.notifications.show_notifications`
+does: the readout goes, the room it took comes back in its group, and the daemon is still the daemon (a
+widget that stood the daemon down to hide itself fails there). It was the empty state three times over
+before that — the service was registered and never started, so every assertion was `width() == 0` and the
+flag could have been ignored; a slot that cannot fail when its subject is removed is not evidence. The
+stand-down at the end hands the notifications name to the test's own sender connection, so the shell is
+deliberately *not* the daemon while the bar's other slots read the arrangement — which is also what makes
+that state stable, since a request for a name another connection holds queues instead of being granted.
+
+The composition root wires it: `main.cpp` constructs `NotificationService`, registers the singleton and
+calls `start()` before the engine loads — early, because it owns a bus name rather than reading one, and
+a desktop with no other notifier has nothing sending notifications until this one is listening. Verified
+on the live session: the shell starts, takes the socket and attaches to PipeWire and NetworkManager, and
+the notification category reports the truth it measured rather than a claim — `Queued for the
+notifications name; another daemon holds it`, because this desktop runs `swaync` and the name is
+`QueueService`'s, not stolen. That is the same honest state the readout draws nothing from — a queued
+name is a shell that is not the desktop's notification daemon, and the readout's rule is about exactly
+that, which is the state the bar's own test puts the shell in when it stands the daemon down. It is also,
+measured, a state the shell leaves on this desktop when `swaync` exits: the bus hands the name over and the
+shell publishes itself as the daemon, which is the handover described above and the case its own test pins.
 
 **Exit criteria:** a fully functional daily-driver bar; no polling; workspace changes are instant
 and event-driven; idle CPU budget met. The performance row's "no polling loops" is met in the sense the
@@ -2431,10 +2523,17 @@ statistics for the exception and the waiver it needs.
 ### Phase 2 — Shell Components
 
 Launcher, notifications (with history and D-Bus service), OSD, control center, panels, media
-controls, system controls.
+controls, system controls. Of the notification surface, the D-Bus service and the bar readout have
+landed (above) and nothing else in this list has started: what remains of notifications is the toast
+overlay and `History.qml`.
 
 **Exit criteria:** replaces the major pieces normally provided by a standalone desktop shell;
-notification daemon passes `notify-send`-based smoke tests.
+notification daemon passes `notify-send`-based smoke tests. The smoke test is
+`notification-test`'s `aNotifySendReachesTheService`, run against a bus of the test's own — and it
+skips, naming the exit code and the message, on a machine where the desktop's `notify-send` cannot run
+at all, because that program is libnotify's rather than this project's and an unloadable library is not
+a defect of the daemon. What the daemon answers is asserted by the rest of that binary, and what the
+bar draws from a real sender is `bar-interaction-test`'s.
 
 ### Phase 3 — Quantum 3D Layer
 

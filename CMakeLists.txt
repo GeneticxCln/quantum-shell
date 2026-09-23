@@ -263,6 +263,14 @@ target_link_libraries(quantum-shell-media
     PUBLIC Qt6::Core Qt6::DBus Qt6::Qml quantum-shell-dbus quantum-shell-warnings
     PRIVATE quantum-shell-logging)
 
+# --- Quantum Shell: notifications ----------------------------------------------------------------
+# The desktop's notification daemon: connects to the session bus and responds to `notify-send`.
+add_library(quantum-shell-notifications STATIC src/dbus/NotificationService.cpp)
+target_include_directories(quantum-shell-notifications PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-notifications
+    PUBLIC Qt6::Core Qt6::DBus Qt6::Qml quantum-shell-dbus quantum-shell-warnings
+    PRIVATE quantum-shell-logging)
+
 # --- Quantum Shell: local IPC ---------------------------------------------------------------------
 # The socket, the frames and the frozen verb names (QUANTUM_SHELL.md § IPC), plus the command-line client's
 # logic. That last part is here rather than in the binary for the reason the binary is small: everything
@@ -412,6 +420,7 @@ set(QS_QML_FILES
     qml/Network.qml
     qml/Battery.qml
     qml/Media.qml
+    qml/Notifications.qml
     qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"
     PREFIX "/"
@@ -419,7 +428,7 @@ qt_add_resources(quantum-shell "qml"
 target_link_libraries(quantum-shell
     PRIVATE quantum-shell-capabilities quantum-shell-ipc quantum-shell-niri quantum-shell-config
             quantum-shell-system quantum-shell-audio quantum-shell-network quantum-shell-battery
-            quantum-shell-media quantum-shell-wayland quantum-shell-warnings)
+            quantum-shell-media quantum-shell-notifications quantum-shell-wayland quantum-shell-warnings)
 # The build's version, compiled in: `qsctl version`, the startup record and the IPC handshake all report it,
 # and none of them should be quoting a copy of the number written out by hand.
 target_compile_definitions(quantum-shell PRIVATE QS_VERSION="${PROJECT_VERSION}")

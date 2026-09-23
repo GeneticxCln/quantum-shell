@@ -78,6 +78,12 @@ Q_DECLARE_LOGGING_CATEGORY(batteryLog)
 // players exist, or the active player has no track loaded.
 Q_DECLARE_LOGGING_CATEGORY(mediaLog)
 
+// The notification daemon: the bus name it took or could not take, each `Notify` call it received and the
+// id it answered with, and each notification it closed. A shell that is the notifications daemon has one
+// question no other readout has — whether it is the daemon at all, since the name may be held by another
+// process — so this is where that answer is written down.
+Q_DECLARE_LOGGING_CATEGORY(notificationLog)
+
 namespace Logging {
 
 // The pattern every record is formatted with, when the environment has not named another. Exposed so the

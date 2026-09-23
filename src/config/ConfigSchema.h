@@ -252,6 +252,20 @@ struct MediaConfig {
     bool operator==(const MediaConfig&) const = default;
 };
 
+// `[bar.notifications]`. One flag, for the reason the media table's single flag gives: everything else
+// the readout could offer is a fact a sender owns — the summary, the body, the application name — so
+// the only question left to the person is whether the readout is drawn. And unlike the media readout's
+// "no player", the shell's notification reading can be absent for a reason the file does not control
+// (another daemon owns the name), which is why `show_notifications` gates the drawing and not the
+// reading: the shell takes the name either way.
+struct NotificationsConfig {
+    // Whether the readout is drawn at all. The service still owns the bus name when this is false, the
+    // same way `SysMonService` still reads /proc when its readout is hidden.
+    bool showNotifications = true;
+
+    bool operator==(const NotificationsConfig&) const = default;
+};
+
 // The bar's configuration, validated. Every value here has been checked against the rules below, so a
 // consumer may use it directly.
 struct BarConfig {
@@ -290,9 +304,12 @@ struct BarConfig {
     // table and belongs to the widget that reads it.
     MediaConfig media;
 
+    // The `[bar.notifications]` table, the sixth. Same rule, same shape: the readout's one setting is
+    // written in its own table and belongs to the widget that reads it.
+    NotificationsConfig notifications;
+
     bool operator==(const BarConfig&) const = default;
 };
-
 
 // The whole validated configuration. Nested objects mirror the file's tables, so `bar` is the `[bar]`
 // table and nothing else is interpolated between the file and this struct.
@@ -363,7 +380,8 @@ inline constexpr auto KeyBarBatteryShowStatus = "bar.battery.show_status";
 inline constexpr auto KeyBarBatteryShowPercentage = "bar.battery.show_percentage";
 inline constexpr auto KeyBarBatteryShowTime = "bar.battery.show_time";
 inline constexpr auto KeyBarMediaShowMedia = "bar.media.show_media";
-inline constexpr std::array<const char*, 17> KeyPaths{
+inline constexpr auto KeyBarNotificationsShowNotifications = "bar.notifications.show_notifications";
+inline constexpr std::array<const char*, 18> KeyPaths{
     KeyBarHeight,
     KeyBarLayerNamespace,
     KeyBarSystemSampleIntervalMs,
@@ -380,7 +398,8 @@ inline constexpr std::array<const char*, 17> KeyPaths{
     KeyBarBatteryShowStatus,
     KeyBarBatteryShowPercentage,
     KeyBarBatteryShowTime,
-    KeyBarMediaShowMedia};
+    KeyBarMediaShowMedia,
+    KeyBarNotificationsShowNotifications};
 
 // The validated value at `path`, or nothing when this build reads no such key. The value is the one the
 // bar was built with rather than the text in the file: a height the schema refused never appears here.
