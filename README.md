@@ -27,6 +27,9 @@ treats as the worst.
 - A notification daemon that takes the bus name, answers `Notify`, `CloseNotification`,
   `GetCapabilities` and `GetServerInformation`, publishes the sender's own text, and tells a sender when
   its notification is closed, expired or replaced (`NotificationClosed`).
+- A notification history of the last fifty notifications and a Do Not Disturb mode, both on the notification
+  readout: a left click switches the mode (no toast is shown, but notifications are still recorded) and a right
+  click opens and closes the history panel. Neither is configuration; both start off every launch.
 - A toast per output: a layer surface on the top layer, drawn over what is on screen rather than shrinking
   it, withdrawn when its expiry runs out — the expiry a sender sent, or the shell's default for a sender
   that sent `-1`.
@@ -34,8 +37,7 @@ treats as the worst.
 - A local IPC socket with `qsctl`, its command-line client.
 
 **Absent at this point:** the launcher, the on-screen display, the control centre, panels, media
-controls, the lock screen, session actions, idle handling, desktop widgets, animation presets and a
-history list, the plugin system, the dock, clipboard history, Bluetooth and power profiles. The palette
+controls, the lock screen, session actions, idle handling, desktop widgets, animation presets, the plugin system, the dock, clipboard history, Bluetooth and power profiles. The palette
 and the typeface **are** configurable (`[bar.colors]` and `[bar.font]`); what remains of theming is
 animation, which is the last thing a theme carries and the one nothing in the bar does yet. Each of
 these is a phase in `QUANTUM_SHELL.md` § Development Roadmap, and each phase records whether it has

@@ -33,6 +33,8 @@ ToastHost::ToastHost(quantum::dbus::NotificationService& service, quantum::confi
     // going away is a toast destroyed with it rather than one drawing nothing for the rest of its expiry.
     connect(&service, &quantum::dbus::NotificationService::notificationChanged, this,
             &ToastHost::handleNotificationChanged);
+    connect(&service, &quantum::dbus::NotificationService::notificationDoNotDisturbChanged, this,
+            &ToastHost::handleDoNotDisturbChanged);
     connect(&service, &quantum::dbus::NotificationService::NotificationClosed, this,
             &ToastHost::handleNotificationClosed);
     connect(qGuiApp, &QGuiApplication::screenRemoved, this, &ToastHost::handleScreenRemoved);
@@ -73,7 +75,28 @@ void ToastHost::handleNotificationChanged()
     if (service_->currentNotificationId() == 0)
         return;
 
+    // Do Not Disturb: the notification was received, answered and recorded — that is the daemon's part — and
+    // nothing shows it. It is over as far as the shell is concerned, so its sender is told rather than left
+    // waiting on a notification that will never be closed by anyone (the spec's "undefined" reason, the same one
+    // a displaced notification gets).
+    if (service_->notificationDoNotDisturb()) {
+        service_->closeNotification(service_->currentNotificationId(), quantum::dbus::CloseReason::Undefined);
+        return;
+    }
+
     showToasts();
+}
+
+void ToastHost::handleDoNotDisturbChanged()
+{
+    // Switching it on takes down what is up: a person who asked not to be disturbed is not helped by a toast
+    // that is on screen until its clock runs out. Switching it off shows nothing — what was suppressed is in the
+    // history, and replaying it would be a burst of stale toasts.
+    if (!service_->notificationDoNotDisturb())
+        return;
+    const quint32 id = shownId_;
+    dismissToasts();
+    service_->closeNotification(id, quantum::dbus::CloseReason::Undefined);
 }
 
 void ToastHost::handleNotificationClosed(quint32 id)

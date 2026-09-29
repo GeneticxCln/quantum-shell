@@ -19,9 +19,11 @@
 // backwards would collide two notifications. Zero is the spec's "no id yet" and is never returned.
 #pragma once
 
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 #include <QDBusConnection>
 #include <QDBusServiceWatcher>
 
@@ -32,6 +34,11 @@ namespace quantum::dbus {
 inline constexpr auto NotificationsServiceName = "org.freedesktop.Notifications";
 inline constexpr auto NotificationsObjectPath = "/org/freedesktop/Notifications";
 inline constexpr auto NotificationsInterface = "org.freedesktop.Notifications";
+
+// How many notifications the history keeps. A fixed length rather than a setting: a list nobody asked to be
+// long is one nobody wants to scroll, and a key that only moves this number would be public interface for a
+// preference nobody has stated. The oldest entry is the one dropped.
+inline constexpr int NotificationHistoryLimit = 50;
 
 // Why a notification is closed, the spec's own numbers: they are what `NotificationClosed` carries, and a
 // sender that waits on a notification decides what to do next from them.
@@ -79,6 +86,27 @@ class NotificationService : public QObject {
     // was not sent.
     Q_PROPERTY(int notificationExpireTimeout READ notificationExpireTimeout NOTIFY notificationChanged)
 
+    // The notifications this process was sent, newest first, as maps a list model reads: `id`, `application`,
+    // `summary`, `body` and `received` (milliseconds since the epoch, which is what a widget formats). A
+    // notification stays here after it closes or expires — the history is what was sent, not what is showing —
+    // and while Do Not Disturb is on, which is what the mode is for: nothing is shown and nothing is lost.
+    Q_PROPERTY(QVariantList notificationHistory READ notificationHistory NOTIFY notificationHistoryChanged)
+
+    // How many entries the history holds, for a widget that draws a count without walking the list.
+    Q_PROPERTY(int notificationHistoryCount READ notificationHistoryCount NOTIFY notificationHistoryChanged)
+
+    // Do Not Disturb: while it is on no toast is shown. Runtime state and not configuration, on purpose — a
+    // mode a person switches from the bar is not a setting they edit in a file, and it starts off every time
+    // the shell does. Notifications are still received, answered and recorded; only their being shown stops.
+    Q_PROPERTY(bool notificationDoNotDisturb READ notificationDoNotDisturb WRITE setNotificationDoNotDisturb
+                   NOTIFY notificationDoNotDisturbChanged)
+
+    // Whether the history panel is open. Also runtime state: the service holds it because the readout that
+    // toggles it and the host that draws the panel are separate objects, and this is the one thing both can
+    // see.
+    Q_PROPERTY(bool notificationHistoryOpen READ notificationHistoryOpen WRITE setNotificationHistoryOpen
+                   NOTIFY notificationHistoryOpenChanged)
+
 public:
     // The bus to register on, defaulting to the session's because that is where the desktop's senders
     // are. A test passes its own `dbus-daemon` so its claims are about this shell rather than about
@@ -93,6 +121,18 @@ public:
     QString notificationApplication() const { return notificationApplication_; }
     int notificationCount() const { return notificationCount_; }
     int notificationExpireTimeout() const { return notificationExpireTimeout_; }
+    QVariantList notificationHistory() const;
+    int notificationHistoryCount() const { return static_cast<int>(history_.size()); }
+    bool notificationDoNotDisturb() const { return doNotDisturb_; }
+    bool notificationHistoryOpen() const { return historyOpen_; }
+    void setNotificationDoNotDisturb(bool on);
+    void setNotificationHistoryOpen(bool open);
+
+    // Empties the history, and removes one entry by the id it was sent under. Both are what the panel's
+    // buttons do; neither closes anything that is showing, because a history entry is not a notification on
+    // screen.
+    Q_INVOKABLE void clearNotificationHistory();
+    Q_INVOKABLE void removeFromNotificationHistory(quint32 id);
 
     // Owns `org.freedesktop.Notifications` on the bus it was constructed with, or joins the queue for
     // it. Called by the composition root once, *before* the QML engine loads rather than after, because
@@ -140,6 +180,9 @@ signals:
     // One signal for every property, because every property moves together: a notification replaces the
     // summary, the body and the count in one step.
     void notificationChanged();
+    void notificationHistoryChanged();
+    void notificationDoNotDisturbChanged();
+    void notificationHistoryOpenChanged();
 
     // The spec's `NotificationClosed(id, reason)`, exported on the bus for the sender that is waiting on the
     // notification and also the way the toast learns that the one it shows is gone.
@@ -166,6 +209,7 @@ private slots:
 private:
     bool registerService();
     void clearReading();
+    void recordInHistory(quint32 id, const QString& application, const QString& summary, const QString& body);
 
     QDBusConnection bus_ = QDBusConnection::sessionBus();
     QDBusServiceWatcher* serviceWatcher_ = nullptr;
@@ -182,6 +226,17 @@ private:
     QString notificationApplication_;
     int notificationCount_ = 0;
     int notificationExpireTimeout_ = 0;
+
+    struct HistoryEntry {
+        quint32 id = 0;
+        QString application;
+        QString summary;
+        QString body;
+        qint64 received = 0;
+    };
+    QList<HistoryEntry> history_;
+    bool doNotDisturb_ = false;
+    bool historyOpen_ = false;
 };
 
 }  // namespace quantum::dbus

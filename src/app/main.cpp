@@ -17,6 +17,7 @@
 #include "app/BarHost.h"
 #include "app/Logging.h"
 #include "app/ShellCapabilities.h"
+#include "app/HistoryHost.h"
 #include "app/ToastHost.h"
 #include "audio/PipeWireService.h"
 #include "config/Config.h"
@@ -246,6 +247,14 @@ int main(int argc, char **argv)
     // answering notifications that nothing draws is not a notification daemon anyone asked for.
     quantum::app::ToastHost toasts(notifications, config, engine, QUrl(QStringLiteral("qrc:/qml/Toast.qml")));
     if (!toasts.ready())
+        return EXIT_FAILURE;
+
+    // The history panel, on the primary output while the service says it is open. It fails the process for the
+    // same reason a toast does: a readout whose right click opens a panel that cannot be drawn is a control that
+    // lies.
+    quantum::app::HistoryHost history(notifications, engine,
+                                      QUrl(QStringLiteral("qrc:/qml/NotificationHistory.qml")));
+    if (!history.ready())
         return EXIT_FAILURE;
 
     quantum::app::ShellCapabilities capabilities(service, config, &bars);

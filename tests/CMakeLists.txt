@@ -235,7 +235,10 @@ set(QS_ORDER_CHECK_COSTS
     # of five passes at 3499, 3508, 3523, 3549 and 3593. Slots that assert that nothing arrived do not wait for
     # nothing — they send a call that does answer afterwards and check the order, which is what kept this from
     # being roughly 2 s longer.
-    notification-test=3500
+    # Re-measured when the history and Do Not Disturb landed: seven slots on the test's own bus and one that opens
+    # and closes the panel, none of them waiting out a clock: 3695 ms, the middle of five passes at 3641, 3673,
+    # 3695, 3750 and 3788.
+    notification-test=3700
     # Reads seven files and compares them with constants compiled into it, plus the meta-objects of the four
     # QML singletons whose classes it links; it does no I/O beyond the read and no work that depends on the
     # machine, which is why it is near the cheapest binary in the table. Measured as the middle of three runs:

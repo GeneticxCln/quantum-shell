@@ -41,6 +41,20 @@ Item {
         spacing: 6
         anchors.centerIn: parent
 
+        // Do Not Disturb, drawn only while it is on: the state is the service's, and a label that was always
+        // there would say nothing.
+        Text {
+            textFormat: Text.PlainText
+            objectName: "notificationDoNotDisturb"
+            text: "DND"
+            color: root.muted
+            font.family: root.face
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
+            anchors.verticalCenter: parent.verticalCenter
+            visible: NotificationService.notificationDoNotDisturb
+        }
+
         // The sender's application name, which is its own statement about who sent this. Drawn in the
         // muted colour because it is attribution rather than the message.
         //
@@ -82,6 +96,22 @@ Item {
             elide: Text.ElideRight
             maximumLineCount: 1
             width: Math.min(implicitWidth, 240)
+        }
+    }
+
+    // Two gestures, and the service is where both land. A left click is Do Not Disturb — the mode a person
+    // reaches for while a notification is in front of them — and a right click opens and closes the history
+    // panel. Neither is drawn from a state of its own: the mode and the panel's being open are the service's
+    // properties, so the readout, the panel and the toast host cannot disagree about them.
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        cursorShape: Qt.PointingHandCursor
+        onClicked: (mouse) => {
+            if (mouse.button === Qt.RightButton)
+                NotificationService.notificationHistoryOpen = !NotificationService.notificationHistoryOpen
+            else
+                NotificationService.notificationDoNotDisturb = !NotificationService.notificationDoNotDisturb
         }
     }
 }
