@@ -63,10 +63,18 @@ public:
     QMargins margins() const { return m_margins; }
     void setMargins(const QMargins &margins);
 
-    // Marks the configuration complete and maps the surface. QML calls this instead of show()
-    // because Component.onCompleted is the one point guaranteed to run after every property above
-    // has been assigned.
+    // Maps the surface for the first time. Called by `BarHost` rather than from QML, and after that object has
+    // assigned the window's screen: showing the window is what creates the Wayland surface and assigns the
+    // layer role against an output, and the role is assigned once, so the output has to be right before the
+    // window is mapped. QML cannot do that for itself — `screen` is not a QML property of a `QQuickWindow`.
     Q_INVOKABLE void present();
+
+    // Shows or hides the surface after it exists, applying the same namespace refusal present() does.
+    // `qsctl bar toggle` reaches a surface through this rather than through `setVisible`, because a bar
+    // hidden and shown again has to pass the same check as one shown at startup: showing a surface whose
+    // namespace is empty would ask the compositor for a surface the shell cannot claim back, which is the
+    // one thing present() refuses.
+    void setSurfaceVisible(bool visible);
 
 Q_SIGNALS:
     // Emitted whenever a property above changes, so a live surface can apply the new value rather

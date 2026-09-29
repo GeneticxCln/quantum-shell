@@ -59,6 +59,9 @@ Item {
     property color muted
     property color accent
     property string face
+    // From `[bar.font]` through `Bar.qml`; the defaults are what this component drew before the table existed.
+    property int fontSize: 12
+    property int fontWeight: 400
 
     // The configuration flag, read once so that the arrangement and the renderer cannot disagree about
     // whether this widget is there. `visible` is what stops it being drawn *and* hit-tested, and it is also
@@ -122,7 +125,8 @@ Item {
             text: "VOL"
             color: root.muted
             font.family: root.face
-            font.pixelSize: 12
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
         }
 
         Text {
@@ -132,7 +136,8 @@ Item {
             // readable by parsing the word: the colour and the word are the same fact, not two.
             color: PipeWireService.available && PipeWireService.muted ? root.accent : root.foreground
             font.family: root.face
-            font.pixelSize: 12
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
         }
     }
 

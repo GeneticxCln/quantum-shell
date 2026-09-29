@@ -230,6 +230,7 @@ class ConfigNotifications : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(bool showNotifications READ showNotifications NOTIFY showNotificationsChanged)
+    Q_PROPERTY(int timeoutMs READ timeoutMs NOTIFY showNotificationsChanged)
 
 public:
     explicit ConfigNotifications(NotificationsConfig& values, QObject* parent = nullptr);
@@ -238,6 +239,11 @@ public:
     // `showMedia` is: owning the notifications name is not switched by drawing, and the shell takes the
     // name whether or not the readout is on screen.
     bool showNotifications() const { return values_.showNotifications; }
+
+    // The default expiry of a toast, in milliseconds, and the value a sender's `-1` resolves to. Read by the
+    // toast and not by the service, for the same reason the readout is: the daemon publishes what it was sent,
+    // and what to do with it is the toast's business.
+    int timeoutMs() const { return values_.timeoutMs; }
 
     const NotificationsConfig& values() const { return values_; }
 
@@ -251,6 +257,81 @@ private:
     NotificationsConfig& values_;
 };
 
+
+// The `[bar.colors]` table as QML reads it: `Config.bar.colors`.
+//
+// Strings rather than `QColor`, which is the schema's rule showing through rather than an oversight: the schema
+// hands a widget the spelling the file used and refuses every spelling it cannot read, and a QML `color`
+// property coerces the string when it is assigned one. A `QColor` here would be a second reader of the same
+// text, and a more permissive one — it accepts colour names and three-digit shorthand that this schema
+// deliberately refuses — so the two would disagree about what the file said.
+class ConfigColors : public QObject {
+    Q_OBJECT
+
+    Q_PROPERTY(QString foreground READ foreground NOTIFY foregroundChanged)
+    Q_PROPERTY(QString muted READ muted NOTIFY mutedChanged)
+    Q_PROPERTY(QString accent READ accent NOTIFY accentChanged)
+    Q_PROPERTY(QString urgent READ urgent NOTIFY urgentChanged)
+
+public:
+    // Takes the table it reports on by reference, the shape every table object here has: it has no values of
+    // its own to fall back to, so there is no way to build one that reports something the file did not say.
+    explicit ConfigColors(ColorsConfig& values, QObject* parent = nullptr);
+
+    QString foreground() const { return values_.foreground; }
+    QString muted() const { return values_.muted; }
+    QString accent() const { return values_.accent; }
+    QString urgent() const { return values_.urgent; }
+
+    const ColorsConfig& values() const { return values_; }
+
+    // Applies validated values, emitting a signal for each property whose value actually changed — so an edit
+    // to one colour repaints what reads that colour and not the whole bar.
+    void apply(const ColorsConfig& values);
+
+Q_SIGNALS:
+    void foregroundChanged();
+    void mutedChanged();
+    void accentChanged();
+    void urgentChanged();
+
+private:
+    ColorsConfig& values_;
+};
+
+// The `[bar.font]` table as QML reads it: `Config.bar.font`.
+//
+// The weight is an integer because that is what `font.weight` takes, and the sizes the widgets that draw
+// larger derive from the one here are computed in QML where the drawing happens — the schema's job is to say
+// what a size may be, not which widget is bigger than which.
+class ConfigFont : public QObject {
+    Q_OBJECT
+
+    Q_PROPERTY(QString family READ family NOTIFY familyChanged)
+    Q_PROPERTY(int size READ size NOTIFY sizeChanged)
+    Q_PROPERTY(int weight READ weight NOTIFY weightChanged)
+
+public:
+    explicit ConfigFont(FontConfig& values, QObject* parent = nullptr);
+
+    QString family() const { return values_.family; }
+    int size() const { return values_.size; }
+    int weight() const { return values_.weight; }
+
+    const FontConfig& values() const { return values_; }
+
+    // Applies validated values, emitting a signal per property that actually changed: an edit to the size
+    // reflows the bar's text and leaves the family and the weight alone.
+    void apply(const FontConfig& values);
+
+Q_SIGNALS:
+    void familyChanged();
+    void sizeChanged();
+    void weightChanged();
+
+private:
+    FontConfig& values_;
+};
 
 // The `[bar]` table as QML reads it: `Config.bar`.
 class ConfigBar : public QObject {
@@ -266,6 +347,8 @@ class ConfigBar : public QObject {
     Q_PROPERTY(quantum::config::ConfigNetwork* network READ network CONSTANT)
     Q_PROPERTY(quantum::config::ConfigBattery* battery READ battery CONSTANT)
     Q_PROPERTY(quantum::config::ConfigMedia* media READ media CONSTANT)
+    Q_PROPERTY(quantum::config::ConfigColors* colors READ colors CONSTANT)
+    Q_PROPERTY(quantum::config::ConfigFont* font READ font CONSTANT)
 
 public:
     explicit ConfigBar(QObject* parent = nullptr);
@@ -278,6 +361,9 @@ public:
     ConfigNetwork* network() { return &network_; }
     ConfigBattery* battery() { return &battery_; }
     ConfigMedia* media() { return &media_; }
+    ConfigNotifications* notifications() { return &notifications_; }
+    ConfigColors* colors() { return &colors_; }
+    ConfigFont* font() { return &font_; }
 
     // The validated values themselves, for a caller that needs the struct rather than the properties —
     // `qsctl config get` resolves a key path against these, and doing that through QML-visible properties
@@ -287,7 +373,6 @@ public:
     // Applies validated values, emitting a signal for each property whose value actually changed and
     // nothing at all for the rest.
     void apply(const BarConfig& values);
-    ConfigNotifications* notifications() { return &notifications_; }
 
 Q_SIGNALS:
     void heightChanged();
@@ -303,6 +388,11 @@ private:
     ConfigBattery battery_;
     ConfigMedia media_;
     ConfigNotifications notifications_;
+    // The palette, declared after the readouts because it came after them, and the typeface after the
+    // palette because it came after that. All eight point into the same struct the six readouts' objects do,
+    // so `Config.bar.font.size` and `qsctl config get bar.font.size` answer from one place.
+    ConfigColors colors_;
+    ConfigFont font_;
 };
 
 // The whole configuration, registered with QML as the `Config` singleton.

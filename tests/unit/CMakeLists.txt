@@ -100,8 +100,15 @@ foreach(qs_qml IN LISTS QS_QML_FILES)
         set(QS_BAR_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "CapsuleGroup\\.qml$")
         set(QS_GROUP_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
+    elseif(qs_qml MATCHES "Toast\\.qml$")
+        set(QS_TOAST_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     endif()
 endforeach()
+if(NOT DEFINED QS_TOAST_QML)
+    message(FATAL_ERROR
+        "no Toast.qml is named in QS_QML_FILES, so notification-test would have no toast to load and would "
+        "fail at run time instead of here.")
+endif()
 if(NOT DEFINED QS_BAR_QML)
     message(FATAL_ERROR
         "no Bar.qml is named in QS_QML_FILES, so bar-interaction-test would have no bar to load and would "
@@ -162,8 +169,11 @@ qs_unit_test(notification-test notification_test.cpp)
 # `qs-test-support` for `NotificationBus.h`: the private `dbus-daemon` this test's daemon registers on, which
 # `bar-interaction-test` drives the same way — one spelling of the bus config, the service directory it names
 # and the address the daemon prints, rather than two that can drift.
-target_link_libraries(notification-test PRIVATE quantum-shell-notifications qs-test-support)
+target_link_libraries(notification-test PRIVATE quantum-shell-toasts quantum-shell-notifications Qt6::Gui Qt6::Quick qs-test-support)
 target_compile_definitions(notification-test PRIVATE FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
+# The component itself, from the source tree rather than a resource of this binary: the packed copy loading in
+# a real shell is what the layer-shell live tests assert, on the built binary.
+target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QML}")
 
 # The configuration schema, the QObject tree QML binds to, and the watcher that keeps the two in step
 # with the file. Nothing here needs a compositor or a display: the schema is a pure function of a string,

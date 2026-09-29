@@ -263,8 +263,94 @@ struct NotificationsConfig {
     // same way `SysMonService` still reads /proc when its readout is hidden.
     bool showNotifications = true;
 
+    // The default expiry of a toast, in milliseconds. It is the shell's default and not the sender's: the
+    // spec hands a daemon an `expire_timeout` per notification, and a sender that wants its own length
+    // sends a positive one, which the shell honours rather than clamping — the value here is only what a
+    // `-1` (the spec's "use the default") and nothing else resolves to.
+    int timeoutMs = 5000;
+
     bool operator==(const NotificationsConfig&) const = default;
 };
+
+// The `[bar.colors]` table: the palette the bar's widgets are drawn from, and the rule a value in it has to
+// satisfy.
+//
+// Four values, and they are the four the bar actually draws with rather than a theme's worth of slots to fill
+// in later: what text and glyphs are, what a secondary reading is, what marks what is current or focused, and
+// what warns. A palette belongs to the thing that draws with it — `qml/Bar.qml` owns these values and hands
+// each one to the widgets it composes — so what this table is for is changing the bar's colours without
+// editing QML, which is the whole of why it exists.
+//
+// Each value is a colour literal: `#` and six hex digits, or `#` and eight when a widget needs a partly
+// transparent colour, the alpha first. Those are the two forms this bar uses, and the rule is checked here
+// rather than left to QML for the reason every token list in this file is — a string QML cannot parse is
+// reported as a binding warning when the file loads and draws as black, so a typo would read to a user as the
+// shell ignoring their file. A value outside the two forms is refused by name with the default kept.
+//
+// Named colours (`red`), three-digit shorthand and `rgb()` are deliberately not accepted: each is a second
+// spelling of something this table already spells once, and this table is read by a widget that wants a
+// colour, not a name.
+struct ColorsConfig {
+    // The defaults are the palette the bar shipped with before it was configurable, spelled here so that a
+    // file saying nothing about colours draws exactly what a shell with no file drew.
+    QString foreground = QStringLiteral("#c8cad8");
+    QString muted = QStringLiteral("#5a5d70");
+    QString accent = QStringLiteral("#7aa2f7");
+    QString urgent = QStringLiteral("#f7768e");
+
+    bool operator==(const ColorsConfig&) const = default;
+};
+
+// The two lengths a colour literal may have, in hex digits: six for `#RRGGBB`, eight for `#AARRGGBB`. Named
+// rather than written into the comparison so that the engineering spec's statement of the rule and this
+// schema's enforcement of it can be held against each other, which is what `spec-values-test` does with every
+// bound this file states.
+inline constexpr int ColorDigits = 6;
+inline constexpr int ColorDigitsWithAlpha = 8;
+
+// Whether `text` is a colour literal this schema accepts: a `#` and then six or eight hex digits and nothing
+// else. A free function rather than a member of anything, because the reader below and `config-test` ask the
+// same question and there should be one answer to it.
+bool isColorLiteral(QStringView text);
+
+// The floor on the toast's default expiry, in milliseconds: a toast that lives for less than this is one a
+// person could not have read, and the spec's own meaning for a shorter count is a sender that wants it gone
+// at once — which is what zero is for, and what `CloseNotification` is for.
+inline constexpr int MinToastTimeoutMs = 500;
+
+// The `[bar.font]` table: the typeface, size and weight the bar's text is drawn in.
+//
+// Three values, and they are the three the bar's text actually has. `family` is the face every widget draws
+// in, which the widgets already carried as `face` before this table existed — it was the one thing about the
+// text that was configurable in fact and hard-coded in form, so it moves here rather than gaining a
+// neighbour. `size` is the body size, and the widgets that draw larger than the body derive from it: the
+// clock by one, the two readouts that draw a line of prose — media and notifications — by two, which is the
+// hierarchy the shell had before this table and is preserved exactly by the default of 12 (12, 13 and 14 as
+// the widgets were drawn). So changing one number scales the bar's text coherently rather than leaving three
+// sizes to drift apart.
+//
+// `weight` is Qt's own font weight, an integer from 100 to 900, rather than a token list of names for it:
+// the number is the thing QML's `font.weight` takes, and a token would be a spelling this file translated
+// into a number before handing it to the one consumer that wanted the number anyway. A value outside the
+// range is refused by name with the default kept.
+struct FontConfig {
+    QString family = QStringLiteral("Inter");
+    int size = 12;
+    int weight = 400;
+
+    bool operator==(const FontConfig&) const = default;
+};
+
+// The range a font weight may fall in, which is Qt's own: `QFont::Thin` is 100 and `QFont::Black` is 900, and
+// nothing outside the two is a weight Qt has a name for. Named so that the specification's statement of the
+// bound and this schema's enforcement of it can be held against each other, the way every other bound here is.
+inline constexpr int MinFontWeight = 100;
+inline constexpr int MaxFontWeight = 900;
+
+// The floor on a text size, which is the floor `bar.height` has and for the same reason: zero and below are
+// not sizes, while how large is a taste — and a bar drawn with 48-pixel text is a bar that draws what it was
+// asked for.
+inline constexpr int MinFontSize = 1;
 
 // The bar's configuration, validated. Every value here has been checked against the rules below, so a
 // consumer may use it directly.
@@ -307,6 +393,17 @@ struct BarConfig {
     // The `[bar.notifications]` table, the sixth. Same rule, same shape: the readout's one setting is
     // written in its own table and belongs to the widget that reads it.
     NotificationsConfig notifications;
+
+    // The `[bar.colors]` table, the seventh and the first that is not a readout's settings: the palette the
+    // bar's widgets are drawn from. It keeps the shape the six before it have for the reason they have it —
+    // the values are written together and belong to the thing that draws with them — and it is the one table
+    // here whose subject is how the bar looks rather than what it reads.
+    ColorsConfig colors;
+
+    // The `[bar.font]` table, the eighth: the typeface, size and weight the bar's text is drawn in. It is a
+    // table of its own rather than more keys in `[bar.colors]` because a font family is not a colour, and a
+    // table named for colours that also held typography would be misnamed from the first key.
+    FontConfig font;
 
     bool operator==(const BarConfig&) const = default;
 };
@@ -381,7 +478,15 @@ inline constexpr auto KeyBarBatteryShowPercentage = "bar.battery.show_percentage
 inline constexpr auto KeyBarBatteryShowTime = "bar.battery.show_time";
 inline constexpr auto KeyBarMediaShowMedia = "bar.media.show_media";
 inline constexpr auto KeyBarNotificationsShowNotifications = "bar.notifications.show_notifications";
-inline constexpr std::array<const char*, 18> KeyPaths{
+inline constexpr auto KeyBarNotificationsTimeoutMs = "bar.notifications.timeout_ms";
+inline constexpr auto KeyBarColorsForeground = "bar.colors.foreground";
+inline constexpr auto KeyBarColorsMuted = "bar.colors.muted";
+inline constexpr auto KeyBarColorsAccent = "bar.colors.accent";
+inline constexpr auto KeyBarColorsUrgent = "bar.colors.urgent";
+inline constexpr auto KeyBarFontFamily = "bar.font.family";
+inline constexpr auto KeyBarFontSize = "bar.font.size";
+inline constexpr auto KeyBarFontWeight = "bar.font.weight";
+inline constexpr std::array<const char*, 26> KeyPaths{
     KeyBarHeight,
     KeyBarLayerNamespace,
     KeyBarSystemSampleIntervalMs,
@@ -399,7 +504,15 @@ inline constexpr std::array<const char*, 18> KeyPaths{
     KeyBarBatteryShowPercentage,
     KeyBarBatteryShowTime,
     KeyBarMediaShowMedia,
-    KeyBarNotificationsShowNotifications};
+    KeyBarNotificationsShowNotifications,
+    KeyBarNotificationsTimeoutMs,
+    KeyBarColorsForeground,
+    KeyBarColorsMuted,
+    KeyBarColorsAccent,
+    KeyBarColorsUrgent,
+    KeyBarFontFamily,
+    KeyBarFontSize,
+    KeyBarFontWeight};
 
 // The validated value at `path`, or nothing when this build reads no such key. The value is the one the
 // bar was built with rather than the text in the file: a height the schema refused never appears here.

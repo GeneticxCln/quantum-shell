@@ -43,6 +43,9 @@ Item {
     property color foreground
     property color muted
     property string face
+    // From `[bar.font]` through `Bar.qml`; the defaults are what this component drew before the table existed.
+    property int fontSize: 12
+    property int fontWeight: 400
 
     // The bar's group gives the height; the width belongs to the content, like the strip's. Hiding both
     // readouts therefore leaves this widget no width at all rather than a gap where something used to be.
@@ -89,7 +92,8 @@ Item {
                 text: "CPU"
                 color: root.muted
                 font.family: root.face
-                font.pixelSize: 12
+                font.pixelSize: root.fontSize
+                font.weight: root.fontWeight
             }
 
             Text {
@@ -97,7 +101,8 @@ Item {
                 text: SysMonService.cpuAvailable ? Math.round(SysMonService.cpuPercent) + "%" : "—"
                 color: root.foreground
                 font.family: root.face
-                font.pixelSize: 12
+                font.pixelSize: root.fontSize
+                font.weight: root.fontWeight
             }
         }
 
@@ -113,7 +118,8 @@ Item {
                 text: "MEM"
                 color: root.muted
                 font.family: root.face
-                font.pixelSize: 12
+                font.pixelSize: root.fontSize
+                font.weight: root.fontWeight
             }
 
             Text {
@@ -121,7 +127,8 @@ Item {
                 text: root.memoryText()
                 color: root.foreground
                 font.family: root.face
-                font.pixelSize: 12
+                font.pixelSize: root.fontSize
+                font.weight: root.fontWeight
             }
         }
     }

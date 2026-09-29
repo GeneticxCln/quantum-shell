@@ -34,13 +34,16 @@ class NiriService;
 
 namespace quantum::app {
 
+class BarHost;
+
 class ShellCapabilities : public quantum::ipc::Capabilities
 {
 public:
-    // All three must outlive this object. `bar` may be null — the QML root is created by the engine, and a
+    // All three must outlive this object. `bars` may be null — the QML is created by the engine, and a
     // shell whose bar failed to load still has state to report — in which case `toggleBar` answers that
-    // there is no bar rather than pretending to have hidden one.
-    ShellCapabilities(quantum::niri::NiriService& service, quantum::config::Config& config, QWindow* bar);
+    // there are no bars rather than pretending to have hidden one.
+    ShellCapabilities(quantum::niri::NiriService& service, quantum::config::Config& config,
+                      BarHost* bars);
 
     QJsonObject state() const override;
     std::optional<QJsonValue> configValue(const QString& path) const override;
@@ -50,9 +53,11 @@ private:
     quantum::niri::NiriService& service_;
     quantum::config::Config& config_;
 
-    // Weak: the QML engine owns the root object, and if a reload ever disposes of it this must not keep it
-    // alive or reach a deleted window.
-    QPointer<QWindow> bar_;
+    // Not owned, and not a weak pointer either: the host is created by the composition root and lives as
+    // long as the shell does, unlike the windows it holds. Those are its own business — it follows them
+    // going away — which is why what is kept here is the host rather than a list of windows that could
+    // name one that is gone.
+    BarHost* bars_ = nullptr;
 };
 
 }  // namespace quantum::app

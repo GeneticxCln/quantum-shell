@@ -1,18 +1,18 @@
 #include "app/ShellCapabilities.h"
 
+#include "app/BarHost.h"
 #include "config/Config.h"
 #include "niri/NiriService.h"
-
 #include <QWindow>
 
 namespace quantum::app {
 
 ShellCapabilities::ShellCapabilities(quantum::niri::NiriService& service,
                                      quantum::config::Config& config,
-                                     QWindow* bar)
+                                     BarHost* bars)
     : service_(service)
     , config_(config)
-    , bar_(bar)
+    , bars_(bars)
 {
 }
 
@@ -50,14 +50,15 @@ std::optional<QJsonValue> ShellCapabilities::configValue(const QString& path) co
 
 bool ShellCapabilities::toggleBar()
 {
-    if (bar_.isNull())
+    if (bars_ == nullptr)
         return false;
 
-    // The window's own visibility, not a flag of ours to keep in step with it: the compositor's answer is
-    // the surface being in or out of its layer list, and a second copy of the state here could disagree
-    // with the compositor and be believed.
-    bar_->setVisible(!bar_->isVisible());
-    return bar_->isVisible();
+    // Every bar, through the host that holds them: the shell's bars are one surface per output, so hiding
+    // "the bar" is hiding all of them, and a verb that moved only the first would leave a monitor lit.
+    // The state answered is the bars' own visibility after the move rather than a flag of ours to keep in
+    // step with it — the compositor's answer is the surface being in or out of its layer list, and a second
+    // copy of the state here could disagree with the compositor and be believed.
+    return bars_->toggleAll();
 }
 
 }  // namespace quantum::app

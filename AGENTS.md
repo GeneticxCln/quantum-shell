@@ -57,8 +57,14 @@ Real files in this repository:
   SYSTEM_PROMPT.md       agent behaviour contract
   QUANTUM_SHELL.md       design plan and roadmap
   CMakeLists.txt         build system: the -Werror policy target, the shell targets and the gate
-  CMakePresets.json      presets dev, release, asan, ci
+  CMakePresets.json      presets dev, release, asan, ci, session
   .gitignore             build trees, CMake's in-tree markers and tool metadata
+  LICENSE                MIT, the terms the shell is distributed under
+  README.md              the front door: what the shell is, how to build, install, run and configure
+                         it, the surface of the configuration file, and which tests need a session
+  packaging/             what a distribution needs that the build does not: the D-Bus activation
+                         template the install rule fills in for the notification daemon, and the
+                         PKGBUILD an Arch-family package is built from
   src/niri/              the niri connection: socket, line framing, requests, version and capability
                          detection, the typed event stream, the workspace/window/output/layout/
                          overview state model it feeds, the request-driven output refresh niri
@@ -77,8 +83,14 @@ Real files in this repository:
                          to, the schema_version check and the validation each value passes — including
                          `[bar.system]`'s four, whose memory forms are a list the schema refuses
                          everything outside of and which its own test mirrors at compile time, and the
-                         three tables that followed it: `[bar.audio]`'s four, whose unit is a token
-                         list, and `[bar.network]`'s three booleans), the
+                         tables that followed it: `[bar.audio]`'s four, whose unit is a token
+                         list, `[bar.network]`'s three booleans, and — the two tables whose subject
+                         is how the bar looks rather than what it reads — `[bar.colors]`'s four colour
+                         literals, refused unless they are a `#` and six or eight hex digits so that a
+                         typo is reported rather than drawn as black, and `[bar.font]`'s three: a
+                         non-empty family, a size with the floor `bar.height` has, and a weight in
+                         Qt's own 100-to-900 scale, which the widgets derive their own sizes from —
+                         the clock by one, the prose readouts by two — so one number reflows the bar), the
                          QObject tree QML binds to as `Config` with a notify signal per property and
                          a nested object per table — so `[bar.system]` is `Config.bar.system`, which
                          carries the readout's cadence, which readouts are drawn and the form the
@@ -165,10 +177,11 @@ Real files in this repository:
   src/app/               main.cpp, the composition root that joins the niri stack, the configuration,
                          the system readings, the audio service, the network service, the battery
                          service, the media service, the notification daemon and the IPC server to the
-                         QML engine; the logging
+                         QML engine, and BarHost, which creates one bar per output and is what the
+                         sampling gate and `qsctl bar toggle` ask which bars exist; the logging
                          categories and the record format every other library logs through; and the
                          three capabilities the IPC exposes, each a delegation to the service, the
-                         schema or the bar window
+                         schema or the bars
   qml/                   the bar: the layer-shell window, its arrangement, the workspace strip bound
                          to NiriService and acted on through NiriActions (a click focuses the
                          workspace a capsule names, the wheel moves to the one below or above), and the
@@ -463,10 +476,11 @@ Tests:            ctest, thirty-four tests without a compositor socket or opt-in
                   system bus with NetworkManager it skips with the reason rather than passing
                   quietly. The counts: 36 registered
                   with a socket, 34 without one; QS_NIRI_SESSION_TESTS adds its two and
-                  QS_NIRI_RESTART_TESTS its own two, both needing a socket, while QS_AUDIO_TESTS adds
-                  one and needs neither; all
-                  three acting tests take the resource lock so a parallel run never has two of them on
-                  the desktop at once, and they sit outside the order checks for the same reason
+                  QS_NIRI_RESTART_TESTS its own two, both needing a socket, while QS_NIRI_SCALE_TESTS
+                  adds its one — the scale matrix, which starts a compositor of its own and takes no
+                  lock, because the window it maps is on the nested instance and not on the session's
+                  desktop — and QS_AUDIO_TESTS adds
+                  one and needs neither; the
 Version control:  git, branch main; history begins at the first commit of the working slice, published to
                   GitHub (remote `origin`) in the same step, so the checkout starts clean rather than
                   accumulating uncommitted work
@@ -934,7 +948,14 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    through the `NotificationService` QML singleton; `qml/Notifications.qml` draws that in
                    the bar's trailing group, gated by the new `[bar.notifications] show_notifications`,
                    and `quantum.shell.notification` records every registration, queue, `Notify` and
-                   close. `notification-test` drives the daemon on a `dbus-daemon` of its own, and
+                   close. The toast host is the landing after it: `src/app/ToastHost.*` creates one
+                   toast per output when a notification arrives — the newest wins, the newest surface's
+                   own namespace `quantum-shell-toast`, no exclusive zone — and destroys them when their
+                   expiry runs out, the expiry resolved as the daemon publishes the sender's own
+                   `expire_timeout` and `[bar.notifications] timeout_ms` says what a `-1` means;
+                   `qml/Toast.qml` is the surface, drawn from the palette and the font table the bar's
+                   widgets draw from. `notification-test` drives the daemon on a `dbus-daemon` of its own,
+                   and
                    `bar-interaction-test` drives the readout end to end against the shell as the daemon:
                    a second connection delivers a real `Notify`, the sender's application name and
                    summary are read off the widget, the flag is turned off with that reading in hand and
@@ -1233,7 +1254,22 @@ The build system is CMake with presets; every command below was run in this chec
 ```sh
 cmake --preset dev && cmake --build --preset dev   # configure and build; -Werror comes from the
                                                    # quantum-shell-warnings interface target
-ctest --preset dev                                 # thirty-four tests with no session; the two read-only
+cmake --preset release && cmake --build --preset release
+                                                   # the build a package is made from
+DESTDIR=/tmp/stage cmake --install build/release --prefix /usr
+                                                   # the staged install a package builder runs, and the
+                                                   # four artifacts it must place for the shell to find
+                                                   # itself: bin/quantum-shell and bin/qsctl, lib's
+                                                   # layer-shell client, the shell-integration plugin
+                                                   # under Qt's own plugin directory, and D-Bus
+                                                   # activation for the notification daemon. DESTDIR
+                                                   # is the packaging standard's staging directory;
+                                                   # the prefix is named here rather than only at
+                                                   # configure time because the activation file's path
+                                                   # is resolved at install time, so an install under
+                                                   # a prefix the build was not configured with names
+                                                   # the prefix it landed in
+ctest --preset dev                                 # thirty-four tests with no session;
                                                    # live tests join them only when NIRI_SOCKET is set,
                                                    # and the preset runs four tests at a time
 ctest --preset dev -R audio-test                   # the volume module's pure half: the Props pod parse,
@@ -1319,7 +1355,7 @@ cd build/dev && QT_PLUGIN_PATH="$PWD/plugins" QT_WAYLAND_SHELL_INTEGRATION=quant
                                                    # the readout draws decibels at
 ./build/dev/qsctl config get bar.audio.show_volume
                                                    # whether the volume readout is drawn at all
-./build/dev/qsctl bar toggle                       # hides or shows the bar and reports which
+./build/dev/qsctl bar toggle                       # hides or shows every bar and reports which
 ss -x -a | grep quantum-shell                      # @quantum-shell: one NUL, which is the frozen name
 journalctl --user _COMM=quantum-shell -n 20        # where a shell started by niri writes its records
 ctest --preset dev -R config                       # both halves of the configuration, neither needing a
@@ -1357,9 +1393,22 @@ ctest --preset dev -R slot-order-randomised        # the same binaries as a seed
                                                    # subsets short of their twenty-four orders under
                                                    # QS_WORST_QUADS_SHOWN. All of it is test output,
                                                    # so add -V to read it
+cmake --preset session && cmake --build --preset session && ctest --preset session
+                                                   # the tests that need a compositor, all of them, in a
+                                                   # build directory of their own: the two that act on the
+                                                   # session and the two that start and restart a niri of
+                                                   # their own, ~6 s here. This is the one command a change
+                                                   # to a surface or to an action is checked with. On a
+                                                   # machine with no session it refuses (exit 8, "No tests
+                                                   # were found") rather than reporting a pass over the
+                                                   # nothing it ran — execution.noTestsAction is error for
+                                                   # exactly that reason, and the filter names the four
+                                                   # tests rather than "live", because two always-registered
+                                                   # live tests would otherwise match and hide the absence
 QS_NIRI_SESSION_TESTS=1 cmake --preset dev && ctest --preset dev
-                                                   # adds the two tests that act on the session:
-                                                   # niri-live-action-test opens and closes the
+                                                   # the same two tests the preset registers, when a build
+                                                   # directory of one's own is wanted rather than the
+                                                   # preset's: niri-live-action-test opens and closes the
                                                    # overview, niri-live-layershell-test maps the
                                                    # bar and checks the surface niri reports
 ctest --preset dev -R niri-live-layershell-test    # just the bar's own surface, ~2 s
@@ -1372,7 +1421,10 @@ QS_AUDIO_TESTS=1 cmake --preset dev && ctest --preset dev -R audio-live-test
                                                    # device of the session's, and needs no compositor:
                                                    # it drives and reads the daemon through pw-cli,
                                                    # pw-metadata and pw-dump while the shell's own
-                                                   # client is the code under test, ~3 s here
+                                                   # client is the code under test, ~3 s here. It is
+                                                   # deliberately not in the `session` preset, which is
+                                                   # what makes it the one live test a job with no
+                                                   # session could run (QUANTUM_SHELL.md § CI)
 cmake --build --preset dev --target scan           # the gate alone, listing every skipped path
 cmake --build --preset dev --target check          # the gate plus every test
 CC=clang CXX=clang++ cmake --preset ci && CC=clang CXX=clang++ cmake --build --preset ci && ctest --preset ci
@@ -1411,7 +1463,7 @@ else.
 | "Stub the service and wire the UI" | Fake code that builds green forever | Finish the service path or leave the UI out |
 | "I'll clean up the prototype later" | Later never arrives; the hack ships | Spike outside the deliverable, then write the real thing |
 | "It should work — the logic looks right" | Unverified | Build it, run it, paste the output |
-| "Probably fine to assume scale 1" | Unhandled display reality | Handle `fractional-scale-v1` + `wp-viewporter` |
+| "Probably fine to assume scale 1" | Unhandled display reality | Handle `fractional-scale-v1` + `wp-viewporter` — QtWaylandClient carries it and Qt Quick renders at the true ratio, so the shell inherits it rather than implementing it; what it must not do is derive a pixel size from a logical one, and it does not (`QUANTUM_SHELL.md` § Fractional scaling, measured) |
 | "A generic compositor layer is more future-proof" | Explicit non-goal, and it costs niri-specific behavior | niri-only, no abstraction |
 | "The plan's tree shows these files" | The plan is a destination | Create files when they have real content |
 

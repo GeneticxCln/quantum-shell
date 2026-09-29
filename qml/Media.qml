@@ -15,6 +15,10 @@ Item {
     required property color muted
     required property color accent
     required property string face
+    // From `[bar.font]` through `Bar.qml`, two up from the body size because this readout draws prose. The
+    // default is what this component drew before the table existed.
+    property int fontSize: 14
+    property int fontWeight: 400
 
     // Configured visibility
     property bool showMedia: Config.bar.media.showMedia
@@ -44,7 +48,8 @@ Item {
             }
             color: root.muted
             font.family: root.face
-            font.pixelSize: 14
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
             anchors.verticalCenter: parent.verticalCenter
         }
 
@@ -61,7 +66,8 @@ Item {
             }
             color: root.foreground
             font.family: root.face
-            font.pixelSize: 14
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
             anchors.verticalCenter: parent.verticalCenter
 
             // Truncate long track names

@@ -321,6 +321,11 @@ private:
     void stopShell();
     // The compositor's layer list, or an empty optional when it did not answer.
     std::optional<QJsonArray> compositorLayers(int timeoutMs = 5000);
+    // How many outputs the compositor is driving. Read for the one assertion here that is about how many bars
+    // there are: the shell places one per output, so the surfaces carrying its namespace are as many as the
+    // enabled outputs. Enabled is `NiriOutput::isEnabled()` — the output having a logical layout — because an
+    // output niri reports but is not driving is one Qt has no screen for, and therefore no bar on.
+    std::optional<int> enabledOutputCount(int timeoutMs = 5000);
     // Waits for this shell's surface to be listed, or to be gone again.
     bool waitForBarListed(bool listed);
     // The transcript libwayland printed for the current run.
@@ -509,6 +514,26 @@ std::optional<QJsonArray> NiriLiveLayerShellTest::compositorLayers(int timeoutMs
     return reply->variant(QStringLiteral("Layers")).toArray();
 }
 
+std::optional<int> NiriLiveLayerShellTest::enabledOutputCount(int timeoutMs) {
+    const std::optional<Reply> reply = request(client_, QStringLiteral("Outputs"), timeoutMs);
+    if (!reply.has_value() || !reply->isOk()) {
+        return std::nullopt;
+    }
+    // The reply is an object keyed by connector name rather than a list (`src/niri/NiriOutputs.cpp`).
+    const QJsonValue value = reply->variant(QStringLiteral("Outputs"));
+    if (!value.isObject()) {
+        return std::nullopt;
+    }
+    int enabled = 0;
+    const QJsonObject outputs = value.toObject();
+    for (auto it = outputs.constBegin(); it != outputs.constEnd(); ++it) {
+        if (it.value().toObject().value(QStringLiteral("logical")).isObject()) {
+            ++enabled;
+        }
+    }
+    return enabled;
+}
+
 bool NiriLiveLayerShellTest::waitForBarListed(bool listed) {
     QElapsedTimer clock;
     clock.start();
@@ -534,17 +559,22 @@ void NiriLiveLayerShellTest::theBarAppearsInTheCompositorsLayerListAndDisappears
     QVERIFY2(layers.has_value(), "the compositor did not answer a Layers request");
     const QList<QJsonObject> mine = layersNamed(*layers, QString::fromLatin1(expectedNamespace));
 
-    // Exactly one: a second surface with the same namespace would mean the shell is placing two bars, and
-    // taking the first match would hide it.
-    QCOMPARE(mine.size(), 1);
+    // One bar per output (QUANTUM_SHELL.md § One Bar Per Output): `src/app/BarHost.cpp` creates a bar for every
+    // screen, so the surfaces carrying the shell's namespace are as many as the outputs the compositor has.
+    // That is what makes this the assertion about multiplicity rather than a count of one — on a single-output
+    // machine it is one either way, and on a machine with two the shell that drew only the first fails here.
+    const std::optional<int> outputs = enabledOutputCount();
+    QVERIFY2(outputs.has_value(),
+             "the compositor did not answer an Outputs request that this build could read");
+    QCOMPARE(mine.size(), *outputs);
     const QJsonObject bar = mine.first();
 
     QCOMPARE(bar.value(QStringLiteral("layer")).toString(), QString::fromLatin1(expectedLayer));
     QCOMPARE(bar.value(QStringLiteral("keyboard_interactivity")).toString(),
              QString::fromLatin1(expectedKeyboardInteractivity));
-    // The bar is on an output, but which one is the compositor's choice: qml/Main.qml passes no output and
-    // lets niri place it on the focused one. So the assertion is that niri named one, not that it named a
-    // particular connector.
+    // The compositor named the output the bar is on, and it is the one the shell placed it on: the bar's screen
+    // is assigned before its surface is presented (`BarHost`), and niri reports that output back. *Which*
+    // connector that is belongs to the machine rather than to the shell, so the assertion is that there is one.
     QVERIFY2(!bar.value(QStringLiteral("output")).toString().isEmpty(),
              "the compositor listed the bar without naming an output");
 

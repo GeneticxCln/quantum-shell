@@ -1,4 +1,9 @@
 import QtQuick
+// The palette comes from the configuration, which is a singleton of this module (`Config`), so this file
+// imports it the way `qml/Workspaces.qml` imports the module for `NiriService`. Without the import the
+// bindings below are a `ReferenceError` at load and the bar draws transparent black — which is what the
+// palette slot in `bar-interaction-test` caught when this was first written without it.
+import QuantumShell 1.0
 
 // What the bar shows and how it is arranged.
 //
@@ -20,11 +25,40 @@ import QtQuick
 Item {
     id: bar
 
-    readonly property color foreground: "#c8cad8"
-    readonly property color muted: "#5a5d70"
-    readonly property color accent: "#7aa2f7"
-    readonly property color urgent: "#f7768e"
-    readonly property string face: "Inter"
+    // Which output this bar is on, named the way niri names it. `qml/Main.qml` reads it from the output its
+    // own surface was created against and passes it down, because a widget knows nothing about the window
+    // behind it. Only the workspace strip needs it: every other readout is a reading of the machine rather
+    // than of a monitor, and is the same number on both bars.
+    //
+    // Empty means the bar was not placed on an output — which is how this component is loaded when it is
+    // loaded on its own, without a shell around it. The strip then draws the whole model rather than
+    // nothing, because "no output" is not "an output with no workspaces".
+    property string outputName: ""
+
+    // The palette, from `[bar.colors]` (`Config.bar.colors`). They are `color` properties bound to strings the
+    // schema has already checked are `#` and six or eight hex digits, which is the division of labour every
+    // value in this file follows: `src/config/` decides what a value may be and refuses anything else by name,
+    // and QML decides what to draw with it. A colour the file got wrong never reaches here, so there is no
+    // fallback to write and nothing to draw in black.
+    //
+    // Four values and not a theme's worth of tokens: these are the four the widgets below actually draw with,
+    // and a palette entry nothing reads would be surface nobody asked for.
+    readonly property color foreground: Config.bar.colors.foreground
+    readonly property color muted: Config.bar.colors.muted
+    readonly property color accent: Config.bar.colors.accent
+    readonly property color urgent: Config.bar.colors.urgent
+
+    // The typeface, from `[bar.font]` (`Config.bar.font`) rather than a literal, and the two sizes the
+    // widgets that draw larger than the body derive from the one number: the clock by one, the two readouts
+    // that draw a line of prose by two. That is the hierarchy the bar had before the table existed — 12, 13
+    // and 14 as its widgets were drawn — preserved exactly by the default of 12, so changing one number
+    // reflows the whole bar rather than leaving three sizes to drift apart.
+    //
+    // The offsets are here rather than in the widgets because this is where the hierarchy is declared once; a
+    // widget knows it is bigger than the body, and the number it is bigger by is this file's business.
+    readonly property string face: Config.bar.font.family
+    readonly property int fontSize: Config.bar.font.size
+    readonly property int fontWeight: Config.bar.font.weight
 
     // The leading edge: the workspace strip, and whatever else belongs before everything else.
     CapsuleGroup {
@@ -34,11 +68,14 @@ Item {
         height: bar.height
 
         Workspaces {
+            outputName: bar.outputName
             foreground: bar.foreground
             muted: bar.muted
             accent: bar.accent
             urgent: bar.urgent
             face: bar.face
+            fontSize: bar.fontSize
+            fontWeight: bar.fontWeight
         }
     }
 
@@ -55,6 +92,8 @@ Item {
             foreground: bar.foreground
             muted: bar.muted
             face: bar.face
+            fontSize: bar.fontSize
+            fontWeight: bar.fontWeight
         }
 
     }
@@ -80,6 +119,8 @@ Item {
             muted: bar.muted
             urgent: bar.urgent
             face: bar.face
+            fontSize: bar.fontSize
+            fontWeight: bar.fontWeight
         }
 
         Battery {
@@ -87,6 +128,8 @@ Item {
             muted: bar.muted
             urgent: bar.urgent
             face: bar.face
+            fontSize: bar.fontSize
+            fontWeight: bar.fontWeight
         }
 
         Media {
@@ -94,12 +137,18 @@ Item {
             muted: bar.muted
             accent: bar.accent
             face: bar.face
+            // Two up: a line of prose is drawn larger than the readouts' numbers, which is the hierarchy the
+            // bar had and is preserved by the default.
+            fontSize: bar.fontSize + 2
+            fontWeight: bar.fontWeight
         }
 
         Notifications {
             foreground: bar.foreground
             muted: bar.muted
             face: bar.face
+            fontSize: bar.fontSize + 2
+            fontWeight: bar.fontWeight
         }
 
         Volume {
@@ -107,11 +156,17 @@ Item {
             muted: bar.muted
             accent: bar.accent
             face: bar.face
+            fontSize: bar.fontSize
+            fontWeight: bar.fontWeight
         }
 
         Clock {
             color: bar.foreground
             face: bar.face
+            // One up: the time is the readout a person reads most and the only one on the bar without a
+            // label beside it, which is why it drew at 13 while the numbers drew at 12.
+            fontSize: bar.fontSize + 1
+            fontWeight: bar.fontWeight
         }
     }
 }

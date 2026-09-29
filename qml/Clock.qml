@@ -16,6 +16,11 @@ Text {
     id: clock
 
     property string face
+    // From `[bar.font]` through `Bar.qml`, one up from the body size because the time is the readout a person
+    // reads most and the only one on the bar without a label beside it. The default is what this component
+    // drew before the table existed.
+    property int fontSize: 13
+    property int fontWeight: 400
 
     // Named the way the strip's row is, so the group a widget landed in can be read without counting the
     // bar's children.
@@ -29,7 +34,8 @@ Text {
 
     color: "#c8cad8"
     font.family: face
-    font.pixelSize: 13
+    font.pixelSize: fontSize
+    font.weight: fontWeight
     font.letterSpacing: 0.5
 
     function refresh() {

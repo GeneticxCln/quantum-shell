@@ -35,6 +35,48 @@ void ConfigSystem::apply(const SystemConfig& values) {
 
 ConfigAudio::ConfigAudio(AudioConfig& values, QObject* parent) : QObject(parent), values_(values) {}
 
+ConfigColors::ConfigColors(ColorsConfig& values, QObject* parent) : QObject(parent), values_(values) {}
+
+ConfigFont::ConfigFont(FontConfig& values, QObject* parent) : QObject(parent), values_(values) {}
+
+void ConfigFont::apply(const FontConfig& values) {
+    // Each value compared on its own, the way every table here applies: a size change reflows the text and
+    // leaves the family and the weight where they were.
+    if (values_.family != values.family) {
+        values_.family = values.family;
+        emit familyChanged();
+    }
+    if (values_.size != values.size) {
+        values_.size = values.size;
+        emit sizeChanged();
+    }
+    if (values_.weight != values.weight) {
+        values_.weight = values.weight;
+        emit weightChanged();
+    }
+}
+
+void ConfigColors::apply(const ColorsConfig& values) {
+    // Each colour compared on its own, so an edit to the accent repaints what the accent marks and leaves
+    // everything else alone — which is the difference between changing a colour and reloading the bar.
+    if (values_.foreground != values.foreground) {
+        values_.foreground = values.foreground;
+        emit foregroundChanged();
+    }
+    if (values_.muted != values.muted) {
+        values_.muted = values.muted;
+        emit mutedChanged();
+    }
+    if (values_.accent != values.accent) {
+        values_.accent = values.accent;
+        emit accentChanged();
+    }
+    if (values_.urgent != values.urgent) {
+        values_.urgent = values.urgent;
+        emit urgentChanged();
+    }
+}
+
 void ConfigAudio::apply(const AudioConfig& values) {
     // Each property compared on its own, so an edit to one key emits exactly one signal and hiding the
     // readout does not wake a binding on the step.
@@ -111,12 +153,20 @@ void ConfigNotifications::apply(const NotificationsConfig& values) {
         values_.showNotifications = values.showNotifications;
         emit showNotificationsChanged();
     }
+    // The toast's default expiry, on the same signal as the readout's visibility: both are a change to one
+    // table, and the toast's expiry is the value a sender's `-1` resolves to at the moment it is read rather
+    // than at the moment the file was written.
+    if (values_.timeoutMs != values.timeoutMs) {
+        values_.timeoutMs = values.timeoutMs;
+        emit showNotificationsChanged();
+    }
 }
 
 ConfigBar::ConfigBar(QObject* parent)
     : QObject(parent), system_(values_.system, this), audio_(values_.audio, this),
       network_(values_.network, this), battery_(values_.battery, this), media_(values_.media, this),
-      notifications_(values_.notifications, this) {}
+      notifications_(values_.notifications, this), colors_(values_.colors, this),
+      font_(values_.font, this) {}
 
 void ConfigBar::apply(const BarConfig& values) {
     // Each property is compared on its own, so an edit to one key emits exactly one signal. Assigning
@@ -139,6 +189,8 @@ void ConfigBar::apply(const BarConfig& values) {
     battery_.apply(values.battery);
     notifications_.apply(values.notifications);
     media_.apply(values.media);
+    colors_.apply(values.colors);
+    font_.apply(values.font);
 }
 
 Config::Config(QObject* parent) : QObject(parent) {
@@ -169,6 +221,8 @@ void Config::registerQmlSingleton(Config& config) {
     qmlRegisterAnonymousType<ConfigNetwork>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);
     qmlRegisterAnonymousType<ConfigBattery>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);
     qmlRegisterAnonymousType<ConfigBar>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);
+    qmlRegisterAnonymousType<ConfigColors>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);
+    qmlRegisterAnonymousType<ConfigFont>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);
     qmlRegisterSingletonInstance(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion,
                                  quantum::qml::ModuleMinorVersion, Config::QmlTypeName, &config);
 }

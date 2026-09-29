@@ -119,7 +119,7 @@ static_assert(quantum::config::MinVolumeStepDecibels == coveredMinVolumeStepDeci
 // The key paths the shell offers to `qsctl config get`, mirrored the same way and for a sharper reason: a
 // path is what a script types. It is interface, so a rename has to be acknowledged here — and in the
 // document that lists the keys — rather than being free to happen in the schema alone.
-constexpr std::array<const char*, 18> coveredKeyPaths{"bar.height",
+constexpr std::array<const char*, 26> coveredKeyPaths{"bar.height",
                                                        "bar.layerNamespace",
                                                        "bar.system.sample_interval_ms",
                                                        "bar.system.show_cpu",
@@ -136,7 +136,15 @@ constexpr std::array<const char*, 18> coveredKeyPaths{"bar.height",
                                                        "bar.battery.show_percentage",
                                                        "bar.battery.show_time",
                                                        "bar.media.show_media",
-                                                       "bar.notifications.show_notifications"};
+                                                       "bar.notifications.show_notifications",
+                                                       "bar.notifications.timeout_ms",
+                                                       "bar.colors.foreground",
+                                                       "bar.colors.muted",
+                                                       "bar.colors.accent",
+                                                       "bar.colors.urgent",
+                                                       "bar.font.family",
+                                                       "bar.font.size",
+                                                       "bar.font.weight"};
 
 template <std::size_t Declared, std::size_t Covered>
 constexpr bool samePaths(const std::array<const char*, Declared>& declared,
@@ -199,6 +207,10 @@ private slots:
     void refusesASystemSettingItCannotHonour();
     void refusesAnAudioSettingItCannotHonour();
     void refusesABatterySettingItCannotHonour();
+    void refusesAColourItCannotDraw();
+    void readsTheColoursTheFileSets();
+    void refusesATypefaceSettingItCannotHonour();
+    void readsTheTypefaceTheFileSets();
     void refusesAFileFromASchemaVersionItDoesNotKnow();
     void warnsWhenTheSchemaVersionIsMissingButStillUsesTheFile();
     void refusesAFileThatIsNotToml();
@@ -737,6 +749,100 @@ void ConfigTest::refusesASystemSettingItCannotHonour() {
     QVERIFY(mentions(unknownKey.warnings, QStringLiteral("show_cpu")));
 }
 
+void ConfigTest::refusesAColourItCannotDraw() {
+    // The palette's rule is a colour literal and nothing else: `#` and six hex digits, or eight with the alpha
+    // first. Every value below is one a person could plausibly write and this bar cannot draw, and each is
+    // reported by its own path with the default kept rather than passed on to QML — a string QML cannot parse
+    // draws as black with a warning at load, which reads to a user as the shell ignoring their file.
+    const QByteArray text =
+        "schema_version = 1\n"
+        "[bar.colors]\n"
+        "foreground = \"red\"\n"     // a named colour: QML would draw it, this table does not accept it
+        "muted = \"#abc\"\n"         // three-digit shorthand
+        "accent = 123456\n"          // a number, not a string
+        "urgent = \"#f7768\"\n";     // five digits is not a length a colour has
+    const ParseResult result = parseConfig(text);
+    QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QStringLiteral("; "))));
+
+    // One warning per key, each naming the path it is about, so a user can find the line that did nothing.
+    QCOMPARE(result.warnings.size(), 4);
+    QVERIFY(mentions(result.warnings, QStringLiteral("bar.colors.foreground")));
+    QVERIFY(mentions(result.warnings, QStringLiteral("bar.colors.muted")));
+    QVERIFY(mentions(result.warnings, QStringLiteral("bar.colors.accent")));
+    QVERIFY(mentions(result.warnings, QStringLiteral("bar.colors.urgent")));
+
+    // And the defaults stand, which is the half of the rule that matters: a typo in a colour changes no
+    // colour at all rather than changing one to black.
+    QCOMPARE(result.values.bar.colors.foreground, QStringLiteral("#c8cad8"));
+    QCOMPARE(result.values.bar.colors.muted, QStringLiteral("#5a5d70"));
+    QCOMPARE(result.values.bar.colors.accent, QStringLiteral("#7aa2f7"));
+    QCOMPARE(result.values.bar.colors.urgent, QStringLiteral("#f7768e"));
+}
+
+void ConfigTest::readsTheColoursTheFileSets() {
+    // Both forms the table accepts, the alpha one included. The values are handed on as the file spelled them:
+    // the schema's job is to refuse what cannot be drawn, and normalising the case of a hex digit would be a
+    // second spelling of a value that already has one.
+    const ParseResult result = parseConfig(QByteArray(
+        "schema_version = 1\n"
+        "[bar.colors]\n"
+        "foreground = \"#1e1e2e\"\n"
+        "muted = \"#5a5d70\"\n"
+        "accent = \"#89b4fa\"\n"
+        "urgent = \"#f38ba880\"\n"));
+
+    QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QStringLiteral("; "))));
+    QVERIFY2(result.warnings.isEmpty(), qPrintable(result.warnings.join(QStringLiteral("; "))));
+    QCOMPARE(result.values.bar.colors.foreground, QStringLiteral("#1e1e2e"));
+    QCOMPARE(result.values.bar.colors.muted, QStringLiteral("#5a5d70"));
+    QCOMPARE(result.values.bar.colors.accent, QStringLiteral("#89b4fa"));
+    QCOMPARE(result.values.bar.colors.urgent, QStringLiteral("#f38ba880"));
+}
+
+void ConfigTest::refusesATypefaceSettingItCannotHonour() {
+    // Three keys, three rules, and every value below is one a person could plausibly write and this bar
+    // cannot honour: a family with nothing in it (Qt would fall back to whatever it likes, and the file would
+    // be describing a typeface the shell never asked for), a size of zero, and a weight outside the range Qt
+    // has a name for. Each is reported by its own path with the value kept.
+    const QByteArray text =
+        "schema_version = 1\n"
+        "[bar.font]\n"
+        "family = \"\"\n"
+        "size = 0\n"
+        "weight = 950\n"
+        "letter_spacing = 0.5\n";    // a key this shell does not read: a metric, not a choice
+    const ParseResult result = parseConfig(text);
+    QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QStringLiteral("; "))));
+
+    QCOMPARE(result.warnings.size(), 4);
+    QVERIFY(mentions(result.warnings, QStringLiteral("bar.font.family")));
+    QVERIFY(mentions(result.warnings, QStringLiteral("bar.font.size")));
+    QVERIFY(mentions(result.warnings, QStringLiteral("bar.font.weight")));
+    QVERIFY(mentions(result.warnings, QStringLiteral("letter_spacing")));
+
+    // And the defaults stand, so a typo in the typeface changes no typeface at all.
+    QCOMPARE(result.values.bar.font.family, QStringLiteral("Inter"));
+    QCOMPARE(result.values.bar.font.size, 12);
+    QCOMPARE(result.values.bar.font.weight, 400);
+}
+
+void ConfigTest::readsTheTypefaceTheFileSets() {
+    // A different face, a larger body, and a heavier weight than the bar draws by default — the whole point
+    // of the table being a table rather than more colours in the palette table.
+    const ParseResult result = parseConfig(QByteArray(
+        "schema_version = 1\n"
+        "[bar.font]\n"
+        "family = \"JetBrainsMono Nerd Font\"\n"
+        "size = 14\n"
+        "weight = 600\n"));
+
+    QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QStringLiteral("; "))));
+    QVERIFY2(result.warnings.isEmpty(), qPrintable(result.warnings.join(QStringLiteral("; "))));
+    QCOMPARE(result.values.bar.font.family, QStringLiteral("JetBrainsMono Nerd Font"));
+    QCOMPARE(result.values.bar.font.size, 14);
+    QCOMPARE(result.values.bar.font.weight, 600);
+}
+
 void ConfigTest::refusesAFileFromASchemaVersionItDoesNotKnow() {
     // A file written for a newer shell is refused as a whole rather than partly understood: a key that
     // has changed meaning is a value this build would be inventing, and this build's defaults are at
@@ -950,7 +1056,17 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
                          QStringLiteral("Config.bar.media"),
                          QStringLiteral("Config.bar.media.showMedia"),
                          QStringLiteral("Config.bar.notifications"),
-                         QStringLiteral("Config.bar.notifications.showNotifications")};
+                         QStringLiteral("Config.bar.notifications.showNotifications"),
+                         QStringLiteral("Config.bar.notifications.timeoutMs"),
+                         QStringLiteral("Config.bar.colors"),
+                         QStringLiteral("Config.bar.colors.foreground"),
+                         QStringLiteral("Config.bar.colors.muted"),
+                         QStringLiteral("Config.bar.colors.accent"),
+                         QStringLiteral("Config.bar.colors.urgent"),
+                         QStringLiteral("Config.bar.font"),
+                         QStringLiteral("Config.bar.font.family"),
+                         QStringLiteral("Config.bar.font.size"),
+                         QStringLiteral("Config.bar.font.weight")};
 
     Config config;
     const QMetaObject* rootMeta = config.metaObject();
@@ -1009,6 +1125,22 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
          ++index) {
         const QMetaProperty property = notificationsMeta->property(index);
         actual.append(QStringLiteral("Config.bar.notifications.") + QString::fromLatin1(property.name()));
+        QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
+    }
+
+    actual.sort();
+
+    const QMetaObject* colorsMeta = config.bar()->colors()->metaObject();
+    for (int index = colorsMeta->propertyOffset(); index < colorsMeta->propertyCount(); ++index) {
+        const QMetaProperty property = colorsMeta->property(index);
+        actual.append(QStringLiteral("Config.bar.colors.") + QString::fromLatin1(property.name()));
+        QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
+    }
+
+    const QMetaObject* fontMeta = config.bar()->font()->metaObject();
+    for (int index = fontMeta->propertyOffset(); index < fontMeta->propertyCount(); ++index) {
+        const QMetaProperty property = fontMeta->property(index);
+        actual.append(QStringLiteral("Config.bar.font.") + QString::fromLatin1(property.name()));
         QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
     }
 

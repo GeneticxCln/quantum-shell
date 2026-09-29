@@ -20,7 +20,8 @@ bool isKnownTopLevelKey(std::string_view key) {
 
 bool isKnownBarKey(std::string_view key) {
     return key == "height" || key == "namespace" || key == "system" || key == "audio" ||
-           key == "network" || key == "battery" || key == "media" || key == "notifications";
+           key == "network" || key == "battery" || key == "media" || key == "notifications" ||
+           key == "colors" || key == "font";
 }
 
 // `[bar.system]`'s keys, in the file's spelling and in the order a warning names them, so that the list a
@@ -118,10 +119,11 @@ QString knownMediaKeysText()
     return names.join(QStringLiteral(", "));
 }
 
-// `[bar.notifications]`'s key, in the same shape as the tables above. One flag, for the same reason the
-// media table's is one: the readout's only configurable choice is whether it is drawn, because the
-// summary, the body and the application name are a sender's facts and not this shell's settings.
-constexpr std::array<std::string_view, 1> notificationsKeys{"show_notifications"};
+// `[bar.notifications]`'s keys, in the same shape as the tables above. One flag and one default: the flag
+// is the readout's only configurable choice — whether it is drawn — because the summary, the body and the
+// application name are a sender's facts and not this shell's settings, and the default is the toast's,
+// which is this shell's and not a sender's (the value the schema states above it).
+constexpr std::array<std::string_view, 2> notificationsKeys{"show_notifications", "timeout_ms"};
 
 bool isKnownNotificationsKey(std::string_view key)
 {
@@ -363,6 +365,34 @@ void readNotificationsTable(const toml::table& table, NotificationsConfig& notif
         }
 
         const QString path = keyPath("bar.notifications", name);
+
+        if (name == "timeout_ms") {
+            // The optional form the font table's sizes use, rather than `as_integer()`: the value's own
+            // accessor answers the number, and an absent one is the same refusal a wrong type is.
+            const std::optional<int64_t> number = node.value<int64_t>();
+            if (!number.has_value()) {
+                warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
+                                    .arg(path)
+                                    .arg(typeName(node))
+                                    .arg(notifications.timeoutMs));
+                continue;
+            }
+            // The floor is the one `MinToastTimeoutMs` states, and zero is the spec's own meaning for a
+            // notification that never expires on its own — so the two are the values accepted and everything
+            // between them and below the floor is refused rather than clamped into something readable.
+            if (*number != 0 && *number < MinToastTimeoutMs) {
+                warnings.append(QStringLiteral("%1: %2 is below the floor of %3 ms, and the only shorter "
+                                               "expiry the spec has is zero; keeping %4")
+                                    .arg(path)
+                                    .arg(*number)
+                                    .arg(MinToastTimeoutMs)
+                                    .arg(notifications.timeoutMs));
+                continue;
+            }
+            notifications.timeoutMs = static_cast<int>(*number);
+            continue;
+        }
+
         const toml::value<bool>* shown = node.as_boolean();
         if (shown == nullptr) {
             warnings.append(QStringLiteral("%1: expected a boolean, found %2; keeping %3")
@@ -379,6 +409,190 @@ void readNotificationsTable(const toml::table& table, NotificationsConfig& notif
 // default standing and says so. A key of the wrong type is reported and not coerced: `height = "32"`
 // is a mistake, and reading it as 32 would hide it.
 void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warnings);
+
+// `[bar.font]`'s keys, in the same shape and for the same reason as every table above: one list, so the names
+// a user is shown and the names this code reads cannot drift apart.
+constexpr std::array<std::string_view, 3> fontKeys{"family", "size", "weight"};
+
+bool isKnownFontKey(std::string_view key)
+{
+    return std::find(fontKeys.begin(), fontKeys.end(), key) != fontKeys.end();
+}
+
+QString knownFontKeysText()
+{
+    QStringList names;
+    for (const std::string_view key : fontKeys)
+        names.append(QString::fromUtf8(key.data(), static_cast<int>(key.size())));
+    return names.join(QStringLiteral(", "));
+}
+
+// `[bar.font]`'s values. Three keys, three rules, and each rule is the one the same kind of value is held to
+// everywhere else in this file: a string that has to have something in it, and two integers with a floor and
+// a range. A value that fails is refused by name with the value kept, which is why each branch below reads
+// the current value out before it reports.
+void readFontTable(const toml::table& table, FontConfig& font, QStringList& warnings)
+{
+    for (const auto& [key, node] : table) {
+        const std::string_view name = keyText(key);
+        if (!isKnownFontKey(name)) {
+            warnings.append(QStringLiteral("%1 is not a key this shell reads; known keys in [bar.font]: %2")
+                                .arg(keyPath("bar.font", name), knownFontKeysText()));
+            continue;
+        }
+
+        const QString path = keyPath("bar.font", name);
+
+        if (name == "family") {
+            const std::optional<std::string_view> text = node.value<std::string_view>();
+            if (!text.has_value()) {
+                warnings.append(QStringLiteral("%1: expected a string, found %2; keeping \"%3\"")
+                                    .arg(path, typeName(node), font.family));
+                continue;
+            }
+            const QString family = QString::fromUtf8(text->data(), static_cast<int>(text->size()));
+            // An empty family is refused rather than accepted as "the system's choice": Qt would take it as a
+            // request for a face named "", fall back to whatever it likes, and the file would be describing a
+            // typeface the shell never asked for. `sans-serif` is how a file says "whichever" and it says it.
+            if (family.isEmpty()) {
+                warnings.append(QStringLiteral("%1: a family cannot be empty; keeping \"%2\"")
+                                    .arg(path, font.family));
+                continue;
+            }
+            font.family = family;
+            continue;
+        }
+
+        const std::optional<int> number = node.value<int64_t>();
+        if (!number.has_value()) {
+            warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
+                                .arg(path, typeName(node))
+                                .arg(name == "size" ? font.size : font.weight));
+            continue;
+        }
+
+        if (name == "size") {
+            if (*number < MinFontSize) {
+                warnings.append(QStringLiteral("%1: %2 is below the floor of %3; keeping %4")
+                                    .arg(path)
+                                    .arg(*number)
+                                    .arg(MinFontSize)
+                                    .arg(font.size));
+                continue;
+            }
+            font.size = static_cast<int>(*number);
+            continue;
+        }
+
+        if (*number < MinFontWeight || *number > MaxFontWeight) {
+            warnings.append(QStringLiteral("%1: %2 is outside the range Qt has a weight for, %3 to %4; keeping %5")
+                                .arg(path)
+                                .arg(*number)
+                                .arg(MinFontWeight)
+                                .arg(MaxFontWeight)
+                                .arg(font.weight));
+            continue;
+        }
+        font.weight = static_cast<int>(*number);
+    }
+}
+
+// `[bar.colors]`'s keys, in the same shape and for the same reason as every table above: one list, so the
+// names a user is shown and the names this code reads cannot drift apart.
+constexpr std::array<std::string_view, 4> colorsKeys{"foreground", "muted", "accent", "urgent"};
+
+bool isKnownColorsKey(std::string_view key)
+{
+    return std::find(colorsKeys.begin(), colorsKeys.end(), key) != colorsKeys.end();
+}
+
+QString knownColorsKeysText()
+{
+    QStringList names;
+    for (const std::string_view key : colorsKeys)
+        names.append(QString::fromUtf8(key.data(), static_cast<int>(key.size())));
+    return names.join(QStringLiteral(", "));
+}
+
+// Whether `text` is a colour literal this schema accepts: a `#` and then six or eight hex digits and nothing
+// else. The comparison is written out rather than taken from `QChar::digitValue`, which answers for every
+// script's digits — an Arabic-Indic five is a digit to it and not a hex digit to this file, and a colour is a
+// number written in one alphabet.
+bool isColorLiteral(QStringView text)
+{
+    if (text.size() != ColorDigits + 1 && text.size() != ColorDigitsWithAlpha + 1)
+        return false;
+    if (text.at(0) != QLatin1Char('#'))
+        return false;
+    for (qsizetype i = 1; i < text.size(); ++i) {
+        const QChar character = text.at(i);
+        const bool isHex = (character >= QLatin1Char('0') && character <= QLatin1Char('9'))
+                           || (character >= QLatin1Char('a') && character <= QLatin1Char('f'))
+                           || (character >= QLatin1Char('A') && character <= QLatin1Char('F'));
+        if (!isHex)
+            return false;
+    }
+    return true;
+}
+
+// The field a `[bar.colors]` key names, so the four keys are read by one body rather than four copies of it.
+// A null answer cannot happen where it is called — `isKnownColorsKey` ran first — but the caller checks it
+// rather than writing through a pointer it did not check.
+QString* colorField(ColorsConfig& colors, std::string_view key)
+{
+    if (key == "foreground")
+        return &colors.foreground;
+    if (key == "muted")
+        return &colors.muted;
+    if (key == "accent")
+        return &colors.accent;
+    if (key == "urgent")
+        return &colors.urgent;
+    return nullptr;
+}
+
+// `[bar.colors]`'s values: each is a colour literal, and each is refused by name with the value kept if it is
+// not one. The rule is the schema's rather than QML's for the reason every token list here is: a string QML
+// cannot parse draws as black with a warning at load, which reads to a user like the file being ignored.
+void readColorsTable(const toml::table& table, ColorsConfig& colors, QStringList& warnings)
+{
+    for (const auto& [key, node] : table) {
+        const std::string_view name = keyText(key);
+        if (!isKnownColorsKey(name)) {
+            warnings.append(QStringLiteral("%1 is not a key this shell reads; known keys in [bar.colors]: %2")
+                                .arg(keyPath("bar.colors", name), knownColorsKeysText()));
+            continue;
+        }
+
+        const QString path = keyPath("bar.colors", name);
+        QString* field = colorField(colors, name);
+        if (field == nullptr)
+            continue;
+
+        // `value<std::string_view>()` rather than a coercing read, the rule every table here follows: a number
+        // is not a colour, and turning 123456 into a colour would be inventing a value the file did not write.
+        const std::optional<std::string_view> text = node.value<std::string_view>();
+        if (!text.has_value()) {
+            warnings.append(QStringLiteral("%1: expected a string, found %2; keeping \"%3\"")
+                                .arg(path, typeName(node), *field));
+            continue;
+        }
+
+        const QString candidate = QString::fromUtf8(text->data(), static_cast<int>(text->size()));
+        if (!isColorLiteral(candidate)) {
+            warnings.append(
+                QStringLiteral("%1: \"%2\" is not a colour; expected \"#\" and %3 hex digits, or %4 with the"
+                               " alpha first; keeping \"%5\"")
+                    .arg(path, candidate)
+                    .arg(ColorDigits)
+                    .arg(ColorDigitsWithAlpha)
+                    .arg(*field));
+            continue;
+        }
+
+        *field = candidate;
+    }
+}
 
 // `[bar.audio]` keys. Each known key is read if it is present and of a usable type; anything else leaves
 // the default standing and says so, by the same rule as every other table here.
@@ -497,7 +711,9 @@ void readAudioTable(const toml::table& table, AudioConfig& audio, QStringList& w
                                 .arg(MinVolumeStepPercent)
                                 .arg(audio.stepPercent));
             continue;
-        }        audio.stepPercent = static_cast<int>(*step);
+        }
+
+        audio.stepPercent = static_cast<int>(*step);
     }
 }
 
@@ -584,6 +800,34 @@ void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warning
                 continue;
             }
             readNotificationsTable(*notificationsTable, bar.notifications, warnings);
+            continue;
+        }
+
+        // The eighth table inside `[bar]`, and the second whose subject is how the bar looks: the typeface,
+        // size and weight its text is drawn in. A table of its own rather than more keys in `[bar.colors]`,
+        // because a font family is not a colour and a table named for colours that held typography would be
+        // misnamed from its first key.
+        if (name == "font") {
+            const toml::table* fontTable = node.as_table();
+            if (fontTable == nullptr) {
+                warnings.append(QStringLiteral("%1: expected a table, found %2; keeping the defaults for it")
+                                    .arg(path, typeName(node)));
+                continue;
+            }
+            readFontTable(*fontTable, bar.font, warnings);
+            continue;
+        }
+        // The seventh table inside `[bar]`, and the first one that is not a readout's settings: the palette
+        // the bar's widgets are drawn from. It keeps the shape for the reason the six before it have it — the
+        // values are read together and belong to the thing that draws with them.
+        if (name == "colors") {
+            const toml::table* colorsTable = node.as_table();
+            if (colorsTable == nullptr) {
+                warnings.append(QStringLiteral("%1: expected a table, found %2; keeping the defaults for it")
+                                    .arg(path, typeName(node)));
+                continue;
+            }
+            readColorsTable(*colorsTable, bar.colors, warnings);
             continue;
         }
 
@@ -739,6 +983,22 @@ std::optional<QVariant> configValueForPath(const ConfigValues& values, QStringVi
         return QVariant(values.bar.media.showMedia);
     if (path == QLatin1StringView(KeyBarNotificationsShowNotifications))
         return QVariant(values.bar.notifications.showNotifications);
+    if (path == QLatin1StringView(KeyBarNotificationsTimeoutMs))
+        return QVariant(values.bar.notifications.timeoutMs);
+    if (path == QLatin1StringView(KeyBarColorsForeground))
+        return QVariant(values.bar.colors.foreground);
+    if (path == QLatin1StringView(KeyBarColorsMuted))
+        return QVariant(values.bar.colors.muted);
+    if (path == QLatin1StringView(KeyBarColorsAccent))
+        return QVariant(values.bar.colors.accent);
+    if (path == QLatin1StringView(KeyBarColorsUrgent))
+        return QVariant(values.bar.colors.urgent);
+    if (path == QLatin1StringView(KeyBarFontFamily))
+        return QVariant(values.bar.font.family);
+    if (path == QLatin1StringView(KeyBarFontSize))
+        return QVariant(values.bar.font.size);
+    if (path == QLatin1StringView(KeyBarFontWeight))
+        return QVariant(values.bar.font.weight);
     return std::nullopt;
 }
 

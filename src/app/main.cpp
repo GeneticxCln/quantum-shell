@@ -8,12 +8,16 @@
 //
 // What it puts on screen is `qml/Main.qml`, a layer-shell bar whose workspace strip and clock read
 // `NiriService` — so the bar is a view of the live compositor, not a picture of one — and whose height
-// and namespace come from the configuration file rather than from the QML itself. The one thing here that
-// is not the compositor's is the system status, which reads /proc through `SysMonService`; its sampling is
-// started and stopped by the bar's own visibility, and that is the only wiring in this file that exists
-// because a reading has no event source (see `SysMonService.h` for why it has none).
+// and namespace come from the configuration file rather than from the QML itself. There is one bar per
+// output, and they are created by `BarHost` rather than by a single QML root object, because a layer
+// surface is created against an output (`BarHost.h`). The one thing here that is not the compositor's is
+// the system status, which reads /proc through `SysMonService`; its sampling is started and stopped by the
+// bars' own visibility, and that is the only wiring in this file that exists because a reading has no event
+// source (see `SysMonService.h` for why it has none).
+#include "app/BarHost.h"
 #include "app/Logging.h"
 #include "app/ShellCapabilities.h"
+#include "app/ToastHost.h"
 #include "audio/PipeWireService.h"
 #include "config/Config.h"
 #include "config/ConfigWatcher.h"
@@ -215,30 +219,36 @@ int main(int argc, char **argv)
     notifications.start();
 
     QQmlApplicationEngine engine;
-    // A QML file that fails to load must fail the process rather than leave a half-built shell running
-    // with no bar on screen.
-    QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
-                     [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);
-    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
-    if (engine.rootObjects().isEmpty())
+
+    // The bars, one per output. A bar component that fails to load must fail the process rather than leave a
+    // half-built shell running with no bar on screen, which is what `ready()` answers.
+    quantum::app::BarHost bars(engine, QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+    if (!bars.ready())
         return EXIT_FAILURE;
 
-    // The local IPC server, and what it is allowed to reach: the same three objects the QML is built from.
-    // The bar is the engine's root object, held weakly, because hiding a surface is the one thing a verb can
-    // do rather than read.
-    auto* barWindow = qobject_cast<QWindow*>(engine.rootObjects().constFirst());
+    // No output at all is a shell drawing nothing, and saying so is the honest outcome: niri has at least one
+    // output while it runs, so an empty set is worth a line rather than silence (the bars themselves are
+    // logged as each one is created).
+    if (bars.bars().isEmpty())
+        qCWarning(quantum::app::waylandLog) << "no output to draw a bar on";
 
-    // The sampling follows the bar. `present()` runs while the QML is being created, so the window is
-    // already visible by the time this file can see it — hence the reading of `isVisible()` as well as the
-    // connection: one covers the bar that is up before this line, the other every hide and show after it,
-    // including `qsctl bar toggle`, which reaches the window through the same object below.
-    if (barWindow != nullptr) {
-        sysMon.setActive(barWindow->isVisible());
-        QObject::connect(barWindow, &QWindow::visibleChanged, &sysMon,
-                         [&sysMon](bool visible) { sysMon.setActive(visible); });
-    }
+    // The sampling follows the bars: it runs while there is something a person can see, and any bar on screen
+    // is that. Each bar presents its surface while it is being created, so the bars are already up by the time
+    // this line runs — hence the reading of `anyVisible()` as well as the connection: one covers the bars that
+    // are up before this line, the other every hide and show after it, including `qsctl bar toggle`, which
+    // reaches them through the host below.
+    sysMon.setActive(bars.anyVisible());
+    QObject::connect(&bars, &quantum::app::BarHost::anyVisibleChanged, &sysMon,
+                     [&sysMon, &bars] { sysMon.setActive(bars.anyVisible()); });
 
-    quantum::app::ShellCapabilities capabilities(service, config, barWindow);
+    // The toasts, one per output, created when a notification arrives and withdrawn when their expiry runs
+    // out. A toast component that fails to load fails the process for the reason the bar's does: a daemon
+    // answering notifications that nothing draws is not a notification daemon anyone asked for.
+    quantum::app::ToastHost toasts(notifications, config, engine, QUrl(QStringLiteral("qrc:/qml/Toast.qml")));
+    if (!toasts.ready())
+        return EXIT_FAILURE;
+
+    quantum::app::ShellCapabilities capabilities(service, config, &bars);
     quantum::ipc::IPCServer ipc(capabilities, QString::fromLatin1(quantum::ipc::SocketName));
     QString ipcError;
     if (ipc.listen(&ipcError)) {

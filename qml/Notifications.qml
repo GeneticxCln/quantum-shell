@@ -18,6 +18,10 @@ Item {
     required property color foreground
     required property color muted
     required property string face
+    // From `[bar.font]` through `Bar.qml`, two up from the body size because this readout draws prose. The
+    // default is what this component drew before the table existed.
+    property int fontSize: 14
+    property int fontWeight: 400
 
     // Configured visibility
     property bool showNotifications: Config.bar.notifications.showNotifications
@@ -48,7 +52,8 @@ Item {
             text: NotificationService.notificationApplication
             color: root.muted
             font.family: root.face
-            font.pixelSize: 14
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
             anchors.verticalCenter: parent.verticalCenter
             visible: text.length > 0
         }
@@ -63,7 +68,8 @@ Item {
             text: NotificationService.notificationSummary.length > 0 ? NotificationService.notificationSummary : "—"
             color: root.foreground
             font.family: root.face
-            font.pixelSize: 14
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
             anchors.verticalCenter: parent.verticalCenter
 
             // A long subject is truncated rather than allowed to push the clock off the bar.

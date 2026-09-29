@@ -1,15 +1,15 @@
 import QtQuick
 import QuantumShell 1.0
 
-// The workspace strip: one capsule per workspace, in the order the model reports them, and the two
-// gestures that act on them.
+// The workspace strip: one capsule per workspace on this output, in the order the model reports them, and
+// the two gestures that act on them.
 //
-// The model is `NiriService.workspaces`, which is niri's own workspace list — so the strip reorders and
-// marks itself focused because the compositor said so, from an event, with nothing here deciding what
-// is on screen. Acting on a capsule is `NiriActions.focusWorkspaceById(id)`, the id exactly as the model
-// reports it, and the wheel is `focusWorkspaceUp()`/`focusWorkspaceDown()` — niri's own actions, so the
-// order the wheel moves through is the compositor's and not one computed from the strip. Nothing here
-// talks to a socket or holds a workspace id of its own.
+// The model is `NiriService.workspaces`, which is niri's own workspace list, filtered to the output this
+// bar is on — so the strip reorders and marks itself focused because the compositor said so, from an event,
+// with nothing here deciding what is on screen. Acting on a capsule is `NiriActions.focusWorkspaceById(id)`,
+// the id exactly as the model reports it, and the wheel is `focusWorkspaceUp()`/`focusWorkspaceDown()` —
+// niri's own actions, so the order the wheel moves through is the compositor's and not one computed from
+// the strip. Nothing here talks to a socket or holds a workspace id of its own.
 Item {
     id: root
 
@@ -17,11 +17,31 @@ Item {
     // counting the bar's children.
     objectName: "workspaces"
 
+    // Which output this strip belongs to, named as niri names it. The bar assigns it from the output its own
+    // surface is on.
+    property string outputName
+
+    // The strip draws this output's workspaces, and the filter is niri's own field rather than a deduction
+    // from anything here: a workspace names the output it is on, so a bar on one monitor draws the
+    // workspaces of that monitor and not the ones the person is looking at on the other.
+    //
+    // A workspace niri reports with no output — one that is on no monitor at all — therefore appears on none
+    // of the bars, which is the same statement rather than a gap: the strip on an output shows that output's
+    // workspaces, and a workspace nothing is showing is not on it. An empty `outputName` is the component
+    // loaded on its own rather than placed on an output (`qml/Bar.qml`), and then the whole model is the
+    // honest reading — there is no output whose set could be meant.
+    readonly property var workspaces: outputName === ""
+                                      ? NiriService.workspaces
+                                      : NiriService.workspaces.filter(workspace => workspace.output === outputName)
+
     property color foreground
     property color muted
     property color accent
     property color urgent
     property string face
+    // From `[bar.font]` through `Bar.qml`; the defaults are what this component drew before the table existed.
+    property int fontSize: 12
+    property int fontWeight: 400
 
     // The strip is the part of the bar a pointer can land on, so the root takes its width from it: an
     // Item with no width of its own has none, and a pointer event is hit-tested against the bounds of the
@@ -56,7 +76,7 @@ Item {
         }
 
         Repeater {
-            model: NiriService.workspaces
+            model: root.workspaces
 
             delegate: Rectangle {
                 id: capsule
@@ -85,7 +105,8 @@ Item {
                                                         : String(capsule.modelData.idx)
                     color: capsule.focused ? "#12131a" : root.foreground
                     font.family: root.face
-                    font.pixelSize: 12
+                    font.pixelSize: root.fontSize
+                    font.weight: root.fontWeight
                 }
 
                 MouseArea {
@@ -126,7 +147,8 @@ Item {
             text: "niri"
             color: root.muted
             font.family: root.face
-            font.pixelSize: 12
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
         }
     }
 }

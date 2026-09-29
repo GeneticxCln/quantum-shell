@@ -32,6 +32,19 @@
       }
     },
     {
+      "name": "session",
+      "displayName": "Debug build with the tests that need a live machine registered",
+      "binaryDir": "${sourceDir}/build/session",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "environment": {
+        "QS_NIRI_SESSION_TESTS": "1",
+        "QS_NIRI_RESTART_TESTS": "1",
+        "QS_AUDIO_TESTS": "1"
+      }
+    },
+    {
       "name": "ci",
       "displayName": "Release build used by continuous integration",
       "binaryDir": "${sourceDir}/build/ci",
@@ -54,6 +67,10 @@
       "configurePreset": "asan"
     },
     {
+      "name": "session",
+      "configurePreset": "session"
+    },
+    {
       "name": "ci",
       "configurePreset": "ci"
     }
@@ -74,6 +91,23 @@
       "configurePreset": "asan",
       "execution": {
         "jobs": 4
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "session",
+      "configurePreset": "session",
+      "execution": {
+        "jobs": 4,
+        "noTestsAction": "error"
+      },
+      "filter": {
+        "include": {
+          "name": "^(niri-live-(action|layershell|restart|shell-restart)-test)$"
+        },
+        "match": "regex"
       },
       "output": {
         "outputOnFailure": true

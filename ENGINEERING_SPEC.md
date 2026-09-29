@@ -50,7 +50,10 @@ Renaming anything here breaks scripts, QML files, or clients. Approval required.
 ### 2.1 Layer-shell namespaces
 
 Prefix `quantum-shell-` (`LayerNamespacePrefix`, mirrored in
-`LayerShellIntegration.cpp`). Only surface today: `quantum-shell-bar`. Enforced twice:
+`LayerShellIntegration.cpp`). Two surfaces today: `quantum-shell-bar` (the bar,
+`qml/Main.qml`) and `quantum-shell-toast` (the toast, `qml/Toast.qml` — a literal
+in the QML rather than a configured key, because a notification is a surface of its
+own kind and not a readout's setting). Enforced twice:
 schema refuses a configured value outside the prefix; integration refuses the surface
 (no role, record on `quantum.shell.wayland`).
 
@@ -79,7 +82,7 @@ empty); refusal `{"version":1,"ok":false,"error":"<reason>"}` (never blank).
 | `version` | `name`, `shell` (both from the build, not retyped), `protocol` | app identity |
 | `state` | `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` — `NiriService` property names verbatim | `ShellCapabilities::state` |
 | `config get <path>` | `path`, `value` | `configValueForPath` on validated values |
-| `bar toggle` | `visible` (post-toggle state) | bar window's own visibility; null bar answers `false` |
+| `bar toggle` | `visible` (post-toggle state) | every bar's own visibility, moved together: hides them all if any is showing and shows them all if none is; no bars at all answers `false` |
 
 ### 2.4 `qsctl` CLI
 
@@ -117,6 +120,14 @@ File: `$XDG_CONFIG_HOME/quantum-shell/config.toml` (`~/.config/...` fallback).
 | `[bar.battery] show_time` | `bar.battery.show_time` | `true` | strict boolean | yes |
 | `[bar.media] show_media` | `bar.media.show_media` | `true` | strict boolean | yes |
 | `[bar.notifications] show_notifications` | `bar.notifications.show_notifications` | `true` | strict boolean | yes |
+| `[bar.notifications] timeout_ms` | `bar.notifications.timeout_ms` | `5000` | an integer of at least 500 ms, or the spec's `0` (never expire); anything else below the floor refused | yes, and it is the value a sender's `-1` resolves to |
+| `[bar.colors] foreground` | `bar.colors.foreground` | `"#c8cad8"` | colour literal: `#` and 6 hex digits, or 8 with the alpha first; anything else refused by name | yes, repaints what reads it |
+| `[bar.colors] muted` | `bar.colors.muted` | `"#5a5d70"` | colour literal, same rule | yes |
+| `[bar.colors] accent` | `bar.colors.accent` | `"#7aa2f7"` | colour literal, same rule | yes |
+| `[bar.colors] urgent` | `bar.colors.urgent` | `"#f7768e"` | colour literal, same rule | yes |
+| `[bar.font] family` | `bar.font.family` | `"Inter"` | a non-empty string; an empty one refused, since `sans-serif` is how a file says "whichever" | yes |
+| `[bar.font] size` | `bar.font.size` | `12` | an integer from 1 up, the floor `bar.height` has and for the same reason | yes, reflows every readout |
+| `[bar.font] weight` | `bar.font.weight` | `400` | an integer from 100 to 900, Qt's own weight scale | yes |
 
 Rules: unknown keys warn with full path; missing keys keep defaults; wrong type or
 refused value warns naming key, value found, and value kept (never silent, never
@@ -125,7 +136,7 @@ coerced). Unusable file (non-TOML, bad `schema_version`) applies nothing.
 ### 2.6 QML singletons (module `QuantumShell 1.0`, one place: `QmlModule.h`)
 
 | Name | Properties / calls | Notes |
-| `Config` | `bar.height`, `bar.layerNamespace`, `bar.system.*` (4), `bar.audio.*` (4), `bar.network.*` (3), `bar.battery.*` (3), `bar.media.*` (1), `bar.notifications.*` (1); per-leaf NOTIFY; `bar`/`system`/`audio`/`network`/`battery`/`media`/`notifications` objects CONSTANT | no engine reload, ever |
+| `Config` | `bar.height`, `bar.layerNamespace`, `bar.system.*` (4), `bar.audio.*` (4), `bar.network.*` (3), `bar.battery.*` (3), `bar.media.*` (1), `bar.notifications.*` (1), `bar.colors.*` (4), `bar.font.*` (3); per-leaf NOTIFY; `bar`/`system`/`audio`/`network`/`battery`/`media`/`notifications`/`colors`/`font` objects CONSTANT | no engine reload, ever |
 | `NiriService` | `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` — each with NOTIFY, emitted only on real change | absent = empty map/list, never plausible zero; ids as text |
 | `NiriActions` | `focusWorkspaceById(idText)`, `focusWorkspaceUp()`, `focusWorkspaceDown()`; signal `actionFailed` | every non-`handled` outcome also logged |
 | `SysMonService` | `cpuPercent`, `cpuAvailable`, `memoryUsedKb`, `memoryTotalKb`, `memoryAvailableKb`, `memoryAvailable`, `active`, `sampleIntervalMs` | `cpuPercent` 0 while `cpuAvailable` false; read the flags |
@@ -133,8 +144,8 @@ coerced). Unusable file (non-TOML, bad `schema_version`) applies nothing.
 | `NetworkService` | `available`, `state`, `connectionName`, `interfaceName`, `deviceKind`, `hasStrength`, `strength`, `connectivity` | `state`/`deviceKind`/`connectivity` are tokens (`disconnected\|connecting\|connected`, `wifi\|ethernet\|other`, `none\|portal\|limited\|full`); `connectivity` is empty when the daemon has not said, which is not `full`. `strength` 0 while `hasStrength` false — read the flag. No `Q_INVOKABLE`: the shell has no control centre to open, so there is no gesture to offer |
 | `BatteryService` | `available`, `present`, `onBattery`, `hasPercentage`, `percentage`, `state`, `warning`, `hasTimeRemaining`, `timeRemaining` | all 0/empty/false while `available` false; `percentage`/`timeRemaining` 0/empty while their `has*` flag false; `present` false on desktop (no battery). `state` tokens: `unknown\|charging\|discharging\|fully-charged\|empty\|pending-charge\|pending-discharge`. `warning` tokens: `unknown\|none\|discharging\|low\|critical\|action`. No `Q_INVOKABLE`: the shell has no power panel to open |
 | `MediaService` | `available`, `title`, `artist`, `playerName`, `playbackStatus` | all empty/false while `available` false — the widget draws nothing, not a dash, because "no media" is a complete reading; `playbackStatus` tokens: `playing\|paused\|stopped` (empty = unknown). No player or player with no track = `available` false. No `Q_INVOKABLE`: transport controls are Phase 2 |
-| `NotificationService` | `notificationAvailable`, `notificationSummary`, `notificationBody`, `notificationApplication`, `notificationCount` | all empty/false while `notificationAvailable` false; `notificationSummary` is the sender's own text, `notificationBody` is the sender's own body, `notificationApplication` is the sender's own application name. `notificationCount` is a running total for the life of the service: it counts what this process has been sent, so it is deliberately **not** withdrawn with the reading when the name is released, and no widget draws it today. Every one of them moves together and only on a real change: a repeat registration emits nothing, and the queued handover publishes availability as soon as the bus makes the name the shell's |
-| `LayerShellWindow` | `layer`, `anchors`, `exclusiveZone`, `keyboardInteractivity`, `layerNamespace`, `margins`; `present()` | QML calls `present()`, not `show()`; set all props first |
+| `NotificationService` | `notificationAvailable`, `notificationSummary`, `notificationBody`, `notificationApplication`, `notificationCount`, `notificationExpireTimeout` | all empty/false while `notificationAvailable` false; `notificationSummary` is the sender's own text, `notificationBody` is the sender's own body, `notificationApplication` is the sender's own application name. `notificationCount` is a running total for the life of the service: it counts what this process has been sent, so it is deliberately **not** withdrawn with the reading when the name is released, and no widget draws it today. `notificationExpireTimeout` is the sender's own `expire_timeout`, published as the spec hands it and **not** resolved here: `-1` is the spec's use-the-default and which default that is, `0` is never-expire, and a positive count is milliseconds — the toast's business, not a daemon's. Every one of them moves together and only on a real change: a repeat registration emits nothing, and the queued handover publishes availability as soon as the bus makes the name the shell's |
+| `LayerShellWindow` | `layer`, `anchors`, `exclusiveZone`, `keyboardInteractivity`, `layerNamespace`, `margins`; `present()` | `present()` is called by `BarHost`, not from QML, and only after the window's screen is assigned: showing the window is what assigns the layer role against an output and the role is assigned once, and the output cannot be chosen from QML because `screen` is not a QML property of a `QQuickWindow`. Set all props first |
 
 Every row above is checked against code by `spec-values-test`, in both directions: every
 name a row states must exist and every property and `Q_INVOKABLE` the class declares must
@@ -177,10 +188,10 @@ journal otherwise (`journalctl --user _COMM=quantum-shell`). Secrets are never l
 
 ### 2.8 Test and environment names (declared once, `tests/public_names.cmake`)
 
-41 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
+42 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
 `slot-order-independence`, `slot-order-randomised-shard-{1..4}`, `niri-live-test`,
 `niri-live-stream-test`, `niri-live-action-test`, `niri-live-layershell-test`,
-`niri-live-restart-test`, `niri-live-shell-restart-test`, `audio-live-test`,
+`niri-live-restart-test`, `niri-live-shell-restart-test`, `niri-live-scale-test`, `audio-live-test`,
 `network-live-test`, `notification-test`, `niri-version-test`, `niri-ipc-test`, `niri-event-stream-test`,
 `niri-state-test`, `niri-actions-test`, `niri-output-test`,
 `niri-keyboard-layouts-test`, `niri-outputs-test`, `niri-service-test`,
@@ -188,8 +199,8 @@ journal otherwise (`journalctl --user _COMM=quantum-shell`). Secrets are never l
 `audio-test`, `network-test`, `battery-test`, `media-test`, `ipc-protocol-test`, `ipc-server-test`,
 `ipc-capabilities-test`, `app-logging-test`, `snapshot-reconcile-test`,
 `spec-values-test`, `bar-interaction-test`.
-10 env vars: `NIRI_SOCKET`, `QS_NIRI_SESSION_TESTS`, `QS_NIRI_RESTART_TESTS`,
-`QS_AUDIO_TESTS`, `QS_TEST_ORDER_SEED`, `QS_TEST_ORDER_COVERAGE`,
+12 env vars: `NIRI_SOCKET`, `DESTDIR`, `QS_NIRI_SESSION_TESTS`, `QS_NIRI_RESTART_TESTS`,
+`QS_NIRI_SCALE_TESTS`, `QS_AUDIO_TESTS`, `QS_TEST_ORDER_SEED`, `QS_TEST_ORDER_COVERAGE`,
 `QS_TEST_ORDER_PASSES`, `QS_MIN_PAIR_COVERAGE`, `QS_WORST_TRIPLES_SHOWN`,
 `QS_WORST_QUADS_SHOWN`. A documented `ctest -R` selecting nothing exits 0 — the
 two-sided public-names check is what catches that, and this file is one of the three
@@ -214,6 +225,39 @@ properties those nested objects actually declare. (The count in this sentence is
 figure the test reads, and it had been wrong since the volume readout landed: it said `bar.audio.*` was
 2 when the table was reading 3 keys. Corrected here with the fourth, which is the one thing this
 document is for.)
+
+### 2.9 Installation layout
+
+What `cmake --install` places, and the one thing about it that is a contract rather
+than a packaging detail:
+
+| Path | What it is |
+| --- | --- |
+| `${CMAKE_INSTALL_BINDIR}/quantum-shell` | the shell |
+| `${CMAKE_INSTALL_BINDIR}/qsctl` | its client (`§2.4`) |
+| `${CMAKE_INSTALL_LIBDIR}/libquantum-shell-wayland.so` | the layer-shell client, loaded by both the shell and the plugin below it |
+| `${QT6_INSTALL_PLUGINS}/wayland-shell-integration/libquantum-shell-layer-shell.so` | the shell-integration plugin, in the directory Qt resolves `QT_WAYLAND_SHELL_INTEGRATION=quantum-shell` against |
+| `${CMAKE_INSTALL_DATADIR}/dbus-1/services/org.freedesktop.Notifications.service` | D-Bus activation for the daemon the shell is |
+| `${CMAKE_INSTALL_DATADIR}/licenses/QuantumShell/LICENSE` | the licence |
+| `${CMAKE_INSTALL_DOCDIR}/README.md` | the README |
+
+The plugin's `INSTALL_RPATH` is `$ORIGIN/` plus the relative path from the plugin
+directory to `CMAKE_INSTALL_LIBDIR`, computed from those two variables rather than
+written as `../..`. CMake's generic `$ORIGIN:$ORIGIN/../lib` resolves against the
+plugin's own directory, which is three below `${CMAKE_INSTALL_LIBDIR}`, so the default
+names a directory that does not exist and the plugin loads without the library it is
+built on. `ldd` on the installed plugin is what found that, not the build tree.
+
+The activation file's `Exec` path is resolved at **install** time, not at configure
+time, so `cmake --install --prefix <p>` names the prefix the files actually landed in. A
+path written at configure time would name the build's own prefix and fail silently the
+first time a notification arrives before the shell is up. CMake applies `DESTDIR` to its
+own install commands and not to a file this project writes itself, so the install rule
+applies it — which is why `DESTDIR` is declared among the public names above.
+
+No Nix flake is installed or provided: it cannot be built, installed or run on the
+machine this was developed on, and an unverifiable packaging file is not one this project
+ships. `packaging/PKGBUILD` is verified by building the package.
 
 ---
 
@@ -335,7 +379,24 @@ owned buffer (pod dangles never), null on overflow — caller honors null. Gestu
 requests; the daemon's answer is what gets drawn, so the bar never drifts from the
 mixer. Click with no reading is refused + logged.
 
-### 3.5 Wayland / bar (`src/wayland/`, `qml/`, `src/app/main.cpp`)
+### 3.5 Wayland / bar (`src/wayland/`, `qml/`, `src/app/BarHost.*`, `src/app/main.cpp`)
+
+One bar per output, and it is one per *enabled* output: `BarHost` (`src/app/BarHost.*`)
+instantiates `qml/Main.qml` once for every screen Qt reports and keeps the set in step with
+`QGuiApplication::screenAdded`/`screenRemoved`, so a monitor plugged in or turned off is a
+bar appearing or going away without a poll. The screen is assigned from C++ with
+`QWindow::setScreen` and the surface is presented after it, because a layer surface is
+created against an output when the window is mapped and the role is assigned once; the
+output's *name* arrives as the `outputName` initial property, which is the one thing the QML
+cannot work out for itself. `BarHost::toggleAll()` moves every bar and answers the state they
+are all in afterwards, `anyVisible()` is the sampling gate, and both are read from the
+windows rather than from a copy — a bar hidden and shown again goes through
+`LayerShellWindow::setSurfaceVisible`, which applies the same empty-namespace refusal
+`present()` does. Where a bar's workspaces come from: `Workspaces.qml` filters
+`NiriService.workspaces` on the model's own `output` field, so a bar draws its own output's
+sets and not the other monitor's, and a workspace niri reports with no output appears on no
+bar (`qml/Workspaces.qml` states the reasoning). With no `outputName` the strip draws the
+whole model, which is the component loaded on its own.
 
 Route 1: own `zwlr_layer_shell_v1` bindings on QtWaylandClient's private
 shell-integration interface (`QT_WAYLAND_SHELL_INTEGRATION=quantum-shell`);
@@ -372,10 +433,11 @@ singletons, never by QML reaching into C++ internals.
 Composition order (`main.cpp`): logging → register `LayerShellWindow` → config
 sync-read + watcher → SysMon register + cadence wiring → audio register + step
 wiring → IPC/stream/state/outputs + `observe` (once each; outputs first-wired on
-first `attached`) → service/actions singletons → reconnect armed → engine loads
-`qrc:/Main.qml` (load failure = exit 1) → sampling follows bar visibility (covers
-`qsctl bar toggle`) → IPC listen (bind failure warns, shell still draws — a second
-shell is useful) → `audio.start()` → `reconnect.start()` → `exec()`.
+first `attached`) → service/actions singletons → reconnect armed → `BarHost`
+instantiates `qrc:/qml/Main.qml` per screen (a component that does not load = exit 1;
+no output at all warns and draws nothing) → sampling follows whether *any* bar is
+visible (covers `qsctl bar toggle`) → IPC listen (bind failure warns, shell still draws —
+a second shell is useful) → `audio.start()` → `reconnect.start()` → `exec()`.
 
 ### 3.6 IPC server/client (`src/ipc/`, `src/app/ShellCapabilities.*`)
 
@@ -390,7 +452,10 @@ same objects QML reads (service values verbatim, schema resolver, weak bar point
 
 Default `ctest --preset dev` (jobs 4): gate + order checks + 25 unit binaries, no
 session. Live layers need a session and opt-ins; acting tests take the
-`niri-desktop` resource lock and never run two at once.
+`niri-desktop` resource lock and never run two at once. `ctest --preset session`
+registers those opt-ins and runs the four tests that need a compositor, refusing
+when none of them is registered. `ctest --preset dev -R niri-live-scale-test`
+registers the scale test, which starts a compositor of its own and takes no lock.
 
 | Claim | Proved by | Run |
 | --- | --- | --- |
@@ -454,11 +519,14 @@ config path, socket bind result) on `quantum.shell`.
   `CloseNotification` only logs — the readout keeps the summary it was sent, because a close does not
   make the text that was in it into something else — and the ids the daemon issues are not tracked, so a
   close for an id it never sent is accepted too. `GetCapabilities` advertises `body` and `body-markup`  and nothing else: the body is carried and published exactly as sent, nothing strips or parses it, and
-  nothing draws it yet — the readout draws the application name and the summary; `actions`, `icons`,
-  `hints` and `expire_timeout` are ignored, so a sender cannot offer a button and nothing in the shell
-  acts on a notification after it arrives. The readout
+  nothing draws it yet. `actions`, `icons` and `hints` are ignored, so a sender cannot offer a button and
+  nothing in the shell acts on a notification after it arrives; `expire_timeout` is **not** ignored — it is
+  published as the spec hands it (`notificationExpireTimeout`, `§2.6`) and resolved by the toast, which is
+  what a `-1`, a `0` and a positive count each mean. The readout
   draws one notification — the sender's application name and summary — and there is no history, while
-  the planned `qml/notification/` toast stack and `History.qml` are not landed at all. A shell that is
+  the toast stack **is** landed: `qml/Toast.qml` and `src/app/ToastHost.*`, one surface per output,
+  created when a notification arrives and withdrawn when its expiry runs out (QUANTUM_SHELL.md §
+  Development Roadmap § Phase 2). `History.qml` and a history list are not landed at all. A shell that is
   queued behind another notifier publishes nothing and draws nothing, which is a life the shell can
   spend entirely on a desktop that runs its own daemon — measured on the author's, where `swaync` holds
   the name and the shell's own record says so.

@@ -1,5 +1,21 @@
 name: CI
 
+# There is deliberately no job for the tests that act on a compositor session
+# (`niri-live-{action,layershell,restart,shell-restart}-test`). A GitHub-hosted runner has no Wayland
+# session, no display and no DRM device, and niri cannot be run headless: it needs a compositor to be
+# nested inside or a device to drive, and `niri --help` offers no backend that avoids both. Registering
+# them anyway would be worse than leaving them out, because they skip themselves with a reason when
+# `$NIRI_SOCKET` is unset — the job would pass having checked nothing, which is the failure
+# `public-names-test` exists to catch in a `ctest -R` that matches no test. They are run where a session
+# exists instead: `ctest --preset session`, which registers the four and exits 8 rather than reporting a
+# pass when none of them is registered. The one live test that needs no compositor is `audio-live-test`,
+# and the job below does carry it: it installs the `pipewire` package and gives the test a scratch
+# `XDG_RUNTIME_DIR`, both of which a runner image lacks and both of which the test needs
+# (QUANTUM_SHELL.md § Quality Gates, Testing and CI § CI). What no job carries is the layer-shell path,
+# which needs a compositor and therefore a runner that has one — a self-hosted machine with a session, or
+# a compositor the suite speaks the protocol to from inside its own process, which is the only way a
+# hosted runner could exercise the protocol at all.
+
 on:
   push:
   pull_request:
@@ -73,6 +89,20 @@ jobs:
 
       - name: Test
         run: ctest --preset ci
+
+      # The one live test a hosted runner can carry, because it needs no compositor: it starts a PipeWire
+      # daemon of its own in a scratch directory and drives it through pw-cli, pw-metadata and pw-dump while
+      # the shell's own client is the code under test. What it does need is the `pipewire` package and an
+      # `XDG_RUNTIME_DIR`, which a runner image has neither of — PipeWire refuses to create its socket
+      # without a runtime dir ("name ... is not an absolute path and no runtime dir found"), which is what
+      # this step's export is for, verified by running the test with a scratch runtime dir on the machine
+      # this was developed on.
+      - name: Audio against a real daemon
+        run: |
+          sudo apt-get install -y pipewire
+          export XDG_RUNTIME_DIR=$(mktemp -d)
+          QS_AUDIO_TESTS=1 cmake --preset ci
+          ctest --preset ci -R audio-live-test
 
   sanitizers:
     name: sanitizers

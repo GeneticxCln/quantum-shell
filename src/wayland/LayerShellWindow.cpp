@@ -61,6 +61,18 @@ void LayerShellWindow::setMargins(const QMargins &margins)
 
 void LayerShellWindow::present()
 {
+    setSurfaceVisible(true);
+}
+
+void LayerShellWindow::setSurfaceVisible(bool visible)
+{
+    if (!visible) {
+        // Hiding needs no check: a surface that was refused was never created, and hiding a window that is
+        // already hidden is nothing.
+        hide();
+        return;
+    }
+
     if (isVisible())
         return;
     if (m_layerNamespace.isEmpty()) {

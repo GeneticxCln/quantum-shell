@@ -63,6 +63,13 @@ class NotificationService : public QObject {
     // No widget draws it today.
     Q_PROPERTY(int notificationCount READ notificationCount NOTIFY notificationChanged)
 
+    // The expiry the sender asked for, the spec's `expire_timeout` argument, published as it was sent and
+    // not resolved here: `-1` is the spec's "use the default" and *which* default is the toast's business
+    // (`Config.bar.notifications.timeoutMs`), `0` is the spec's never-expire, and a positive count is
+    // milliseconds. A daemon that clamped a sender's length to its own would be answering a notification it
+    // was not sent.
+    Q_PROPERTY(int notificationExpireTimeout READ notificationExpireTimeout NOTIFY notificationChanged)
+
 public:
     // The bus to register on, defaulting to the session's because that is where the desktop's senders
     // are. A test passes its own `dbus-daemon` so its claims are about this shell rather than about
@@ -76,6 +83,7 @@ public:
     QString notificationBody() const { return notificationBody_; }
     QString notificationApplication() const { return notificationApplication_; }
     int notificationCount() const { return notificationCount_; }
+    int notificationExpireTimeout() const { return notificationExpireTimeout_; }
 
     // Owns `org.freedesktop.Notifications` on the bus it was constructed with, or joins the queue for
     // it. Called by the composition root once, *before* the QML engine loads rather than after, because
@@ -142,6 +150,7 @@ private:
     QString notificationBody_;
     QString notificationApplication_;
     int notificationCount_ = 0;
+    int notificationExpireTimeout_ = 0;
 };
 
 }  // namespace quantum::dbus

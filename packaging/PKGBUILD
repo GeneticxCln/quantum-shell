@@ -1,0 +1,54 @@
+# Maintainer: QuintonTitus
+#
+# The package this repository ships, built from the source it is in. Every dependency it needs is packaged
+# on Arch already, which is why the build is told to use the system copies
+# (`-DQUANTUM_SHELL_SYSTEM_DEPS=ON`): without it the build fetches a second toml++ into its own tree beside
+# the packaged one, and that flag is what forbids it for a distro build (CMakeLists.txt, ENGINEERING_SPEC.md
+# §1).
+#
+# The artifacts this installs are stated in ENGINEERING_SPEC.md §2.9. Two of them are the reason the package
+# is more than a binary: the shell-integration plugin has to land in Qt's own plugin directory or Qt never
+# loads it, and the D-Bus activation file is what lets the session's bus start the shell when a notification
+# arrives before it is running.
+#
+# `-git` rather than a release, because there is no release yet: the version the package reports is derived
+# from the checkout, so it moves with the branch. A versioned package waits on the release tarball Phase 8
+# still owes (QUANTUM_SHELL.md § Installation and Packaging).
+
+pkgname=quantum-shell-git
+pkgver=r10.1e02310
+pkgrel=1
+pkgdesc="Native Wayland desktop bar for the niri compositor"
+arch=('x86_64')
+url="https://github.com/GeneticxCln/quantum-shell"
+license=('MIT')
+# The floors are the ones ENGINEERING_SPEC.md §1 states, and they are constraints here rather than left to
+# the configure step because a Qt below 6.11 fails at a point that does not name the version as the problem.
+depends=('qt6-base>=6.11' 'qt6-declarative>=6.11' 'qt6-wayland>=6.11' 'pipewire>=1.6')
+makedepends=('cmake>=3.31' 'ninja' 'git' 'tomlplusplus>=3.4' 'wayland')
+provides=('quantum-shell')
+conflicts=('quantum-shell')
+source=("$pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$pkgname"
+    printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cd "$pkgname"
+    # The prefix is set here rather than at install time so every path the build itself computes is the
+    # installed one. The activation file resolves its own path at install time and follows DESTDIR, which is
+    # the one file that could disagree (ENGINEERING_SPEC.md §2.9).
+    cmake -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DQUANTUM_SHELL_SYSTEM_DEPS=ON
+    cmake --build build
+}
+
+package() {
+    cd "$pkgname"
+    DESTDIR="$pkgdir" cmake --install build
+}

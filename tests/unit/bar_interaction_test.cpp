@@ -266,6 +266,9 @@ QString drawsUsedOfTotal(const SysMonService& service)
 constexpr quint64 firstWorkspaceId = 6;
 constexpr quint64 secondWorkspaceId = 7;
 constexpr quint64 thirdWorkspaceId = 8;
+// The workspace the strip's own-output slot puts on a second monitor. It is a workspace of that slot's own
+// because no other slot has anything to say about a workspace on an output none of the others name.
+constexpr quint64 otherOutputWorkspaceId = 9;
 
 // The bar's own size. The width is the output's in the shell and the height is `Config.bar.height`, and both
 // matter here rather than being decoration: the right group is anchored to the bar's trailing edge, so a bar
@@ -311,6 +314,8 @@ private slots:
     void clickingACapsuleFocusesTheWorkspaceItNames();
     void clickingTheFocusedCapsuleAsksTheCompositorForNothing();
     void theWheelMovesThroughNirisOwnWorkspaces();
+    void theStripDrawsOnlyTheWorkspacesOfItsOwnOutput();
+    void thePaletteIsTheOneTheFileSets();
 
     void theBarPlacesItsWidgetsInNamedGroups();
     void aGroupGivesEveryWidgetOfItTheSameHeightAndOrder();
@@ -340,6 +345,9 @@ private:
     // The delegate the strip built for `index`, in the order the model reports: the item a pointer would
     // land on, found by walking what the real component produced rather than by counting pixels.
     QQuickItem* capsuleAt(int index);
+    // How many capsules the strip built. Counted rather than compared one at a time because the claim the
+    // filter makes is about the whole set: which workspaces are on this bar, and therefore which are not.
+    int capsuleCount();
     // Any item of the loaded bar by name — a group, or a widget inside one. Found by name rather than by
     // walking the bar's children, because which child something happens to be is not part of what is claimed
     // about it. It is also how a widget's own text is read without knowing its type: a `Text` is a private
@@ -564,6 +572,28 @@ QQuickItem* BarInteractionTest::capsuleAt(int index) {
     return capsules.at(index);
 }
 
+int BarInteractionTest::capsuleCount() {
+    auto* root = qobject_cast<QQuickItem*>(bar_.get());
+    if (root == nullptr) {
+        return -1;
+    }
+    QQuickItem* strip = root->findChild<QQuickItem*>(QStringLiteral("strip"));
+    if (strip == nullptr) {
+        return -1;
+    }
+    // The row's children are the capsules plus the `Repeater` itself, which is an item of its own in Qt 6 and
+    // one more entry than there are workspaces. What tells a capsule apart from the repeater is the property
+    // every delegate is given and the repeater has not: the model entry it was built for.
+    int capsules = 0;
+    for (QQuickItem* child : strip->childItems()) {
+        if (child->property("modelData").isValid())
+            ++capsules;
+    }
+    // -1 rather than 0 for a strip that cannot be found, so a caller waiting for a count of no capsules
+    // cannot pass by looking at a component that built nothing at all.
+    return capsules;
+}
+
 QQuickItem* BarInteractionTest::itemNamed(const QString& name) {
     return bar_ == nullptr ? nullptr : bar_->findChild<QQuickItem*>(name);
 }
@@ -709,6 +739,113 @@ void BarInteractionTest::theWheelMovesThroughNirisOwnWorkspaces() {
     QTest::wheelEvent(window_.get(), overStrip, QPoint(0, 120));
     QTRY_VERIFY_WITH_TIMEOUT(requestsSent() > beforeUp, 5000);
     QCOMPARE(lastRequest(), QStringLiteral(R"({"Action":{"FocusWorkspaceUp":{}}})"));
+}
+
+void BarInteractionTest::theStripDrawsOnlyTheWorkspacesOfItsOwnOutput() {
+    // A workspace names the output it is on, and that is what tells two bars apart: the strip on a bar draws
+    // the workspaces of the output that bar is on, and none of the ones a person is looking at on the other
+    // monitor. The set below is fed over the same event the shell is fed, with two of the three workspaces on
+    // one output and the third on another, and the bar's own output is then set to each of them in turn — the
+    // property `src/app/BarHost.cpp` assigns from the output each surface was created against.
+    server_.writeRawTo(1, qstest::eventLine(
+                              QStringLiteral("WorkspacesChanged"),
+                              QJsonObject{{QStringLiteral("workspaces"),
+                                           qstest::array({qstest::workspaceObject(
+                                                              firstWorkspaceId, 1,
+                                                              QStringLiteral("DP-3"), true, true),
+                                                          qstest::workspaceObject(
+                                                              secondWorkspaceId, 2,
+                                                              QStringLiteral("DP-3")),
+                                                          qstest::workspaceObject(
+                                                              otherOutputWorkspaceId, 3,
+                                                              QStringLiteral("HDMI-A-1"))})}}));
+    QTRY_COMPARE_WITH_TIMEOUT(service_->workspaces().size(), 3, 5000);
+
+    // No output: the bar was loaded on its own rather than placed on one, which is how this binary loads it
+    // and how the component is loaded when it is loaded without a shell around it. The whole model is then the
+    // honest reading, because there is no output whose set could be meant.
+    QVERIFY2(bar_->setProperty("outputName", QString()), "the bar has no outputName to set");
+    QTRY_COMPARE_WITH_TIMEOUT(capsuleCount(), 3, 5000);
+
+    // On the first output: its own two workspaces, and not the one on the other monitor.
+    QVERIFY(bar_->setProperty("outputName", QStringLiteral("DP-3")));
+    QTRY_COMPARE_WITH_TIMEOUT(capsuleCount(), 2, 5000);
+
+    // And on the second: one capsule, and it is that output's own workspace rather than whichever capsule
+    // happened to be first — acting on it reaches the compositor as the id niri gave *that* workspace.
+    QVERIFY(bar_->setProperty("outputName", QStringLiteral("HDMI-A-1")));
+    QTRY_COMPARE_WITH_TIMEOUT(capsuleCount(), 1, 5000);
+
+    QQuickItem* capsule = capsuleAt(0);
+    QVERIFY2(capsule != nullptr, "the strip on the second output built no capsule, so there is nothing to click");
+    const int before = requestsSent();
+    QTest::mouseClick(window_.get(), Qt::LeftButton, Qt::NoModifier, centreOf(capsule).toPoint());
+    QTRY_VERIFY_WITH_TIMEOUT(requestsSent() > before, 5000);
+    QCOMPARE(lastRequest(),
+             QStringLiteral(R"({"Action":{"FocusWorkspace":{"reference":{"Id":9}}}})"));
+
+    // Both the model and the bar's output are put back to the state the slots around this one read, so no slot
+    // reads another's edit: the shell's own set of three workspaces, on the bar that was loaded on its own.
+    server_.writeRawTo(1, qstest::eventLine(
+                              QStringLiteral("WorkspacesChanged"),
+                              QJsonObject{{QStringLiteral("workspaces"),
+                                           qstest::array({qstest::workspaceObject(
+                                                              firstWorkspaceId, 1,
+                                                              QStringLiteral("DP-3"), true, true),
+                                                          qstest::workspaceObject(
+                                                              secondWorkspaceId, 2,
+                                                              QStringLiteral("DP-3")),
+                                                          qstest::workspaceObject(
+                                                              thirdWorkspaceId, 3,
+                                                              QStringLiteral("DP-3"))})}}));
+    QTRY_COMPARE_WITH_TIMEOUT(service_->workspaces().size(), 3, 5000);
+    QVERIFY(bar_->setProperty("outputName", QString()));
+    QTRY_COMPARE_WITH_TIMEOUT(capsuleCount(), 3, 5000);
+
+    // And the strip's *layout* is waited for, not only its model. The delegates are rebuilt when the model
+    // changes and the row lays them out on a later pass, so a strip whose model is back but whose items are
+    // still stacked at their default x is one where a click aimed at the first capsule lands on the last.
+    // `clickingTheFocusedCapsuleAsksTheCompositorForNothing` clicks the first capsule and expects it to be the
+    // focused one, so this slot cannot leave the row mid-layout — which is what `run_reordered.cmake` found by
+    // running these in reverse and putting that slot after this one.
+    QTRY_VERIFY_WITH_TIMEOUT(capsuleAt(0) != nullptr && capsuleAt(1) != nullptr
+                                 && capsuleAt(1)->x() > capsuleAt(0)->x(),
+                             5000);
+}
+
+void BarInteractionTest::thePaletteIsTheOneTheFileSets() {
+    // The bar's colours come from `[bar.colors]` rather than from literals in the QML, and this is the check
+    // that tells those two apart: a hard-coded colour would pass every other slot in this binary while
+    // ignoring the file entirely, which is the failure a palette table is worth having only if it cannot
+    // happen.
+    auto* bar = qobject_cast<QQuickItem*>(bar_.get());
+    QVERIFY(bar != nullptr);
+
+    // The values in force are read first and put back at the end, so no slot after this one reads a palette
+    // this one set — the discipline the slots that change the configuration follow.
+    const ConfigValues before = config_.values();
+
+    ConfigValues values = before;
+    values.bar.colors.foreground = QStringLiteral("#112233");
+    values.bar.colors.muted = QStringLiteral("#445566");
+    values.bar.colors.accent = QStringLiteral("#778899");
+    values.bar.colors.urgent = QStringLiteral("#aabbcc");
+    config_.apply(values);
+
+    QCOMPARE(bar->property("foreground").value<QColor>(), QColor(QStringLiteral("#112233")));
+    QCOMPARE(bar->property("muted").value<QColor>(), QColor(QStringLiteral("#445566")));
+    QCOMPARE(bar->property("accent").value<QColor>(), QColor(QStringLiteral("#778899")));
+    QCOMPARE(bar->property("urgent").value<QColor>(), QColor(QStringLiteral("#aabbcc")));
+
+    // And a widget reading the palette follows it too, which is the half of the claim the bar's own
+    // properties do not make: the strip is handed the accent, so a palette applied to the bar has to reach
+    // something that draws with it rather than stopping at the property.
+    QQuickItem* strip = bar->findChild<QQuickItem*>(QStringLiteral("workspaces"));
+    QVERIFY2(strip != nullptr, "the bar has no workspace strip to read a colour from");
+    QCOMPARE(strip->property("accent").value<QColor>(), QColor(QStringLiteral("#778899")));
+
+    config_.apply(before);
+    QCOMPARE(bar->property("foreground").value<QColor>(), QColor(before.bar.colors.foreground));
 }
 
 void BarInteractionTest::theBarPlacesItsWidgetsInNamedGroups() {

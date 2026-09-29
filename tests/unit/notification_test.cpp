@@ -14,8 +14,12 @@
 // bus follows: a test names its own instance of the real thing.
 #include "dbus/NotificationService.h"
 #include "NotificationBus.h"
-#include <QCoreApplication>
 
+#include "app/ToastHost.h"
+#include "config/Config.h"
+#include "wayland/LayerShellWindow.h"
+
+#include <QDBusConnection>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QDBusInterface>
@@ -25,6 +29,17 @@
 #include <QDBusReply>
 #include <QElapsedTimer>
 #include <QDBusPendingCallWatcher>
+
+#include "app/ToastHost.h"
+#include "config/Config.h"
+
+#include <QQmlEngine>
+#include <QUrl>
+
+#include <QGuiApplication>
+#include <QQmlEngine>
+#include <QScreen>
+#include <QWindow>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -63,12 +78,23 @@ private slots:
     void aDemotionSignalFromBeforeAReRegistrationDoesNotWithdrawAReadingHeldNow();
     void aRegistrationReportFromBeforeStopDoesNotReacquireTheName();
     void serviceRegistersWithQml();
+    void aNotificationCreatesOneToastPerOutput();
+    void theToastDrawsTheSendersOwnFacts();
+    void theExpiryTheSenderAskedForIsTheOneTheToastLivesFor();
 
 private:
     // The bus this test's daemon registers on, and the one a sender is pointed at.
     qstest::NotificationBus bus_;
     QDBusConnection connection_ = QDBusConnection::sessionBus();
     std::unique_ptr<quantum::dbus::NotificationService> service_;
+
+    // The toast host and the engine its component is created in, against the service this test starts and the
+    // configuration this test's own. Declared here rather than in a slot because the toast's lifetime is the
+    // business: a toast created in one slot and expected in another would be a lifetime that outlives the slot
+    // that made it.
+    std::unique_ptr<quantum::app::ToastHost> toasts_;
+    std::unique_ptr<QQmlEngine> engine_;
+    quantum::config::Config config_;
 
     QDBusInterface daemon() const;
     QDBusConnection sender() const;
@@ -95,7 +121,8 @@ private:
     // reports the failure the way the spec's caller would see it. Asynchronous, because the daemon
     // this test calls is in the same process and a blocking call would hold the event loop that has to
     // deliver it.
-    quint32 notify(const QString& summary, const QString& body, quint32 replacesId);
+    quint32 notify(const QString& summary, const QString& body, quint32 replacesId,
+                   qint32 expireTimeout = -1);
     QDBusMessage call(const QString& method);
     QDBusMessage waitForReply(QDBusPendingCall pending, const QString& methodName) const;
 };
@@ -118,6 +145,30 @@ void NotificationTest::initTestCase() {
     // registration that fails is reported rather than silently swallowed.
     service_ = std::make_unique<quantum::dbus::NotificationService>(connection_);
     service_->start();
+
+    // The toast host, against the service this test starts and the configuration this test's own. The toast's
+    // component is loaded from the source tree rather than from a resource, for the same reason the bar's is
+    // in `bar-interaction-test`: the packed copies load in a real shell, which is what the layer-shell live
+    // tests assert on the built binary. The configuration is registered before the host is constructed,
+    // because the component is created in that constructor and reads `Config.bar.*` — a singleton registered
+    // after the component is created is one the component never saw. And the type the toast's component is
+    // made of is registered the way the composition root does: a component whose root is a
+    // `LayerShellWindow` cannot load in an engine that has not been told about it.
+    engine_ = std::make_unique<QQmlEngine>();
+    qmlRegisterType<QuantumShell::LayerShellWindow>("QuantumShell", 1, 0, "LayerShellWindow");
+    quantum::config::Config::registerQmlSingleton(config_);
+    toasts_ = std::make_unique<quantum::app::ToastHost>(*service_, config_, *engine_,
+                                                        QUrl::fromLocalFile(QStringLiteral(QS_TOAST_QML)));
+    QVERIFY2(toasts_->ready(), qPrintable(toasts_->componentError()));
+
+    // The toast's default expiry, made short here for the same reason every wait in this suite is short: a
+    // `-1` resolves to whatever the configuration says, and the suite waits for that expiry, so the value is
+    // the configuration's own floor rather than the shipped default of 5000. The mechanism is the same number
+    // at either length, and what is being tested is that a `-1` resolves to the configuration's default rather
+    // than to one baked into the daemon.
+    quantum::config::ConfigValues values;
+    values.bar.notifications.timeoutMs = 500;
+    config_.apply(values);
 }
 
 void NotificationTest::cleanupTestCase() {
@@ -215,13 +266,14 @@ QDBusMessage NotificationTest::waitForReply(QDBusPendingCall pending, const QStr
     return watcher.reply();
 }
 
-quint32 NotificationTest::notify(const QString& summary, const QString& body, quint32 replacesId) {
+quint32 NotificationTest::notify(const QString& summary, const QString& body, quint32 replacesId,
+                                 qint32 expireTimeout) {
     QDBusMessage notifyCall = QDBusMessage::createMethodCall(
         QString::fromLatin1(quantum::dbus::NotificationsServiceName),
         QString::fromLatin1(quantum::dbus::NotificationsObjectPath),
         QString::fromLatin1(quantum::dbus::NotificationsInterface), QStringLiteral("Notify"));
     notifyCall << QStringLiteral("Quantum Shell Test") << replacesId << QString() << summary << body
-         << QStringList() << QVariantMap() << qint32(-1);
+         << QStringList() << QVariantMap() << qint32(expireTimeout);
 
     QDBusPendingCall pending = sender().asyncCall(notifyCall);
     const QDBusMessage reply = waitForReply(pending, QStringLiteral("Notify"));
@@ -550,6 +602,71 @@ void NotificationTest::aRegistrationReportFromBeforeStopDoesNotReacquireTheName(
     QVERIFY(service_->notificationAvailable());
 }
 
+void NotificationTest::aNotificationCreatesOneToastPerOutput() {
+    // A toast is created for what the daemon publishes, so the sender's own call is what creates it: sent over
+    // the bus this test's daemon registers on, by the second connection, and waited for rather than slept on
+    // because the creation is a component being completed and a configure round trip behind it.
+    // One toast per output, whatever was up before: the slots before this one have sent notifications of their
+    // own, and a toast still standing from one of them is the one *updated* by this notification — the newest
+    // wins — rather than one more. So the count after is one per screen, and it is counted rather than
+    // assumed, because the creation is a component being completed and a configure round trip behind it.
+    const int outputs = QGuiApplication::screens().size();
+    QVERIFY2(outputs > 0, "no screen for a toast to be created against");
+
+    QVERIFY2(notify(QStringLiteral("Update available"), QStringLiteral("Quantum Shell 0.2.0"), 0) != 0,
+             "the daemon did not answer a Notify");
+
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), outputs, 5000);
+    for (QWindow* toast : toasts_->toasts())
+        QVERIFY2(toast->isVisible(), "a toast was created for an output it is not on");
+
+    // And withdrawn by the expiry the sender asked for, which is the toast's own clock rather than a flag of
+    // ours: waited for, because a timer is a length of time and nothing orders it against this line. The wait
+    // outlasts the expiry rather than matching it — the timer is armed when the notification arrives and this
+    // line runs after the toast is up, so a window equal to the expiry is a window that can end a tick before
+    // the toast does. Nothing left standing afterwards — the whole set is withdrawn together, one message on
+    // every output.
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 8000);
+}
+
+void NotificationTest::theToastDrawsTheSendersOwnFacts() {
+    // The three facts the toast is created for are the sender's own, published by the daemon as the spec hands
+    // them: the application name, the summary and the body. Read off the window the toast is drawn in, because
+    // that is what a person sees.
+    QVERIFY2(notify(QStringLiteral("Volume muted"), QStringLiteral("by the keyboard"), 0) != 0,
+             "the daemon did not answer a Notify");
+
+    QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000);
+    for (QWindow* toast : toasts_->toasts()) {
+        QCOMPARE(toast->property("toastApplication").toString(), QStringLiteral("Quantum Shell Test"));
+        QCOMPARE(toast->property("toastSummary").toString(), QStringLiteral("Volume muted"));
+        QCOMPARE(toast->property("toastBody").toString(), QStringLiteral("by the keyboard"));
+    }
+
+    // And the toast's own typography, which is the configuration's: the size and family the bar's text is
+    // drawn in are the same ones, because a palette table and a font table are the shell's and not a toast's.
+    for (QWindow* toast : toasts_->toasts()) {
+        QCOMPARE(toast->property("face").toString(), config_.bar()->font()->family());
+        QCOMPARE(toast->property("fontSize").toInt(), config_.bar()->font()->size());
+    }
+
+    // Put back to the state the slots around this one read: the toasts withdrawn, so no slot after this one is
+    // looking at a toast this one left standing.
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
+void NotificationTest::theExpiryTheSenderAskedForIsTheOneTheToastLivesFor() {
+    // A sender that names its own length is honoured rather than clamped: the spec's `expire_timeout` is a
+    // sender's wish, and a daemon that shortened it to its own default would be answering a notification it
+    // was not sent. Five hundred milliseconds is the floor the schema states, so it is the shortest a toast
+    // can be asked to live for.
+    QVERIFY2(notify(QStringLiteral("A short toast"), QString(), 0, 500) != 0,
+             "the daemon did not answer a Notify");
+
+    QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
 void NotificationTest::serviceRegistersWithQml() {
     // The QML side resolves `NotificationService` by that name, so the registration is interface. The
     // properties are read off the meta-object because that is the spelling a QML binding resolves
@@ -568,4 +685,14 @@ void NotificationTest::serviceRegistersWithQml() {
 
 #include "notification_test.moc"
 
-QTEST_MAIN(NotificationTest)
+// The platform is chosen here rather than inherited, and the application is a `QGuiApplication` rather than
+// the `QCoreApplication` `QTEST_MAIN` would have used: the toast is a layer-shell surface created against
+// Qt's own screen list, and a window mapped on the session's own compositor would be one on the developer's
+// desktop. Offscreen is what makes every claim below a claim about the toast rather than about whatever is on
+// screen — one screen, so one toast per notification.
+int main(int argc, char* argv[]) {
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
+    NotificationTest test;
+    return QTest::qExec(&test, argc, argv);
+}

@@ -45,6 +45,9 @@ Item {
     property color muted
     property color urgent
     property string face
+    // From `[bar.font]` through `Bar.qml`; the defaults are what this component drew before the table existed.
+    property int fontSize: 12
+    property int fontWeight: 400
 
     // The three configuration flags, read once each so that what is drawn and what the file says cannot
     // disagree, and named so that a value which never reached this widget is a failure rather than a readout
@@ -121,7 +124,8 @@ Item {
             text: "NET"
             color: root.muted
             font.family: root.face
-            font.pixelSize: 12
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
         }
 
         Text {
@@ -134,7 +138,8 @@ Item {
             color: NetworkService.available && root.troubled(NetworkService.connectivity)
                        ? root.urgent : root.foreground
             font.family: root.face
-            font.pixelSize: 12
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
         }
     }
 

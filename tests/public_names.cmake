@@ -31,6 +31,7 @@ set(QS_TEST_NAMES
     niri-live-layershell-test
     niri-live-restart-test
     niri-live-shell-restart-test
+    niri-live-scale-test
     audio-live-test
     network-live-test
     niri-version-test
@@ -61,10 +62,18 @@ set(QS_TEST_NAMES
 
 # The environment variables that change what a test run does. `NIRI_SOCKET` is niri's own and is read to
 # decide whether there is a compositor to talk to at all; the rest are this project's opt-ins.
+#
+# `DESTDIR` is the third kind and the reason this list is not only about tests: it is the packaging
+# standard's staging directory, read by the install rule that writes the notification daemon's D-Bus
+# activation file (CMakeLists.txt), because CMake applies it to its own install commands and not to a
+# file this project writes itself. It is declared and documented for the same reason the opt-ins are:
+# a name a build file reads is a name somebody can set, and an undeclared one is a name nothing checks.
 set(QS_ENVIRONMENT_NAMES
     NIRI_SOCKET
+    DESTDIR
     QS_NIRI_SESSION_TESTS
     QS_NIRI_RESTART_TESTS
+    QS_NIRI_SCALE_TESTS
     QS_AUDIO_TESTS
     QS_TEST_ORDER_SEED
     QS_TEST_ORDER_COVERAGE

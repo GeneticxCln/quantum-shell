@@ -51,6 +51,11 @@ Item {
     property color muted
     property color urgent
     property string face
+    // The size and weight the text is drawn in, from `[bar.font]` through `Bar.qml`. Defaults here are the
+    // sizes this component was drawn at before the table existed, so a component loaded on its own — which is
+    // how `bar-interaction-test` loads it — draws exactly as it did.
+    property int fontSize: 12
+    property int fontWeight: 400
 
     // The three configuration flags, read once each so that what is drawn and what the file says cannot
     // disagree, and named so that a value which never reached this widget is a failure rather than a readout
@@ -164,7 +169,8 @@ Item {
             text: "BAT"
             color: root.muted
             font.family: root.face
-            font.pixelSize: 12
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
         }
 
         Text {
@@ -177,7 +183,8 @@ Item {
             color: BatteryService.available && root.troubled(BatteryService.warning)
                        ? root.urgent : root.foreground
             font.family: root.face
-            font.pixelSize: 12
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
         }
     }
 

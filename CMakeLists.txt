@@ -288,14 +288,42 @@ target_link_libraries(quantum-shell-ipc
     PRIVATE quantum-shell-logging)
 
 # What the IPC can reach in this shell: three delegations, to the QML service's values, to the schema's
-# resolver and to the bar window's own visibility. It is a library rather than part of the binary so that
+# resolver and to the bars' own visibility. It is a library rather than part of the binary so that
 # `ipc-capabilities-test` can drive it against a real service and a real configuration — the half of the IPC
 # that a test double in `ipc-server-test` deliberately does not cover.
+#
+# The shell's bars, one per output (QUANTUM_SHELL.md § One Bar Per Output). Defined before the capabilities
+# library that links it, because that library asks it which bars exist rather than holding a list of its own.
+# Its own target because it has two consumers — the composition root, which follows whether any bar is on
+# screen, and the capabilities library, which has to move all of them — and because those two must be asking
+# the same object. Core, Gui and Qml: it instantiates a QML component per screen and reaches the resulting
+# windows. `quantum-shell-wayland` is what those windows are, and it is linked rather than left to the QML
+# engine because the one thing this class does to a surface — hide or show it — has to pass the same
+# namespace refusal the surface was created under (LayerShellWindow::setSurfaceVisible).
+add_library(quantum-shell-bars STATIC src/app/BarHost.cpp)
+target_include_directories(quantum-shell-bars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-bars
+    PUBLIC Qt6::Core Qt6::Gui Qt6::Qml
+    PRIVATE quantum-shell-wayland quantum-shell-logging quantum-shell-warnings)
+
+# The shell's toasts: one per output, created when a notification arrives and withdrawn when the expiry runs
+# out (QUANTUM_SHELL.md § Notifications). Its own target rather than part of `quantum-shell-bars` because its
+# dependency is a different one — it follows the daemon the shell *is*, and that service is the shell's own
+# rather than something the bar reads — and because linking it into `quantum-shell-capabilities` would drag
+# the notifications service into the binary that drives the IPC, which has no toast verb. Core, Gui and Qml:
+# it instantiates a QML component per output and reaches the resulting windows, the way the bar host does.
+add_library(quantum-shell-toasts STATIC src/app/ToastHost.cpp)
+target_include_directories(quantum-shell-toasts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-toasts
+    PUBLIC Qt6::Core Qt6::Gui Qt6::Qml
+    PRIVATE quantum-shell-wayland quantum-shell-logging quantum-shell-notifications
+            quantum-shell-config quantum-shell-warnings)
+
 add_library(quantum-shell-capabilities STATIC src/app/ShellCapabilities.cpp)
 target_include_directories(quantum-shell-capabilities PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-capabilities
     PUBLIC quantum-shell-ipc quantum-shell-niri quantum-shell-config Qt6::Gui
-    PRIVATE quantum-shell-warnings)
+    PRIVATE quantum-shell-bars quantum-shell-warnings)
 
 # `qsctl`, the command the shell is answered by. Its own binary target (QUANTUM_SHELL.md § Project Layout)
 # and its own version, so a bug report quoting a client quotes the build it came from.
@@ -421,17 +449,88 @@ set(QS_QML_FILES
     qml/Battery.qml
     qml/Media.qml
     qml/Notifications.qml
+    qml/Toast.qml
     qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"
     PREFIX "/"
     FILES ${QS_QML_FILES})
 target_link_libraries(quantum-shell
-    PRIVATE quantum-shell-capabilities quantum-shell-ipc quantum-shell-niri quantum-shell-config
+    PRIVATE quantum-shell-capabilities quantum-shell-bars quantum-shell-toasts quantum-shell-ipc quantum-shell-niri quantum-shell-config
             quantum-shell-system quantum-shell-audio quantum-shell-network quantum-shell-battery
             quantum-shell-media quantum-shell-notifications quantum-shell-wayland quantum-shell-warnings)
 # The build's version, compiled in: `qsctl version`, the startup record and the IPC handshake all report it,
 # and none of them should be quoting a copy of the number written out by hand.
 target_compile_definitions(quantum-shell PRIVATE QS_VERSION="${PROJECT_VERSION}")
+
+# --- installation ----------------------------------------------------------------------------------
+#
+# Every path below is the one the target system uses rather than one spelled out here, so an install
+# lands where the distribution's own layout puts it. The four artifacts installed are the four things a
+# person needs to run the shell and the shell needs to find itself: the bar and its client, the
+# layer-shell client library both the bar and the plugin load, the shell-integration plugin Qt loads by
+# name, and D-Bus activation for the notification daemon the shell is.
+include(GNUInstallDirs)
+
+# `qsctl` is installed alongside the shell because it is how a person drives a running one and how a
+# compositor binding toggles the bar — a client that exists only in the build tree is one only its
+# authors can use.
+install(TARGETS quantum-shell qsctl
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Shared and installed because two things load it: the application, and the plugin Qt loads into it. It
+# is the layer-shell client (QUANTUM_SHELL.md § Layer-Shell Implementation Strategy), not an internal
+# detail of the executable, so it does not belong beside it.
+install(TARGETS quantum-shell-wayland
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+# The plugin directory is Qt's own, under the name Qt looks a shell integration up by:
+# QT_WAYLAND_SHELL_INTEGRATION=quantum-shell resolves to this file, and a plugin installed anywhere else
+# is one Qt never loads. QT6_INSTALL_PLUGINS is what the Qt package says that directory is; it is read
+# from the package rather than written here so a Qt that moves it moves this with it.
+#
+# The runtime path is set because CMake's own default does not reach: the plugin lands three directories
+# below the prefix's library directory (`lib/qt6/plugins/wayland-shell-integration`), and the default
+# `$ORIGIN:$ORIGIN/../lib` resolves against the plugin's own directory, so it names
+# `lib/qt6/plugins/lib` — a directory that does not exist — and the plugin is loaded without the
+# layer-shell library it is built on. Found by installing and reading `ldd` on the installed plugin,
+# which is why the relative path is computed from the two install directories rather than written as
+# `../..`: a Qt or a layout that moves either one moves this with it.
+file(RELATIVE_PATH QS_PLUGIN_TO_LIBDIR
+    "/${QT6_INSTALL_PLUGINS}/wayland-shell-integration" "/${CMAKE_INSTALL_LIBDIR}")
+set_target_properties(quantum-shell-layer-shell PROPERTIES
+    INSTALL_RPATH "\$ORIGIN/${QS_PLUGIN_TO_LIBDIR}")
+install(TARGETS quantum-shell-layer-shell
+    LIBRARY DESTINATION ${QT6_INSTALL_PLUGINS}/wayland-shell-integration)
+
+# The session's notification daemon as D-Bus activation sees it: the shell owns
+# org.freedesktop.Notifications (src/dbus/NotificationService.h), and this file is what lets the bus
+# start it when a notification arrives before the shell is up.
+#
+# The path inside it is resolved at *install* time rather than at configure time, and that is the whole
+# reason this is not a configure_file. `cmake --install --prefix` is a supported way to install under a
+# prefix the build was not configured with, and a path written at configure time names the old prefix:
+# an activation entry pointing at a directory nothing was installed into, failing silently until the
+# first notification arrives before the shell is up. CMake applies DESTDIR to its own install commands
+# and not to a file this project writes itself, so the write below applies it, and the template stays
+# the one place the content is written down. D-Bus requires the path in an activation file to be
+# absolute, so it cannot be left as a bare program name.
+install(CODE "
+    get_filename_component(_qs_bindir \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}\" ABSOLUTE)
+    file(READ \"${CMAKE_CURRENT_SOURCE_DIR}/packaging/org.freedesktop.Notifications.service.in\"
+         _qs_notification_template)
+    string(REPLACE \"@EXECUTABLE@\" \"\${_qs_bindir}/quantum-shell\"
+           _qs_notification_service \"\${_qs_notification_template}\")
+    file(WRITE
+         \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/dbus-1/services/org.freedesktop.Notifications.service\"
+         \"\${_qs_notification_service}\")
+")
+
+# The licence and the README, so an installed shell carries what it is and the terms it is under
+# without the checkout it was built from.
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/${PROJECT_NAME})
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+    DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 # --- tests ----------------------------------------------------------------------------------------
 enable_testing()

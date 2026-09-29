@@ -149,7 +149,11 @@ Quantum Shell
   `ext-session-lock-v1`, `ext-idle-notify-v1`, `ext-data-control-v1`, `ext-foreign-toplevel-list-v1`,
   `fractional-scale-v1`, `text-input-v3`, `ext-image-copy-capture-v1`). Vendor the XML in
   `protocols/` and generate code with `wayland-scanner`, so a build never depends on the host's
-  protocol package version.
+  protocol package version. `fractional-scale-v1` is the one entry here the shell does **not** need to
+  vendor: QtWaylandClient binds it and Qt Quick renders at the ratio it carries, measured at all four
+  scales in § Risk Register, *Fractional scaling, measured*. It stays listed because a decision to
+  stop needing it should not be made silently, and because vendoring it costs nothing if a later
+  surface (the lock surface, say) turns out to want it directly.
 - **Header-only deps** (`toml++`) are vendored via CMake `FetchContent` with a pinned tag *and* an
   `-DQUANTUM_SHELL_SYSTEM_DEPS=ON` path that uses `find_package` for distro builds.
 
@@ -562,7 +566,58 @@ Additional security/robustness rules:
 - `QGuiApplication` must exit cleanly when the Wayland connection drops (compositor restart) and
   reconnect on a new session.
 - Scale handling uses `fractional-scale-v1` + `wp-viewporter`; never round fractional scale to an
-  integer, and never assume scale 1.
+  integer, and never assume scale 1. **Measured, and the sentence needs one correction: it is Qt that
+  carries the fractional scale, not this project.** QtWaylandClient binds `wp_fractional_scale_v1`
+  itself and Qt Quick renders at the exact ratio, so the shell meets this rule by inheriting it rather
+  than by implementing anything — `src/wayland/` contains no code that reads or computes a scale (the
+  `FractionalScale.h/.cpp` in the planned tree at § Project Structure was never needed and is not
+  what carries this). What the shell must not do is the second half of the rule, and it does not: no
+  pixel size is derived from a logical one anywhere in `qml/` or `src/`, so there is no scale 1 to
+  assume. Measured on this machine against a nested niri at each scale (§ Risk Register for the
+  numbers): the window's effective device pixel ratio is the output's scale exactly, fractional
+  included, while the *screen's* `devicePixelRatio()` is the integer `wl_output.scale` — 2 for both
+  1.25 and 1.5 — which is the protocol's own fallback and not the value that decides rendering. A
+  reading of the screen's ratio is therefore not a reading of the scale a client renders at.
+
+---
+
+## One Bar Per Output
+
+A bar is a layer-shell surface, and a layer surface is created *against an output*: the protocol
+assigns the role to a `wl_output`, and the compositor does not decide which one. So "one bar" and
+"one output" are the same statement rather than a choice about how wide to draw, and a session with
+two monitors has two bars — one on each — rather than one surface stretched across both or a single
+bar on whichever output the compositor happened to pick. Every comparable bar does this (waybar's
+`output` key defaults to all of them), and the alternative is worse than it looks: a bar on one
+monitor means the other monitor has no workspace strip, no clock, and no way to change the volume.
+
+**Who creates them.** `src/app/BarHost.cpp`, one instance of `qml/Main.qml` per screen, kept in step
+with Qt's own screen list — `QGuiApplication::screenAdded` and `screenRemoved` mean a monitor plugged
+in or turned off is a bar appearing or going away with nothing polling for the set. It is a class
+rather than a loop in the composition root because two things need the whole set: the sampling gate,
+which follows whether *any* bar is on screen, and `qsctl bar toggle`, which has to move every one of
+them. Both ask the same object, so there is one answer to "which bars exist".
+
+**Why the output is assigned from C++.** `screen` is not a QML property of a `QQuickWindow` — Qt
+exposes it on the QML `Window` type, which this is not — so a bar cannot read, let alone choose, the
+output it was placed on. `BarHost` therefore assigns the window's screen with `QWindow::setScreen`
+and presents the surface *after* that, because showing the window is what creates the Wayland surface
+and assigns the layer role, and the role is assigned once. The output's *name* is handed to the QML as
+an initial property, which is the one thing the component cannot work out for itself and the one thing
+it needs: the workspace strip draws the workspaces of its own output and no others.
+
+**What a bar shows.** The strip is `NiriService.workspaces` filtered on the model's own `output`
+field, which niri fills in — the filter is the compositor's answer rather than a deduction from
+anything the bar knows. The readouts that are readings of the *machine* rather than of a monitor (the
+clock, the system status, the volume, the network, the battery, the media, the notification) are the
+same on every bar, and deliberately so: there is one machine, and it is the same reading on both
+screens.
+
+**Consequences, stated rather than discovered.** A workspace niri reports with **no output** — one
+that is on no monitor at all — appears on no bar, which is the same statement rather than a gap: the
+strip on an output shows that output's workspaces. An output niri reports but is not driving has no
+Qt screen and therefore no bar. Where a monitor goes away, its bar is destroyed with it rather than
+kept for a placement that no longer exists.
 
 ---
 
@@ -831,7 +886,13 @@ Rules:
   all), `show_name` (a boolean, true, whether the name of the network it is on is drawn beside the signal)
   and `show_strength` (a boolean, true, whether the signal is drawn). Three booleans rather than a strength
   threshold or a list of networks, because the shell decides none of those: what it knows is what the daemon
-  told it, and a key that filtered it would be a second opinion about the desktop. The file is
+  told it, and a key that filtered it would be a second opinion about the desktop. Three flags each for
+  `[bar.battery]` (status, percentage, time remaining), `[bar.media]` (whether the media readout is drawn) and
+  `[bar.notifications]` (whether the notification readout is drawn) arrived the same way and are listed, with
+  every other key, in `ENGINEERING_SPEC.md` §2.5 — the table `spec-values-test` holds against `KeyPaths`, and
+  therefore the one that cannot go stale.
+
+  The file is
   `$XDG_CONFIG_HOME/quantum-shell/config.toml` —
   `~/.config/quantum-shell/config.toml` by default — and `qml/Main.qml` binds its `height` and
   `exclusiveZone` to `bar.height` and its `layerNamespace` to `bar.layerNamespace`.
@@ -860,7 +921,39 @@ step_decibels = 1.0             # decibels one wheel notch moves the volume, in 
 show_status = true              # whether the network readout is drawn at all
 show_name = true                # whether the name of the network it is on is drawn
 show_strength = true            # whether the signal quality is drawn
+
+[bar.battery]
+show_status = true              # whether the battery readout is drawn at all
+show_percentage = true          # whether the charge is drawn as a percentage
+show_time = true                # whether the time remaining is drawn
+
+[bar.media]
+show_media = true               # whether the media readout is drawn at all
+
+[bar.notifications]
+show_notifications = true       # whether the notification readout is drawn at all
+
+[bar.colors]
+foreground = "#c8cad8"          # a colour literal: "#" and six hex digits, or eight with the alpha first
+muted = "#5a5d70"               # what a secondary reading is drawn in
+accent = "#7aa2f7"              # what marks what is current or focused
+urgent = "#f7768e"              # what warns
+
+[bar.font]
+family = "Inter"                # a non-empty string: the face every readout draws in
+size = 12                       # the body size; the clock draws one up, media and notifications two up
+weight = 400                    # an integer from 100 to 900, Qt's own weight scale
 ```
+
+  The palette is a table for the reason the readouts' settings are tables, and it is the first whose subject
+  is how the bar looks rather than what it reads: the values are written together and they belong to the thing
+  that draws with them. Four values rather than a theme's worth of tokens, because these are the four the bar
+  actually draws with — an entry nothing reads would be surface nobody asked for. The rule is the schema's
+  and not QML's: a string QML cannot parse draws as black with a binding warning at load, which reads to a
+  person as the shell ignoring their file, so a value outside the two forms is refused by name with the
+  default kept (`config-test` covers both halves, and `bar-interaction-test` checks that a palette applied to
+  the configuration reaches a widget that draws with it). Named colours, three-digit shorthand and `rgb()`
+  are deliberately outside the rule, each being a second spelling of a value this file already spells once.
 
   `bar.system` is a table rather than a set of compound keys such as `system_sample_interval_ms` because
   the widget that owns the settings owns a table in the file, which is the shape the readouts still to come
@@ -957,7 +1050,7 @@ The verbs exist only where a handler answers them, and they are declared once in
 | `version` | `name`, `shell`, `protocol` | it is the shell's own build version, the same one its startup record carries |
 | `state` | the same six values `NiriService` exposes: `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` | read from the service itself, so the keys are its property names and cannot be a second mapping |
 | `config get <path>` | `path` and `value` | the schema resolves it; the paths that exist are its own `KeyPaths` list — `bar.height`, `bar.layerNamespace`, `bar.system.sample_interval_ms`, `bar.system.show_cpu`, `bar.system.show_memory`, `bar.system.memory_format`, `bar.audio.show_volume`, `bar.audio.volume_scale`, `bar.audio.step_percent`, `bar.audio.step_decibels`, `bar.network.show_status`, `bar.network.show_name`, `bar.network.show_strength`, `bar.battery.show_status`, `bar.battery.show_percentage`, `bar.battery.show_time`, `bar.media.show_media`, `bar.notifications.show_notifications`, each asserted against the resolver in `ipc-capabilities-test` |
-| `bar toggle` | `visible` | the bar window's own visibility, and the compositor's layer list loses and regains the surface |
+| `bar toggle` | `visible` | every bar window's own visibility, moved together, and the compositor's layer list loses and regains each surface |
 
 `qsctl` prints one line of JSON for `version`, `state` and `bar toggle`, and the bare value for
 `config get` — that verb exists to be used as `x=$(qsctl config get bar.height)`, and quoting a number for
@@ -1260,6 +1353,48 @@ group sized them" apart from "they happened to be that size".
 
 Validate the exact Qt module list against the installed Qt version before locking
 `CMakeLists.txt`; module names have moved between minors.
+
+---
+
+## Installation and Packaging
+
+What `cmake --install` places, and the reasoning behind each destination, is stated
+once in `ENGINEERING_SPEC.md` §2.9 — this section records the decisions that put it
+there rather than repeating the table.
+
+**Four artifacts, and each has one place it can work from.** The shell and its client go
+to the binary directory; the layer-shell client library is shared and installed because
+two things load it; the shell-integration plugin goes into Qt's own plugin directory,
+because the name `QT_WAYLAND_SHELL_INTEGRATION=quantum-shell` is resolved by Qt against
+that directory and a plugin installed anywhere else is one Qt never loads; and D-Bus
+activation for the notification daemon is installed because the shell *is* the daemon
+(§ Shell Components), so a session with no other notifier has nothing answering
+notifications until the shell is started — the activation file is what lets the bus start
+it.
+
+**The notification daemon installed as the session's notifier is a real policy
+decision, not a packaging detail.** A desktop that already runs another notification
+daemon keeps it: the shell takes the name with `QueueService`, so the second process to
+want it queues behind the holder rather than displacing it, and the readout draws its
+absent state. The activation file only decides what happens when nothing holds the name.
+
+**The prefix is an install-time decision for one file.** `cmake --install --prefix` is
+supported, and the activation file's `Exec` path follows it, because a file written at
+configure time would name the build's own prefix — an entry pointing at a directory
+nothing was installed into, failing silently until the first notification arrives. The
+cost is that the install rule reads `DESTDIR` itself rather than leaving it to CMake,
+which is stated where the public names are declared.
+
+**Arch packaging first, and only.** `packaging/PKGBUILD` exists because `makepkg` is on
+the machine this was developed on, so the package is built rather than written: the
+PKGBUILD is exercised end to end before it is committed. A Nix flake is deliberately not
+provided — `nix` is not installed here, so a flake would be an unverified file, and an
+unverified packaging file is exactly the kind of thing this project's rules refuse. A
+Debian-family package is in the same position for the same reason.
+
+**Still absent from packaging:** a release tarball with a checksum, a versioned package
+(a `-git` package is a moving target), and an upgrade path between shell versions. Those
+are the rest of Phase 8.
 
 ---
 
@@ -2257,9 +2392,33 @@ second job. The runner's CMake can predate the 3.31 floor, so the workflow pins 
 the repository scan; the matrix job prints the scan on its own first, so a violation is readable in
 the job log rather than surfacing only as a failing test.
 
+**There is no job for the tests that need a compositor, and that is a decision rather than an
+omission.** `ctest --preset session` registers the four of them — `niri-live-action-test`,
+`niri-live-layershell-test`, `niri-live-restart-test` and `niri-live-shell-restart-test` — and runs
+them in under seven seconds on a machine with a session. A GitHub-hosted runner has no Wayland
+session, no display and no DRM device, and **niri cannot be run headless**: it needs one of the two,
+and `niri --help` offers no backend that avoids both. So the job could not run them, and registering
+them anyway would be worse than leaving them out: they skip themselves with a reason when
+`$NIRI_SOCKET` is unset, so the job would pass having checked nothing — which is the same failure
+`public-names-test` exists to catch in a `ctest -R` that matches no test. The suite is run where a
+session exists instead, and the preset is built so that it cannot lie about having run: its filter
+names the four tests rather than the word `live` (two always-registered live tests would otherwise
+match and hide the absence), and `execution.noTestsAction` is `error`, so a machine with no session
+exits 8 with *No tests were found* rather than reporting a pass over one or two unrelated tests.
+
+**The one live test a hosted job could run is `audio-live-test`**, and it is not in the workflow
+either. It needs no compositor — it starts a PipeWire daemon of its own in a scratch directory and
+drives it through `pw-cli`, `pw-metadata` and `pw-dump` — so what it needs is the `pipewire` package
+and an `XDG_RUNTIME_DIR`, both of which a runner can have. It is opt-in for resource reasons rather
+than for a session: every test binary would otherwise start a daemon. Adding it to a job is a small
+change, and it would be the first real coverage of the audio path on a machine that is not this one.
+What it cannot fix is the layer-shell path, which needs a compositor and therefore a runner that has
+one — a self-hosted machine with a session, or a compositor the suite speaks the protocol to from
+inside its own process, which is the only way a hosted runner could exercise the protocol at all.
+
 The repository is published (`origin`), so the workflow is real rather than aspirational, and it has
 been run — but GitHub-hosted minutes are blocked on this account, so both jobs' steps are run on this
-machine instead, against the tree in `build/ci`: `CC=clang CXX=clang++` with `cmake --preset ci`,
+machine instead, against the tree in `build/ci`:
 `cmake --build --preset ci` and `ctest --preset ci`, and `cmake --preset asan` with its build and
 ctest. That is not a workaround for an untested workflow: running the steps locally is what found the
 matrix's own setup error, since `CC` has to be the C compiler matching the matrix's C++ one and a
@@ -2523,9 +2682,20 @@ statistics for the exception and the waiver it needs.
 ### Phase 2 — Shell Components
 
 Launcher, notifications (with history and D-Bus service), OSD, control center, panels, media
-controls, system controls. Of the notification surface, the D-Bus service and the bar readout have
-landed (above) and nothing else in this list has started: what remains of notifications is the toast
-overlay and `History.qml`.
+controls, system controls. Of the notification surface, the D-Bus service, the bar readout and the
+**toast overlay** have landed (above) and nothing else in this list has started: what remains of
+notifications is `History.qml`, the history it draws, and Do Not Disturb — and DND is deliberately
+last, because it suppresses toasts and there were none to suppress until the toast landed. The toast
+overlay is `qml/Toast.qml` and `src/app/ToastHost.*`: one surface per output, created when a
+notification arrives and withdrawn when its expiry runs out, the expiry resolved as the daemon
+publishes the sender's own `expire_timeout` and `[bar.notifications] timeout_ms` says what a `-1`
+means. A sender that names its own length is honoured rather than clamped; the spec's `0` is never-
+expire, and the configuration's floor is 500 ms. `notification-test` drives the daemon *and* the toast
+on a `dbus-daemon` of its own: a real `Notify` creates one toast per output, the sender's application
+name, summary and body are read off the window, and the expiry the sender asked for is the one the
+toast lives for. What is **not** verified of it: the surface on a real compositor — the toast's unit
+test maps its windows on the offscreen platform, and a live test that drives the built shell and reads
+`niri msg layers` for the toast's namespace is the one thing still owed.
 
 **Exit criteria:** replaces the major pieces normally provided by a standalone desktop shell;
 notification daemon passes `notify-send`-based smoke tests. The smoke test is
@@ -2576,6 +2746,14 @@ not restart the shell.
 
 ASan/UBSan, automated tests, crash handling, performance profiling, memory profiling, Nix flake,
 Arch/AUR packaging, release builds.
+
+**Partly landed ahead of the phase:** the sanitizer build and the test suite are already
+the gate every change passes (§ Quality Gates, Testing and CI), and installation with an
+Arch package has landed (§ Installation and Packaging) — `cmake --install` places the
+four artifacts, and `packaging/PKGBUILD` is verified by building it. What remains of the
+phase is crash handling, the two profilers, a release tarball, a versioned package, and
+an upgrade path between shell versions. The Nix flake waits on a machine where it can be
+built.
 
 **Exit criteria:** reproducible packages for at least one distro, a released version, and a
 documented upgrade path between shell versions.
@@ -2629,8 +2807,42 @@ communicate with niri. Once that foundation works, everything else can be built 
 | niri IPC event stream format changes | Shell state desync | Version detection + tolerant JSON parsing; log unknown events instead of crashing |
 | Plugins crashing the shell | Reliability | Contained component creation with error reporting; disable-on-failure |
 | Session-lock bugs | Security | Small, audited surface; dedicated auth tests; no plugin code on the lock surface |
-| Fractional scaling artifacts | Visual quality | Test matrix at 1.0/1.25/1.5/2.0 from Phase 0 |
+| Fractional scaling artifacts | Visual quality | **Measured at all four scales** (§ Fractional scaling, measured below) rather than tested by the suite: a client's window reports the exact ratio at 1.0, 1.25, 1.5 and 2.0. An automated check is still owed |
 | Config semantics drift across versions | User-visible breakage | Schema version + migrations + "unknown key" warnings |
+
+### Fractional scaling, measured
+
+The mitigation above was a test matrix at 1.0/1.25/1.5/2.0, and this is that measurement. It was taken
+against a niri started **nested** in the session — not against the monitor, so no output of the
+developer's own was touched — with the nested instance's scale set through its own IPC
+(`niri msg output <name> scale <n>` against the nested socket) and a Qt Quick window of the test's own
+mapped on it:
+
+| Output scale | `niri` reports | `QScreen::devicePixelRatio()` | `QQuickWindow::effectiveDevicePixelRatio()` |
+| --- | --- | --- | --- |
+| 1.0 | 1.0 | 1 | 1 |
+| 1.25 | 1.25 | 2 | 1.25 |
+| 1.5 | 1.5 | 2 | 1.5 |
+| 2.0 | 2.0 | 2 | 2 |
+
+Three facts come out of it, and the last is the one a reading of the middle column would get wrong:
+
+- The compositor advertises `wp_fractional_scale_manager_v1` and `wp_viewporter`, sends
+  `wl_output.scale(2)` — the protocol's `scale` event is an integer, so 1.25 and 1.5 both arrive as
+  2 — and sends the true value beside it as `wp_fractional_scale_v1.preferred_scale(150)` for a
+  scale of 1.25, in the protocol's 120ths.
+- QtWaylandClient binds that interface, and Qt Quick renders at the ratio it carries: the window's
+  effective device pixel ratio is the output's scale exactly, fractional values included.
+- The **screen's** `devicePixelRatio()` is the integer `wl_output.scale`, and it is not the scale
+  anything is rendered at. Reading it looks exactly like the fractional scale being rounded up —
+  1.25 and 1.5 are indistinguishable there — while the window it describes is not rounded at all.
+
+The bar therefore draws at the true ratio with no scale code in the shell, and the geometry niri
+reports for it is scale-independent: 32 logical pixels, which is a 40-device-pixel band at 1.25
+(§ Layer-Shell Implementation Strategy). The automated form is `niri-live-scale-test`, opt-in
+behind `QS_NIRI_SCALE_TESTS`, which drives a nested compositor through the four scales and asserts the
+window's ratio against the compositor's own answer at each one — the measurement above, run by the suite
+rather than recorded in prose.
 
 ---
 

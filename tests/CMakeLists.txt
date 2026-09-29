@@ -35,6 +35,13 @@ target_link_libraries(niri-live-action-test PRIVATE Qt6::Test quantum-shell-niri
 add_executable(niri-live-restart-test integration/niri_live_restart_test.cpp)
 target_link_libraries(niri-live-restart-test PRIVATE Qt6::Test quantum-shell-niri qs-test-support)
 
+# The rendering ratio a Qt Quick window reports, against a compositor of the test's own at each output scale
+# (ENGINEERING_SPEC.md §4, the risk register's scale matrix). Qt6::Quick for the window the ratio is read
+# from, and the support header for the compositor it starts — the third binary to include it, which is what
+# it is a header for.
+add_executable(niri-live-scale-test integration/niri_live_scale_test.cpp)
+target_link_libraries(niri-live-scale-test PRIVATE Qt6::Test Qt6::Quick quantum-shell-niri qs-test-support)
+
 # The proof that the bar is a real layer surface: it starts the built shell, waits for its surface to
 # reach the compositor, and checks the surface against the compositor's own layer list and against the
 # protocol traffic the shell sends. It maps a bar on screen, which reserves the top of the output while it
@@ -213,8 +220,12 @@ set(QS_ORDER_CHECK_COSTS
     # work either way, so the difference is the spread rather than the change. Re-measured once the daemon
     # learned to publish itself on a handover, which is one more name grant, one more `Notify` round trip and
     # the waits around them in a pass: 528 ms, the middle of seven passes at 526, 527, 527, 528, 528, 529 and
-    # 529 — six milliseconds of real work, not a wider spread.
-    notification-test=528
+    # 529 — six milliseconds of real work, not a wider spread. Re-measured again once the toast host joined
+    # this binary, whose three slots each carry a component creation and a configure round trip and wait for an
+    # expiry of the configuration's own floor: 2700 ms, the middle of five passes at 2586, 2587, 2733, 2799 and
+    # 2817 — the expiry is a length of time the suite waits for rather than a flag it checks, which is why the
+    # cost is what it is and not a wider spread.
+    notification-test=2700
     # Reads seven files and compares them with constants compiled into it, plus the meta-objects of the four
     # QML singletons whose classes it links; it does no I/O beyond the read and no work that depends on the
     # machine, which is why it is near the cheapest binary in the table. Measured as the middle of three runs:
@@ -458,6 +469,20 @@ else()
     message(STATUS
         "niri restart test not registered: set QS_NIRI_RESTART_TESTS=1 to run the test that starts "
         "and restarts a compositor of its own")
+endif()
+
+# Measuring scales needs its own opt-in and one more thing: it starts a compositor of its own, nested in the
+# session, so it can set the scale of an output the developer's own monitor is not at. It does not take the
+# `niri-desktop` lock, because it never touches the session's desktop — the window it maps is on the nested
+# instance — and so it is the one test that starts a compositor and can run alongside the others.
+set(QS_NIRI_SCALE_TESTS "$ENV{QS_NIRI_SCALE_TESTS}")
+if(NOT QS_NIRI_SOCKET STREQUAL "" AND NOT QS_NIRI_SCALE_TESTS STREQUAL "")
+    add_test(NAME niri-live-scale-test COMMAND niri-live-scale-test)
+    message(STATUS "niri scale test registered: it drives a nested compositor through the four output scales")
+else()
+    message(STATUS
+        "niri scale test not registered: set QS_NIRI_SCALE_TESTS=1 to run the test that measures the "
+        "rendering ratio at each output scale")
 endif()
 
 # --- the project's public names -------------------------------------------------------------------

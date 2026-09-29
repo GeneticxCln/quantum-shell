@@ -129,7 +129,6 @@ quint32 NotificationService::Notify(const QString& appName, quint32 replacesId, 
     Q_UNUSED(appIcon)
     Q_UNUSED(actions)
     Q_UNUSED(hints)
-    Q_UNUSED(expireTimeout)
 
     // `replaces_id` is the caller's own handle for a notification it is updating, so the spec says to
     // answer with the same id rather than a new one — a client that updates a notification twice and
@@ -140,6 +139,7 @@ quint32 NotificationService::Notify(const QString& appName, quint32 replacesId, 
     notificationApplication_ = appName;
     notificationSummary_ = summary;
     notificationBody_ = body;
+    notificationExpireTimeout_ = expireTimeout;
     ++notificationCount_;
 
     qCInfo(app::notificationLog) << "Notification" << id << "from"
