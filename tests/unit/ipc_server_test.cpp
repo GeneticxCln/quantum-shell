@@ -179,6 +179,7 @@ private slots:
     void aLineThatNeverEndsIsRefusedRatherThanBuffered();
     void aConnectionAnswersMoreThanOneRequest();
     void aFrameWrittenBeforeTheAcceptIsStillRead();
+    void aConnectionFromAnotherUserIsClosedUnanswered();
 
 private:
     QString socketName_;
@@ -469,4 +470,34 @@ void IpcServerTest::aFrameWrittenBeforeTheAcceptIsStillRead() {
 }
 
 QTEST_GUILESS_MAIN(IpcServerTest)
+void IpcServerTest::aConnectionFromAnotherUserIsClosedUnanswered() {
+    // An abstract socket has no permission bits, so who may talk to the shell is decided by the server from
+    // the kernel's record of the connecting process. Shown without a second user by naming a different uid as
+    // the permitted one: this process's own connection is then the foreign one. The request is a real verb the
+    // shell would answer, so an answer arriving is what a missing check looks like.
+    RecordingCapabilities other;
+    quantum::ipc::IPCServer restricted(other, socketName_ + QStringLiteral("-uid"));
+    QCOMPARE(restricted.permittedUid(), ::geteuid());
+    restricted.setPermittedUid(::geteuid() + 1);
+    QString error;
+    QVERIFY2(restricted.listen(&error), qPrintable(error));
+
+    ShellClient client(restricted.socketName());
+    QVERIFY(client.connected());
+    client.send(requestFor(quantum::ipc::verb::BarToggle));
+    // The server drops the connection instead of answering, so the event to wait for is the disconnect — which
+    // costs milliseconds, where waiting out a silence would cost the length of the silence. A server that
+    // answered would leave the socket connected and hold an answer for the read below.
+    QTRY_VERIFY_WITH_TIMEOUT(!client.isConnected(), 3000);
+    QVERIFY2(client.receive(50).isEmpty(), "a connection from a uid that is not permitted was answered");
+    QCOMPARE(other.toggles, 0);
+
+    // And the shell's own uid is served, on the same code path, so the refusal above is the uid and not a
+    // server that refuses everyone.
+    restricted.setPermittedUid(::geteuid());
+    ShellClient own(restricted.socketName());
+    QVERIFY(own.connected());
+    QVERIFY(own.request(requestFor(quantum::ipc::verb::Version)).has_value());
+}
+
 #include "ipc_server_test.moc"

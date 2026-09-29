@@ -1032,6 +1032,14 @@ while the shell believes it is listening. So the name is verified where it exist
 back out of `/proc/net/unix` with the shell running, under the shell's own pid, and the same run shows it
 gone once the shell exits.
 
+Who may connect follows from the same property. An abstract socket has no permission bits, so any local
+process of any user can connect to `\0quantum-shell`, and `state` carries the person's workspaces while
+`bar toggle` changes their session. The server therefore reads the kernel's record of every accepted
+connection (`SO_PEERCRED`) and closes one whose uid is not the shell's own effective uid before reading a
+byte from it — no answer, not even a refusal, that would confirm what is listening — and writes one warning
+on `quantum.shell.ipc`. `ipc-server-test` proves it without a second user by naming a different uid as the
+permitted one, and it fails with the check removed.
+
 Protocol: newline-delimited JSON, one request line per one response line, with every frame carrying the
 protocol revision — `{"version": 1}` alone is the handshake, and is answered exactly as the `version`
 verb is, so a client that knows how to send one frame still finds out it is talking to a shell that
@@ -2628,8 +2636,8 @@ config it writes is per process rather than checked in, because the service dire
 this process's own: `ctest -j4` and the four shuffled shards run two of these binaries at once, and a
 shared path would have one of them rewriting the service file while the other's bus was reading it.
 
-That work also turned up two things about the service that could not stand as they were, and only one of
-them is still open. The first is the handover the `QueueService` request exists for, and it is now fixed
+That work also turned up two things about the service that could not stand as they were, and both are
+now fixed. The first is the handover the `QueueService` request exists for, and it is now fixed
 and pinned. Qt refuses a second export of an object at the same path — measured: the second
 `registerObject` returns false while the first still holds — and `registerService()` used to return there,
 so its second entry, which is the one the bus's report of a handover makes, stopped before publishing: a
@@ -2641,11 +2649,10 @@ are measured rather than reasoned about: asking for a name this connection alrea
 of its own, starts the shell behind it, releases the name, and asserts the shell publishes *and* answers a
 `Notify` addressed to the name; with the export tolerance taken back out it fails on exactly that, which
 is the falsifier. The publish is guarded by the value it sets, so a registration that changes nothing
-emits nothing. The second is still open: a report of the shell's own registration, delivered after
-`stop()` released the name, re-registers it — which is why `stop()` is not final in that direction, and
-why nothing in the shipped shell calls it except a shutdown. It is recorded here and in
-`ENGINEERING_SPEC.md` §6 rather than patched in passing, because the fix belongs with a case that pins it
-— a shell stood down and a report from before the stand-down — which is the service's own test's work.
+emits nothing. The second is fixed as well: `stop()` sets `stopped_` before it releases anything, and a report of the
+shell's own earlier registration, which the bus queues and can deliver after the release, no longer
+re-registers it — `aRegistrationReportFromBeforeStopDoesNotReacquireTheName` pins it. (This paragraph said it
+was still open for as long as the code had already closed it.)
 The bar's test does not depend on either mechanism: it hands the notifications name to a connection of its
 own so that the readout's dark state cannot drift between slots.
 
@@ -2690,7 +2697,10 @@ overlay is `qml/Toast.qml` and `src/app/ToastHost.*`: one surface per output, cr
 notification arrives and withdrawn when its expiry runs out, the expiry resolved as the daemon
 publishes the sender's own `expire_timeout` and `[bar.notifications] timeout_ms` says what a `-1`
 means. A sender that names its own length is honoured rather than clamped; the spec's `0` is never-
-expire, and the configuration's floor is 500 ms. `notification-test` drives the daemon *and* the toast
+expire (and cancels the clock an earlier timed toast armed), and the configuration's floor is 500 ms.
+The sender is told what became of its notification: `NotificationClosed(id, reason)` with 1 when the
+expiry ran out, 3 for its own `CloseNotification` (which also withdraws the toast), 2 when a person clicks the toast
+(which withdraws it) and 4 when a newer notification took the slot. `notification-test` drives the daemon *and* the toast
 on a `dbus-daemon` of its own: a real `Notify` creates one toast per output, the sender's application
 name, summary and body are read off the window, and the expiry the sender asked for is the one the
 toast lives for. What is **not** verified of it: the surface on a real compositor — the toast's unit

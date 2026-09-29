@@ -60,6 +60,22 @@ constexpr auto kBusName = "quantum-shell-notification-test";
 
 }  // namespace
 
+// What a sender that waits on its notifications hears: every `NotificationClosed(id, reason)` the daemon put on
+// the bus, in the order it arrived. Connected from a second connection, so it is the wire that is read and
+// not the service's own C++ signal.
+class ClosedRecorder : public QObject {
+    Q_OBJECT
+public:
+    struct Closed {
+        quint32 id;
+        quint32 reason;
+    };
+    QList<Closed> seen;
+
+public slots:
+    void closed(quint32 id, quint32 reason) { seen.append({id, reason}); }
+};
+
 class NotificationTest : public QObject {
     Q_OBJECT
 
@@ -81,8 +97,20 @@ private slots:
     void aNotificationCreatesOneToastPerOutput();
     void theToastDrawsTheSendersOwnFacts();
     void theExpiryTheSenderAskedForIsTheOneTheToastLivesFor();
+    void aCloseForTheShowingNotificationIsAnsweredWithNotificationClosed();
+    void aCloseForAnIdThatIsNotShowingSaysNothing();
+    void aNewerNotificationClosesTheOneItDisplaced();
+    void aNewIdIsNeverTheOneThatIsShowing();
+    void aSenderClosingItsNotificationWithdrawsTheToast();
+    void aNeverExpiringNotificationOutlivesTheClockAnEarlierOneArmed();
+    void aToastIsNotTheSizeOfTheScreen();
+    void aClickOnAToastDismissesItAndTheSenderIsTold();
+    void becomingTheDaemonCreatesNoToast();
 
 private:
+    void closeOverTheWire(quint32 id);
+    void listenForClosed(ClosedRecorder& recorder);
+    bool settle();
     // The bus this test's daemon registers on, and the one a sender is pointed at.
     qstest::NotificationBus bus_;
     QDBusConnection connection_ = QDBusConnection::sessionBus();
@@ -381,6 +409,9 @@ void NotificationTest::getCapabilitiesReportsWhatTheDaemonHas() {
     const QStringList caps = capabilities.arguments().constFirst().toStringList();
     QVERIFY2(caps.contains(QStringLiteral("body")),
              qPrintable(caps.join(QStringLiteral(", "))));
+    // The toast draws every text as plain text, so markup is a capability the daemon does not have: a sender
+    // told otherwise would send `<b>` and have the characters drawn.
+    QVERIFY2(!caps.contains(QStringLiteral("body-markup")), qPrintable(caps.join(QStringLiteral(", "))));
 }
 
 void NotificationTest::aNotifySendReachesTheService() {
@@ -660,11 +691,21 @@ void NotificationTest::theExpiryTheSenderAskedForIsTheOneTheToastLivesFor() {
     // sender's wish, and a daemon that shortened it to its own default would be answering a notification it
     // was not sent. Five hundred milliseconds is the floor the schema states, so it is the shortest a toast
     // can be asked to live for.
-    QVERIFY2(notify(QStringLiteral("A short toast"), QString(), 0, 500) != 0,
-             "the daemon did not answer a Notify");
+    //
+    // The same expiry is what the sender hears as the spec's reason 1: without a `NotificationClosed` a sender
+    // waiting on it would wait for ever. Read off the wire, in this slot because the wait is the one a real
+    // expiry costs and a second slot would pay it again.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    ClosedRecorder recorder;
+    listenForClosed(recorder);
+    const quint32 id = notify(QStringLiteral("A short toast"), QString(), 0, 500);
+    QVERIFY2(id != 0, "the daemon did not answer a Notify");
 
     QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000);
     QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 1, 5000);
+    QCOMPARE(recorder.seen.constFirst().id, id);
+    QCOMPARE(recorder.seen.constFirst().reason, 1u);
 }
 
 void NotificationTest::serviceRegistersWithQml() {
@@ -681,6 +722,219 @@ void NotificationTest::serviceRegistersWithQml() {
     QVERIFY(meta->indexOfProperty("notificationApplication") >= 0);
     QVERIFY(meta->indexOfProperty("notificationCount") >= 0);
     QVERIFY(meta->indexOfSignal("notificationChanged()") >= 0);
+}
+
+void NotificationTest::closeOverTheWire(quint32 id) {
+    QDBusMessage closeCall = QDBusMessage::createMethodCall(
+        QString::fromLatin1(quantum::dbus::NotificationsServiceName),
+        QString::fromLatin1(quantum::dbus::NotificationsObjectPath),
+        QString::fromLatin1(quantum::dbus::NotificationsInterface), QStringLiteral("CloseNotification"));
+    closeCall << id;
+    const QDBusMessage reply =
+        waitForReply(sender().asyncCall(closeCall), QStringLiteral("CloseNotification"));
+    QCOMPARE(reply.type(), QDBusMessage::ReplyMessage);
+}
+
+// Where a slot that reads `NotificationClosed` starts from: the daemon is up and nothing is showing. The slots
+// around it leave notifications behind that are still on a clock, and a recorder connected while one of them
+// is showing would hear its expiry — or its displacement by this slot's first `Notify` — as though it were
+// this slot's own. Closing what is showing first, and connecting the recorder after, is what makes the
+// signal the recorder hears the one the slot caused: the bus routes a signal when it is emitted, and a
+// match rule added after the close's reply cannot receive it.
+bool NotificationTest::settle() {
+    if (!service_->notificationAvailable()) {
+        service_->start();
+        if (!waitUntilAvailable(5000)) {
+            qWarning("settle: the shell did not become the daemon");
+            return false;
+        }
+    }
+    if (const quint32 showing = service_->currentNotificationId(); showing != 0)
+        closeOverTheWire(showing);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!toasts_->toasts().isEmpty() && elapsed.elapsed() < 5000)
+        QCoreApplication::processEvents();
+    if (!toasts_->toasts().isEmpty())
+        qWarning("settle: %lld toast(s) still up, current id %u", static_cast<long long>(toasts_->toasts().size()),
+                 service_->currentNotificationId());
+    return toasts_->toasts().isEmpty();
+}
+
+void NotificationTest::listenForClosed(ClosedRecorder& recorder) {
+    QVERIFY(sender().connect(QString::fromLatin1(quantum::dbus::NotificationsServiceName),
+                             QString::fromLatin1(quantum::dbus::NotificationsObjectPath),
+                             QString::fromLatin1(quantum::dbus::NotificationsInterface),
+                             QStringLiteral("NotificationClosed"), &recorder, SLOT(closed(quint32, quint32))));
+}
+
+void NotificationTest::aCloseForTheShowingNotificationIsAnsweredWithNotificationClosed() {
+    // The spec's contract for a close the sender asked for: `NotificationClosed(id, 3)`. Read off the wire from
+    // a second connection, because a signal the service emitted in C++ and never exported is one no sender hears.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    ClosedRecorder recorder;
+    listenForClosed(recorder);
+    const quint32 id = notify(QStringLiteral("To be closed"), QString(), 0, 0);
+    QVERIFY(id != 0);
+    QCOMPARE(service_->currentNotificationId(), id);
+
+    closeOverTheWire(id);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 1, 5000);
+    QCOMPARE(recorder.seen.constFirst().id, id);
+    QCOMPARE(recorder.seen.constFirst().reason, 3u);
+    QCOMPARE(service_->currentNotificationId(), 0u);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
+void NotificationTest::aCloseForAnIdThatIsNotShowingSaysNothing() {
+    // Accepted, as the spec requires, and silent: a signal for a notification that was not up would tell a
+    // sender something about a life the daemon never gave it. Both cases — never sent, and already closed.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    ClosedRecorder recorder;
+    listenForClosed(recorder);
+    const quint32 id = notify(QStringLiteral("Closed twice"), QString(), 0, 0);
+    closeOverTheWire(id);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 1, 5000);
+
+    closeOverTheWire(id);
+    closeOverTheWire(id + 1000);
+    closeOverTheWire(0);
+    // Silence is proved by order rather than by waiting for nothing: the bus delivers a sender's signals in the
+    // order they were emitted, so a close that *does* answer, made after the three above, arrives after any
+    // signal they could have caused. Exactly one more signal, and it is the probe's.
+    const quint32 probe = notify(QStringLiteral("Probe"), QString(), 0, 0);
+    closeOverTheWire(probe);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 2, 5000);
+    QCOMPARE(recorder.seen.at(1).id, probe);
+}
+
+void NotificationTest::aNewerNotificationClosesTheOneItDisplaced() {
+    // One notification is showing at a time, so the second takes the first's place, and the first's sender is
+    // told rather than left waiting on a notification nobody will ever close.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    ClosedRecorder recorder;
+    listenForClosed(recorder);
+    const quint32 first = notify(QStringLiteral("First"), QString(), 0, 0);
+    const quint32 second = notify(QStringLiteral("Second"), QString(), 0, 0);
+    QVERIFY(first != 0 && second != 0 && first != second);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 1, 5000);
+    QCOMPARE(recorder.seen.constFirst().id, first);
+    QCOMPARE(recorder.seen.constFirst().reason, 4u);
+
+    // An update of the showing notification displaces nothing.
+    QCOMPARE(notify(QStringLiteral("Second, updated"), QString(), second, 0), second);
+    closeOverTheWire(second);
+    // In order on the wire: the update closed nothing, so the next signal after the displacement is the close.
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 2, 5000);
+    QCOMPARE(recorder.seen.at(1).id, second);
+    QCOMPARE(recorder.seen.at(1).reason, 3u);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
+void NotificationTest::aNewIdIsNeverTheOneThatIsShowing() {
+    // A sender may hand back any `replaces_id` and the daemon echoes it, so the counter can arrive at an id
+    // that is already showing — and two notifications with one id are a close that closes the wrong one.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    const quint32 a = notify(QStringLiteral("Counter"), QString(), 0, 0);
+    // The id the counter would issue next, made the showing one by the sender's own hand.
+    const quint32 taken = a + 1;
+    QCOMPARE(notify(QStringLiteral("Echoed"), QString(), taken, 0), taken);
+    QCOMPARE(service_->currentNotificationId(), taken);
+    const quint32 fresh = notify(QStringLiteral("Fresh"), QString(), 0, 0);
+    QVERIFY(fresh != 0);
+    QVERIFY2(fresh != taken, "a new notification was given the id of the one showing");
+    closeOverTheWire(fresh);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
+void NotificationTest::aSenderClosingItsNotificationWithdrawsTheToast() {
+    // A notification that never expires is withdrawn by its own sender or by nothing: the toast has to follow
+    // the close, or a `CloseNotification` would leave the message on screen for as long as the shell runs.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    const quint32 id = notify(QStringLiteral("Stays"), QString(), 0, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000);
+    // That a `0` is not subject to the configured default is `aNeverExpiring...`'s claim, which waits for it.
+    closeOverTheWire(id);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
+void NotificationTest::aNeverExpiringNotificationOutlivesTheClockAnEarlierOneArmed() {
+    // The earlier notification arms the clock; the one that replaces it says never. A clock left running
+    // would withdraw a toast its sender asked to keep.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    const quint32 timed = notify(QStringLiteral("Timed"), QString(), 0, 500);
+    QVERIFY(timed != 0);
+    const quint32 kept = notify(QStringLiteral("Kept"), QString(), 0, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000);
+    QTest::qWait(700);  // past the 500 ms the earlier notification armed
+    QVERIFY2(!toasts_->toasts().isEmpty(), "the earlier notification's clock withdrew a toast that never expires");
+    closeOverTheWire(kept);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
+void NotificationTest::aToastIsNotTheSizeOfTheScreen() {
+    // Anchored to two edges only, a layer surface that declares no size is proposed the whole output, so the
+    // toast must name its own: a width, and a height that is its text's. Read off the window the toast is,
+    // since the size is what the layer-shell integration sends. Bounds alone would not tell: the offscreen
+    // platform gives a window that declared nothing 640x480, which is inside a 800x600 screen, so the claim
+    // is made the way only a declared size can satisfy — the width is the toast's own, and the height follows
+    // the text, which a default cannot do.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    auto heightFor = [&](const QString& body) {
+        const quint32 id = notify(QStringLiteral("Sized"), body, 0, 0);
+        [&] { QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000); }();
+        QWindow* toast = toasts_->toasts().constFirst();
+        QTest::qWait(50);  // the window's height is a binding on the text, settled once the text is
+        const QSize size = toast->size();
+        closeOverTheWire(id);
+        [&] { QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000); }();
+        return size;
+    };
+
+    const QSize shortBody = heightFor(QStringLiteral("A body"));
+    const QSize longBody = heightFor(QStringLiteral(
+        "A body that is long enough that it cannot sit on one line of a toast this wide, so it wraps onto "
+        "several, and a toast that is as tall as its text has to grow to hold every one of them"));
+    QCOMPARE(shortBody.width(), 380);
+    QCOMPARE(longBody.width(), 380);
+    QVERIFY2(shortBody.height() > 0, "the toast declares no height");
+    QVERIFY2(longBody.height() > shortBody.height(), "the toast's height does not follow its text");
+    for (QScreen* screen : QGuiApplication::screens())
+        QVERIFY2(longBody.height() < screen->geometry().height(), "the toast is as tall as its screen");
+}
+
+void NotificationTest::aClickOnAToastDismissesItAndTheSenderIsTold() {
+    // The spec's reason 2, "dismissed by the user": the click is the only way a person ends a notification that
+    // never expires. Delivered as a real mouse event to the window the toast is, so it goes through the
+    // MouseArea the component declares rather than through a call the test invents.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    ClosedRecorder recorder;
+    listenForClosed(recorder);
+    const quint32 id = notify(QStringLiteral("Click me"), QStringLiteral("body"), 0, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000);
+    QWindow* toast = toasts_->toasts().constFirst();
+    QTRY_VERIFY_WITH_TIMEOUT(toast->isExposed(), 5000);
+    QTest::mouseClick(toast, Qt::LeftButton, Qt::NoModifier, QPoint(30, 20));
+
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 1, 5000);
+    QCOMPARE(recorder.seen.constFirst().id, id);
+    QCOMPARE(recorder.seen.constFirst().reason, 2u);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
+void NotificationTest::becomingTheDaemonCreatesNoToast() {
+    // The service announces a change when the shell takes the notifications name, and that change carries no
+    // notification. Reacting to it as though it did put a blank toast on every output — on any desktop where
+    // the shell waits behind another notifier and inherits the name when it exits. Stood down and started
+    // again here, which is the same announcement; the toast is created synchronously from the signal, so
+    // nothing needs waiting for and the check is immediate.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    service_->stop();
+    QVERIFY(!service_->notificationAvailable());
+    service_->start();
+    QVERIFY(waitUntilAvailable(5000));
+    QCOMPARE(service_->currentNotificationId(), 0u);
+    QVERIFY2(toasts_->toasts().isEmpty(), "becoming the daemon put a toast on screen for no notification");
 }
 
 #include "notification_test.moc"

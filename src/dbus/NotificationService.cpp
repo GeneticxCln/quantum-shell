@@ -61,7 +61,9 @@ bool NotificationService::registerService() {
     // the object at the spec's path. The export is `ExportScriptableSlots` rather than `ExportAllSlots`
     // because `ExportAllSlots` publishes the methods under no interface name, so a caller that addresses
     // `org.freedesktop.Notifications` — every sender in the spec — is told there is no such interface.
-    // `Q_CLASSINFO("D-Bus Interface", ...)` in the header names it, and this export honours that name.
+    // `Q_CLASSINFO("D-Bus Interface", ...)` in the header names it, and this export honours that name. The
+    // scriptable *signals* are exported with it, because `NotificationClosed` is how a sender learns that its
+    // notification is gone.
     //
     // Already exported by *this* connection is not a failure, and the first, queued ask is what leaves it
     // that way: the name was somebody else's, so only the export happened. The later moment this runs again
@@ -70,7 +72,7 @@ bool NotificationService::registerService() {
     // connection's own answer about what is exported at that path, so what is compared here is the bus
     // connection's state rather than a flag of this class that could drift from it.
     const QString objectPath = QString::fromLatin1(NotificationsObjectPath);
-    if (!bus_.registerObject(objectPath, this, QDBusConnection::ExportScriptableSlots)
+    if (!bus_.registerObject(objectPath, this, QDBusConnection::ExportScriptableSlots | QDBusConnection::ExportScriptableSignals)
         && bus_.objectRegisteredAt(objectPath) != this) {
         qCWarning(app::notificationLog) << "Could not register the notifications object on the bus";
         return false;
@@ -134,7 +136,19 @@ quint32 NotificationService::Notify(const QString& appName, quint32 replacesId, 
     // answer with the same id rather than a new one — a client that updates a notification twice and
     // gets two ids has two notifications where it asked for one. Zero is the spec's "no id", and a
     // client cannot be updating a notification it never made, so a zero replaces_id is treated as new.
-    const quint32 id = replacesId != 0 ? replacesId : ++nextId_;
+    //
+    // A new id is one nobody is holding. The counter alone is not that: a sender may hand back any
+    // `replaces_id` it likes and the daemon echoes it, so the counter can arrive at the id that is showing,
+    // and two notifications with one id are a `CloseNotification` that closes the wrong one. It also wraps
+    // to zero, which is the spec's "no id" and is never returned.
+    quint32 id = replacesId;
+    if (id == 0) {
+        do {
+            id = ++nextId_;
+        } while (id == 0 || id == currentId_);
+    }
+    const quint32 displaced = (currentId_ != 0 && currentId_ != id) ? currentId_ : 0;
+    currentId_ = id;
 
     notificationApplication_ = appName;
     notificationSummary_ = summary;
@@ -147,25 +161,40 @@ quint32 NotificationService::Notify(const QString& appName, quint32 replacesId, 
                                  << summary;
 
     emit notificationChanged();
+
+    // The notification this one took the place of is gone from the screen and from the readout, and its
+    // sender is told so rather than left waiting on a notification that will never be closed by anyone.
+    if (displaced != 0)
+        emit NotificationClosed(displaced, static_cast<quint32>(CloseReason::Undefined));
     return id;
 }
 
 void NotificationService::CloseNotification(quint32 id) {
     // The spec's contract: a daemon must accept this call, and a client may send it for a notification
-    // whose id the daemon no longer holds. Answering the call is the whole of the obligation here — the
-    // readout keeps the last summary by design, since closing a notification does not make the text that
-    // was in it into something else.
-    qCInfo(app::notificationLog) << "CloseNotification for id" << id;
+    // whose id the daemon no longer holds — which closes nothing and is not an error. When the id is the
+    // one showing, the notification is closed and the sender hears `NotificationClosed` with the reason
+    // the spec gives for a close it asked for.
+    const bool closed = closeNotification(id, CloseReason::Closed);
+    qCInfo(app::notificationLog) << "CloseNotification for id" << id
+                                 << (closed ? "closed it" : "was not showing");
+}
+
+bool NotificationService::closeNotification(quint32 id, CloseReason reason) {
+    if (id == 0 || id != currentId_)
+        return false;
+    currentId_ = 0;
+    emit NotificationClosed(id, static_cast<quint32>(reason));
+    return true;
 }
 
 QStringList NotificationService::GetCapabilities() {
-    // The capabilities this daemon actually has. `body` and `body-markup` are listed because a body is
-    // carried and published exactly as sent — nothing strips it and nothing parses it, so markup in it
-    // survives into `notificationBody_` — while nothing draws that body yet (the bar's readout draws the
-    // application name and the summary), which is the landed state `QUANTUM_SHELL.md` records. `actions`
-    // and `icons` are not listed, because nothing in the shell acts on either one and a capability a
-    // daemon claims but does not honour is a lie a sender plans around.
-    return {QStringLiteral("body"), QStringLiteral("body-markup")};
+    // The capabilities this daemon actually has. `body` is listed because the toast draws the sender's body.
+    // `body-markup` is not: the toast draws every text as plain text, so a `<b>` in a body would be shown
+    // as the characters the sender typed, and a capability a daemon claims but does not honour is one a
+    // sender plans around — libnotify strips markup for a daemon that does not claim it, which is what
+    // makes plain text the honest answer. `actions` and `icons` are not listed either, because nothing in
+    // the shell acts on either one.
+    return {QStringLiteral("body")};
 }
 
 QString NotificationService::GetServerInformation(QString& vendor, QString& version,
@@ -240,6 +269,7 @@ void NotificationService::stop() {
 }
 
 void NotificationService::clearReading() {
+    currentId_ = 0;
     notificationAvailable_ = false;
     notificationSummary_.clear();
     notificationBody_.clear();

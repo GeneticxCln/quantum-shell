@@ -147,6 +147,12 @@ public:
 
         // Sent from a timer even when the delay is zero, so that every reply in this test takes the asynchronous
         // path — a reply that arrived inline would let a caller pass without ever handling "not yet".
+        // Held rather than sent while `holdReplies` is on: a reply that is *certainly* still in the daemon when
+        // the test moves the name is one no timer has to be faster than, which is what a fixed delay is not.
+        if (holding_) {
+            held_.append(reply);
+            return true;
+        }
         const int delay = delayMs_;
         QTimer::singleShot(delay, this, [this, reply] { connection_.send(reply); });
         return true;
@@ -186,6 +192,15 @@ public:
     int callsFor(const QString& path) const { return callsByPath_.value(path); }
     void setDelayMs(int ms) { delayMs_ = ms; }
 
+    // While on, every reply is kept instead of sent. `deliverHeld` sends what was kept and stays in whatever mode
+    // it was in; `holdReplies(false)` alone does not send anything that is already held.
+    void holdReplies(bool hold) { holding_ = hold; }
+    void deliverHeld() {
+        const QList<QDBusMessage> replies = std::exchange(held_, {});
+        for (const QDBusMessage& reply : replies)
+            connection_.send(reply);
+    }
+
 private:
     // The properties one object has under one interface, or nothing when the object has never been described —
     // which is the daemon's `UnknownInterface` case rather than an object with an empty property map.
@@ -203,6 +218,8 @@ private:
     QHash<QString, int> callsByPath_;
     int calls_ = 0;
     int delayMs_ = 0;
+    bool holding_ = false;
+    QList<QDBusMessage> held_;
 };
 
 // The chain this test's daemon publishes, in the shape NetworkManager publishes it: the manager names the
@@ -894,23 +911,32 @@ void NetworkTest::aReplyFromADaemonThatIsGoneIsNotApplied()
 {
     publishChain(*daemon_);
     QVERIFY(daemon_->own());
-    // Every reply the daemon sends takes 150 ms — an in-process round trip is under two milliseconds, so this
-    // is two orders of magnitude of headroom rather than a race — and the walk is therefore certainly in flight
-    // when the name goes away.
-    daemon_->setDelayMs(150);
+    // Every reply the daemon would send is held until the test lets it go, and the test waits until the daemon
+    // has *received* the first `GetAll` before the name goes: the walk is in flight because the double says it
+    // has the request, not because a delay is longer than however long the bus takes to answer a release. (The
+    // first form of this slot delayed every reply by 150 ms and assumed that outlasted the release; on a loaded
+    // machine the release itself took longer, the reply landed first, and the slot failed one order in some
+    // hundreds.)
+    daemon_->holdReplies(true);
 
     QSignalSpy readings(service_.get(), &quantum::dbus::NetworkService::readingChanged);
     service_->start(connection_, QString::fromLatin1(NetworkManagerService));
-    // The name leaves the bus while the first `GetAll` is still on its way. This is the shape of a daemon
-    // restart, and of a stopping shell: a reply that arrives afterwards belongs to a daemon nobody is following.
+    QVERIFY2(QTest::qWaitFor([this] { return daemon_->calls() >= 1; }, 5000),
+             "the service never asked the daemon anything");
+    // The name leaves the bus while the first `GetAll` is unanswered. This is the shape of a daemon restart, and
+    // of a stopping shell: a reply that arrives afterwards belongs to a daemon nobody is following. The held
+    // replies are sent only now, after the bus has announced the departure, and given time to be dispatched.
     daemon_->release();
-    QTest::qWait(600);
+    daemon_->deliverHeld();
+    QTest::qWait(300);
 
     QVERIFY2(!service_->available(), "a reply from a daemon that had gone was applied as a reading");
     QCOMPARE(readings.count(), 0);
 
-    // And the service recovers: a new daemon on the name is followed, with the same delay in place, which is what
+    // And the service recovers: a new daemon on the name is followed, with replies flowing again, which is what
     // says the walk works at all rather than this slot passing because nothing ever arrives.
+    daemon_->holdReplies(false);
+    daemon_->setDelayMs(150);
     QVERIFY(daemon_->own());
     QVERIFY(QTest::qWaitFor([this] { return service_->available(); }, 5000));
     QCOMPARE(service_->connectionName(), QStringLiteral("Victor Salin 5 GHz"));

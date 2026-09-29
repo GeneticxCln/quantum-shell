@@ -33,6 +33,8 @@ ToastHost::ToastHost(quantum::dbus::NotificationService& service, quantum::confi
     // going away is a toast destroyed with it rather than one drawing nothing for the rest of its expiry.
     connect(&service, &quantum::dbus::NotificationService::notificationChanged, this,
             &ToastHost::handleNotificationChanged);
+    connect(&service, &quantum::dbus::NotificationService::NotificationClosed, this,
+            &ToastHost::handleNotificationClosed);
     connect(qGuiApp, &QGuiApplication::screenRemoved, this, &ToastHost::handleScreenRemoved);
 
     // One timer for the whole set rather than one per window: a single notification is one message on every
@@ -40,7 +42,7 @@ ToastHost::ToastHost(quantum::dbus::NotificationService& service, quantum::confi
     // and stopped when the toasts are withdrawn.
     expiryTimer_ = new QTimer(this);
     expiryTimer_->setSingleShot(true);
-    connect(expiryTimer_, &QTimer::timeout, this, &ToastHost::dismissToasts);
+    connect(expiryTimer_, &QTimer::timeout, this, &ToastHost::expire);
 }
 
 QList<QWindow*> ToastHost::toasts() const
@@ -64,11 +66,48 @@ void ToastHost::handleNotificationChanged()
         return;
     }
 
+    // The service also announces a change when the shell *becomes* the daemon — at a handover from another
+    // notifier that exited, say — and that change carries no notification: there is no id showing and the
+    // reading is empty. A toast created for it would be a blank message on every output for as long as the
+    // default expiry, so a change is a toast only when a notification is what changed.
+    if (service_->currentNotificationId() == 0)
+        return;
+
     showToasts();
+}
+
+void ToastHost::handleNotificationClosed(quint32 id)
+{
+    // The sender closed the notification the toasts are showing, so what they show is gone. A close for a
+    // notification an earlier toast showed is not this one's business: the newest took the surface.
+    if (id != 0 && id == shownId_)
+        dismissToasts();
+}
+
+void ToastHost::dismissFromToast()
+{
+    // Every output's toast shows the same message, so a click on any of them is a click on the notification.
+    const quint32 id = shownId_;
+    dismissToasts();
+    service_->closeNotification(id, quantum::dbus::CloseReason::Dismissed);
+}
+
+void ToastHost::expire()
+{
+    // Dismissed first and reported after, so the daemon's own `NotificationClosed` finds nothing left to
+    // dismiss. The sender hears that its notification expired — the spec's reason 1 — rather than nothing.
+    const quint32 id = shownId_;
+    dismissToasts();
+    service_->closeNotification(id, quantum::dbus::CloseReason::Expired);
 }
 
 void ToastHost::showToasts()
 {
+    // An entry whose window or screen is gone would make the loop below build a second window for an output
+    // that still has an entry, so it is dropped before the outputs are walked.
+    toasts_.removeIf([](const Toast& toast) { return toast.window == nullptr || toast.screen == nullptr; });
+    shownId_ = service_->notificationAvailable() ? service_->currentNotificationId() : 0;
+
     const QString application = service_->notificationApplication();
     const QString summary = service_->notificationSummary();
     const QString body = service_->notificationBody();
@@ -114,6 +153,10 @@ void ToastHost::showToasts()
         // The screen is assigned here and the surface is presented after it, for the reason the bar's host
         // does: a layer surface is created against an output when the window is mapped and the role is
         // assigned once, so this has to happen first.
+        // The window's own signal, connected by name because the signal is declared in the QML component, and
+        // queued: the slot deletes the window, and Qt refuses (fatally) to destroy an object while one of its
+        // own QML handlers is still running — which a direct connection from the click handler would be.
+        connect(window, SIGNAL(dismissRequested()), this, SLOT(dismissFromToast()), Qt::QueuedConnection);
         window->setScreen(screen);
         window->present();
         toasts_.append(Toast{screen, window});
@@ -126,8 +169,12 @@ void ToastHost::showToasts()
     // what the reading's other half does above.
     const int sent = service_->notificationExpireTimeout();
     const int expiry = sent < 0 ? config_->bar()->notifications()->timeoutMs() : sent;
+    // A notification that never expires must also cancel the clock an earlier one armed: left running, it
+    // would withdraw a toast the sender asked to keep.
     if (expiry > 0)
         expiryTimer_->start(expiry);
+    else
+        expiryTimer_->stop();
 
     if (created)
         recheckVisibility();
@@ -135,6 +182,8 @@ void ToastHost::showToasts()
 
 void ToastHost::dismissToasts()
 {
+    shownId_ = 0;
+    expiryTimer_->stop();
     if (toasts_.isEmpty())
         return;
 

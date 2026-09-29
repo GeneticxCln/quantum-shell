@@ -33,6 +33,15 @@ inline constexpr auto NotificationsServiceName = "org.freedesktop.Notifications"
 inline constexpr auto NotificationsObjectPath = "/org/freedesktop/Notifications";
 inline constexpr auto NotificationsInterface = "org.freedesktop.Notifications";
 
+// Why a notification is closed, the spec's own numbers: they are what `NotificationClosed` carries, and a
+// sender that waits on a notification decides what to do next from them.
+enum class CloseReason : quint32 {
+    Expired = 1,    // the expiry ran out
+    Dismissed = 2,  // a person dismissed it (nothing in the shell offers that yet, so nothing sends it)
+    Closed = 3,     // the sender's own `CloseNotification`
+    Undefined = 4,  // the spec's "undefined/reserved": used when a newer notification took the only slot
+};
+
 class NotificationService : public QObject {
     Q_OBJECT
     // The interface name a sender addresses. `ExportScriptableSlots` publishes the slots under this
@@ -109,6 +118,21 @@ public:
     // shell is queued behind another daemon, which is the handover that must still ask.
     void stop();
 
+    // The id of the notification the daemon is showing now: the one the last `Notify` answered, until it is
+    // closed or the name is released. Zero is the spec's "no id", and it is what this reads when nothing is
+    // up. There is one because the shell draws one notification at a time — the newest wins — so a second
+    // notification is one the first stopped being.
+    quint32 currentNotificationId() const { return currentId_; }
+
+    // Closes the notification with this id if it is the one showing, tells the sender with the spec's
+    // `NotificationClosed` signal and returns whether it did. An id that is not showing — never sent, or
+    // already closed — closes nothing and says nothing, because a signal for a notification that was not up
+    // would be a claim to a sender about a life the daemon never gave it. The toast's expiry and the sender's
+    // own `CloseNotification` both come through here, so the reason is the only thing that tells them apart.
+    // The reading is not touched: the readout keeps the last summary by design, and a close does not
+    // announce a change of reading.
+    bool closeNotification(quint32 id, CloseReason reason);
+
     // The registered type name, mirror of the module constants the other services use.
     static void registerQmlSingleton(NotificationService& service);
 
@@ -116,6 +140,10 @@ signals:
     // One signal for every property, because every property moves together: a notification replaces the
     // summary, the body and the count in one step.
     void notificationChanged();
+
+    // The spec's `NotificationClosed(id, reason)`, exported on the bus for the sender that is waiting on the
+    // notification and also the way the toast learns that the one it shows is gone.
+    Q_SCRIPTABLE void NotificationClosed(quint32 id, quint32 reason);
 
 public slots:
     // The spec's methods, answered on the bus. `Notify` is the one a sender uses to deliver a
@@ -142,6 +170,9 @@ private:
     QDBusConnection bus_ = QDBusConnection::sessionBus();
     QDBusServiceWatcher* serviceWatcher_ = nullptr;
     quint32 nextId_ = 0;
+    // The notification showing now, zero when none is. Cleared with the reading when the name is released,
+    // and without a signal then: a daemon that has stopped being the daemon has no notification to close.
+    quint32 currentId_ = 0;
     bool notificationAvailable_ = false;
     // Set by `stop()`, cleared by `start()`. Separate from `notificationAvailable_`: that one is also false
     // while this shell is queued behind another daemon and must still ask when the bus reports the name.

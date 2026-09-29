@@ -67,6 +67,12 @@ schema refuses a configured value outside the prefix; integration refuses the su
   `version` request. `ProtocolVersion = 1`; bumped only when an existing frame changes
   meaning, never for a new verb.
 - `MaxLineBytes = 64 KiB`; oversize line or unterminated buffer → refuse and close.
+- Peer identity: an abstract socket has no permission bits, so every accepted connection
+  is checked against the kernel's record of the connecting process (`SO_PEERCRED`) and a
+  uid other than the server's own effective uid (`IPCServer::permittedUid()`) is closed
+  before a byte is read — no answer, no refusal frame, one warning on
+  `quantum.shell.ipc`. A connection whose uid the kernel will not report is refused the
+  same way. `setPermittedUid` exists so the refusal is testable without a second user.
 - Non-JSON / non-object / version mismatch → refuse naming the problem and close.
   Unknown verb, missing argument, unknown config key → refuse by name, connection stays
   open.
@@ -464,13 +470,13 @@ registers the scale test, which starts a compositor of its own and takes no lock
 | No slot passes on a sibling's leftovers | `slot-order-independence` (each slot solo + reverse) | `ctest --preset dev -R slot-order-independence` |
 | Order robustness, 96 seeded passes × 4 shards | `slot-order-randomised-shard-{1..4}` (pair floor 95%, triple + quad coverage reported) | `ctest --preset dev -R slot-order-randomised` |
 | niri wire, events, model, actions, outputs, layouts, reconnect | `niri-*-test` (10 binaries, test-double end of the socket) | `ctest --preset dev -R 'niri-(version\|ipc\|event-stream\|state\|actions\|output\|keyboard\|outputs\|service\|reconnect)-test'` |
-| Bar gestures + arrangement + each of the four memory forms and the empty state drawn from a `/proc` of the test's own with fixed numbers + volume widget states + both volume units drawn from readings the test hands the widget's own rule (silence, mute and no-reading included) with the token driven through a real file + the volume round trip measured against the group's live contents with a minute moved on mid-trip, each group width waited for because a positioner lays out a frame later + one slot that reads the machine's `/proc` and asserts the first reading is a baseline rather than a percentage + the network readout's three flags driven through a real file and its whole rendering rule exercised with the daemon's tokens (every state, wifi/ethernet, a signal of zero against no signal, portal/limited/absent, the empty state) + the notification readout end to end, against the shell as the desktop's notification daemon on a `dbus-daemon` of the test's own: a sender's `Notify` over the wire, the application name and the summary the widget then draws, the empty state as a dash before anything is sent, the flag hiding the readout and giving its room back **with a reading in hand**, and the readout dark again once another connection holds the notifications name | `bar-interaction-test` (shipped QML, real engine offscreen, real window events) | `ctest --preset dev -R bar-interaction-test` |
+| Bar gestures + every text the bar draws read as plain text + arrangement + each of the four memory forms and the empty state drawn from a `/proc` of the test's own with fixed numbers + volume widget states + both volume units drawn from readings the test hands the widget's own rule (silence, mute and no-reading included) with the token driven through a real file + the volume round trip measured against the group's live contents with a minute moved on mid-trip, each group width waited for because a positioner lays out a frame later + one slot that reads the machine's `/proc` and asserts the first reading is a baseline rather than a percentage + the network readout's three flags driven through a real file and its whole rendering rule exercised with the daemon's tokens (every state, wifi/ethernet, a signal of zero against no signal, portal/limited/absent, the empty state) + the notification readout end to end, against the shell as the desktop's notification daemon on a `dbus-daemon` of the test's own: a sender's `Notify` over the wire, the application name and the summary the widget then draws, the empty state as a dash before anything is sent, the flag hiding the readout and giving its room back **with a reading in hand**, and the readout dark again once another connection holds the notifications name | `bar-interaction-test` (shipped QML, real engine offscreen, real window events) | `ctest --preset dev -R bar-interaction-test` |
 | `/proc` parsers, refusals, cadence + its record | `sysmon-test` (fixtures + 2 real-`/proc` slots) | `ctest --preset dev -R sysmon-test` |
 | Props parse, cube-root, decibel conversion (unity 0, silence `-INFINITY`, above-unity positive), wheel math in both units (a dB notch as a fixed gain, its clamp, the percentage notch's growing dB span, silence), write pod, refusals, the unit's token round trip, `[bar.audio]` rules incl. the two scale tokens | `audio-test` (no daemon) | `ctest --preset dev -R audio-test` |
-| The notifications name taken on a bus of the test's own, `Notify` answered with an id, `replaces_id` echoed as the caller's own id, the sender's text published verbatim, the spec's other two methods, a queued shell publishing when the holder leaves, the shell dark while another connection holds the name, and the real `notify-send` reaching it (probed first, that one slot skipped by name on a machine that cannot run it) | `notification-test` (starts a `dbus-daemon` of its own; the shell takes the name there) | `ctest --preset dev -R notification-test` |
+| The notifications name taken on a bus of the test's own, `Notify` answered with an id, `replaces_id` echoed as the caller's own id, the sender's text published verbatim, the spec's other two methods, `NotificationClosed` for a close, an expiry and a displaced notification (read off the wire from a second connection) and silence for an id that is not showing, ids that never collide with an echoed `replaces_id`, the toast's size (declared width, height following the text), an earlier notification's clock not withdrawing a never-expiring toast, a queued shell publishing when the holder leaves, the shell dark while another connection holds the name, and the real `notify-send` reaching it (probed first, that one slot skipped by name on a machine that cannot run it) | `notification-test` (starts a `dbus-daemon` of its own; the shell takes the name there) | `ctest --preset dev -R notification-test` |
 | Every D-Bus name against the daemon's own spelling, its state/connectivity/device-type numbers as the widget's tokens (unknown refused, not guessed), the property map read through its variants (bare and `QDBusVariant` both, text for a number and a number for text refused, `ao` arriving as a raw `QDBusArgument`), a change that overtakes an object's first read not undone by the reply, the reading the chain adds up to (wifi/ethernet/unassociated/offline/clamped/unknown state), and the service against a NetworkManager test double on a private bus: the reading arriving, following `PropertiesChanged` with **zero** calls to the daemon counted after the first read, a chain that moves with the objects it left no longer followed, a daemon leaving and arriving, a reply from a daemon that is gone dropped, an object that refuses leaving the rest standing, an unreachable bus refused with a record | `network-test` (starts a `dbus-daemon` of its own; the test double owns the name there) | `ctest --preset dev -R network-test` |
 | Schema, diffing, `Config` bindings, compile-time mirrors (defaults, floors, token list, key paths) | `config-test`, `config-watcher-test` (scratch dirs) | `ctest --preset dev -R config` |
-| IPC frames, refusals, server over a real socket, capabilities vs real service | `ipc-protocol-test`, `ipc-server-test`, `ipc-capabilities-test` | `ctest --preset dev -R ipc` |
+| IPC frames, refusals, a connection from another uid closed unanswered, server over a real socket, capabilities vs real service | `ipc-protocol-test`, `ipc-server-test`, `ipc-capabilities-test` | `ctest --preset dev -R ipc` |
 | Record format + category names | `app-logging-test` | `ctest --preset dev -R app-logging-test` |
 | Every number this document states, and every §2.6 singleton row, against the code that holds them | `spec-values-test` (reads this file, links the libraries, walks seven service meta-objects and the Config tree, reads the bar window's header) | `ctest --preset dev -R spec-values-test` |
 | Reconciliation contract (budget, exhaustion fails, settled-vs-missed diagnosis) | `snapshot-reconcile-test` (scripted readings) | `ctest --preset dev -R snapshot-reconcile-test` |
@@ -500,7 +506,7 @@ role/namespace refusals on `quantum.shell.wayland`. IPC: every refusal on
 `quantum.shell.ipc` with reason; answers silent. Notification daemon — the one
 service the shell *is* rather than a reader of — the name taken, queued behind
 another daemon or refused (including a bus that was never connected), every `Notify`
-with the id answered, every `CloseNotification`, and the reading withdrawn on the
+with the id answered, every `CloseNotification` (and whether it closed anything), and the reading withdrawn on the
 bus's own answer, all on `quantum.shell.notification`. Shell lifecycle (version, protocol,
 config path, socket bind result) on `quantum.shell`.
 
@@ -514,26 +520,36 @@ config path, socket bind result) on `quantum.shell`.
 - Wheels (strip + volume) act per event with no cooldown; niri's own bind rate-limits
   at 150 ms. Mouse 1:1; touchpad flings multi-step.
 - Narrow bar: centre group overlaps side groups rather than yielding.
-- Notifications: the daemon is real, the surface is not. `NotificationService` owns
-  `org.freedesktop.Notifications` (queued, never stolen) and answers the spec's four methods, but
-  `CloseNotification` only logs — the readout keeps the summary it was sent, because a close does not
-  make the text that was in it into something else — and the ids the daemon issues are not tracked, so a
-  close for an id it never sent is accepted too. `GetCapabilities` advertises `body` and `body-markup`  and nothing else: the body is carried and published exactly as sent, nothing strips or parses it, and
-  nothing draws it yet. `actions`, `icons` and `hints` are ignored, so a sender cannot offer a button and
-  nothing in the shell acts on a notification after it arrives; `expire_timeout` is **not** ignored — it is
-  published as the spec hands it (`notificationExpireTimeout`, `§2.6`) and resolved by the toast, which is
-  what a `-1`, a `0` and a positive count each mean. The readout
-  draws one notification — the sender's application name and summary — and there is no history, while
-  the toast stack **is** landed: `qml/Toast.qml` and `src/app/ToastHost.*`, one surface per output,
-  created when a notification arrives and withdrawn when its expiry runs out (QUANTUM_SHELL.md §
-  Development Roadmap § Phase 2). `History.qml` and a history list are not landed at all. A shell that is
-  queued behind another notifier publishes nothing and draws nothing, which is a life the shell can
-  spend entirely on a desktop that runs its own daemon — measured on the author's, where `swaync` holds
-  the name and the shell's own record says so.
-- A shell stood down with `stop()` can come back. The bus's own report of a registration is what re-enters
-  `registerService()`, so a report of the shell's own earlier registration arriving after `stop()`
-  re-registers it. Nothing in the shipped shell calls `stop()` except a shutdown; `bar-interaction-test`
-  hands the name to its own connection so the shell stays dark for the slots that need that state.
+- Notifications: the daemon and the toast are real; history and interaction are not.
+  `NotificationService` owns `org.freedesktop.Notifications` (queued, never stolen) and answers
+  the spec's four methods. One notification is showing at a time — the newest wins — and the
+  daemon tracks its id (`currentNotificationId()`): `CloseNotification` for that id closes it and
+  the sender hears `NotificationClosed(id, 3)`; the toast's expiry ends it with reason 1; a newer
+  notification that takes the slot closes the older one with reason 4 (the spec's
+  "undefined/reserved"); a close for any other id is accepted and says nothing. New ids skip the
+  id that is showing and never wrap to zero, because a sender may hand back any `replaces_id`
+  and the daemon echoes it. `GetCapabilities` advertises `body` and nothing else: the toast
+  draws the body, but every text is drawn as plain text, so `body-markup` would be a capability
+  claimed and not honoured (libnotify strips markup for a daemon that does not claim it).
+  `actions`, `icons` and `hints` are ignored, so a sender cannot offer a button (no
+  `ActionInvoked`); the only thing a person can do to a notification is click its toast, which
+  withdraws it and tells the sender reason 2 (`Dismissed`); `expire_timeout` is published as the spec hands it
+  (`notificationExpireTimeout`, `§2.6`) and resolved by `ToastHost`: `-1` is
+  `[bar.notifications] timeout_ms`, `0` never expires — and cancels the clock an earlier timed
+  notification armed — and a positive count is milliseconds. Becoming the daemon announces a change but no notification (`currentNotificationId()` stays zero), so it creates no toast. The bar's readout draws one
+  notification (the sender's application name and summary) and keeps it after a close, because a
+  close does not make the text that was in it into something else. `History.qml`, a history
+  list and Do Not Disturb are not landed at all. A shell that is queued behind another notifier
+  publishes nothing and draws nothing, which is a life the shell can spend entirely on a
+  desktop that runs its own daemon — measured on the author's, where `swaync` holds the name.
+- Layer surfaces: on an axis that is not stretched the client's size wins over the compositor's
+  echo of an earlier request (a configure that lags a resize would otherwise put the window back
+  to the old size), and `set_size` is sent again when the *proposed* size changes — a live edit
+  of `bar.height`, a toast whose text made it taller. The compositor's number is used only where
+  the window declared nothing, which proposes the whole output on that axis; the toast
+  therefore declares both (`width: 380`, height from its text). Verified against a headless
+  sway (wlroots layer-shell), not against niri: the niri live tests that would pin it are not
+  written, and this environment has no niri.
 - Reconcile cannot catch a dropped event later overwritten by a newer one on the same
   field — agreement after the fact is agreement.
 - Volume writes refuse past 64 channels; above-unity volumes are read, never written

@@ -56,6 +56,11 @@ public:
 Q_SIGNALS:
     void anyVisibleChanged();
 
+private Q_SLOTS:
+    // The toast's own request, from a click: the notification is closed with the spec's "dismissed by the
+    // user" and the toasts are withdrawn.
+    void dismissFromToast();
+
 private:
     struct Toast
     {
@@ -66,6 +71,8 @@ private:
     };
 
     void handleNotificationChanged();
+    void handleNotificationClosed(quint32 id);
+    void expire();
     void showToasts();
     void dismissToasts();
     void handleScreenRemoved(QScreen* screen);
@@ -76,6 +83,9 @@ private:
     QList<Toast> toasts_;
     QTimer* expiryTimer_ = nullptr;
     bool anyVisible_ = false;
+    // The id of the notification the toasts are showing, zero when none are: what a `NotificationClosed`
+    // is compared with, and what the expiry reports as expired.
+    quint32 shownId_ = 0;
 
     // Not owned, and not weak pointers either: the service and the configuration are created by the
     // composition root and live as long as the shell does, unlike the windows this class holds. Those are its

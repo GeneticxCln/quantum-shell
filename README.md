@@ -25,7 +25,8 @@ treats as the worst.
 - Clicking a workspace capsule focuses that workspace in niri; the wheel over the strip moves to the
   workspace below or above.
 - A notification daemon that takes the bus name, answers `Notify`, `CloseNotification`,
-  `GetCapabilities` and `GetServerInformation`, and publishes the sender's own text.
+  `GetCapabilities` and `GetServerInformation`, publishes the sender's own text, and tells a sender when
+  its notification is closed, expired or replaced (`NotificationClosed`).
 - A toast per output: a layer surface on the top layer, drawn over what is on screen rather than shrinking
   it, withdrawn when its expiry runs out — the expiry a sender sent, or the shell's default for a sender
   that sent `-1`.

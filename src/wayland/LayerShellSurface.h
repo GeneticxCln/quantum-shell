@@ -53,6 +53,12 @@ private:
     // this is what the compositor has the surface listed under, whatever a later edit to the window says.
     QString mNamespace;
     QSize mPendingSize;
+    // The size last sent with `set_size`. A window that is resized after it is mapped — the bar's height
+    // edited in the configuration, a toast whose text changed — proposes a different size, and only a
+    // proposal that differs from this one is worth a request: the compositor's own configure resizes the
+    // window too, and a stretched axis always proposes zero, so comparing proposals is what keeps a resize
+    // the compositor made from being answered with another commit.
+    QSize mProposedSize;
     // False until the compositor's initial configure has been acknowledged. Qt paints, and therefore
     // attaches a buffer, only while the window reports itself exposed — so this is what holds Qt back
     // for the one round trip the protocol requires, rather than a race against the render loop.

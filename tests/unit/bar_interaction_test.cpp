@@ -336,6 +336,7 @@ private slots:
 
     void theNotificationReadoutDrawsWhatTheSenderWrote();
     void theNotificationReadoutFollowsItsConfiguration();
+    void everyTextTheBarDrawsIsPlainText();
     void theBatteryReadoutSitsInTheTrailingGroupAndShowsItsEmptyState();
     void theBatteryReadoutDrawsWhatTheDaemonReportsAndTheConfigurationNames();
 
@@ -1654,6 +1655,25 @@ void BarInteractionTest::theNotificationReadoutFollowsItsConfiguration() {
     // slot's last edit. The daemon itself is already left in the state the rest of the file expects: the shell
     // is not the name's owner.
     config_.apply(ConfigValues{});
+}
+
+void BarInteractionTest::everyTextTheBarDrawsIsPlainText() {
+    // Qt reads a string as rich text when it looks like markup, and the bar draws strings other processes
+    // wrote: a notification's summary, a track's title, a network's name. Left at the default, a sender's
+    // `<b>` restyled the bar (measured on a live compositor: the readout's baseline shifted and the tag was
+    // consumed) and an `<img>` is a way to make the shell open a file. The claim is about every text in the
+    // bar rather than the ones that exist today, so a widget added later is held to it too.
+    QVERIFY(bar_ != nullptr);
+    int texts = 0;
+    for (QQuickItem* item : bar_->findChildren<QQuickItem*>()) {
+        if (!item->inherits("QQuickText"))
+            continue;
+        ++texts;
+        QVERIFY2(item->property("textFormat").toInt() == int(Qt::PlainText),
+                 qPrintable(QStringLiteral("a text in the bar reads its string as markup: %1")
+                                .arg(item->property("text").toString())));
+    }
+    QVERIFY2(texts >= 10, qPrintable(QStringLiteral("only %1 texts were found in the bar").arg(texts)));
 }
 
 void BarInteractionTest::theBatteryReadoutSitsInTheTrailingGroupAndShowsItsEmptyState() {

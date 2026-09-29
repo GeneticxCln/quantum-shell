@@ -64,6 +64,18 @@ LayerShellSurface::LayerShellSurface(QtWaylandClient::QWaylandWindow *window,
         sendConfiguration();
         commit();
     });
+
+    // `set_size` is the client's half of the size, and it has to follow the window: a height edited while
+    // the surface is up changed the exclusive zone through the connection above and left the compositor
+    // holding the old size, so the surface stayed as tall as it was mapped while Qt drew a different one.
+    const auto resendIfProposalChanged = [this] {
+        if (!isInitialized() || proposedSize() == mProposedSize)
+            return;
+        sendConfiguration();
+        commit();
+    };
+    QObject::connect(mLayerWindow, &QWindow::widthChanged, this, resendIfProposalChanged);
+    QObject::connect(mLayerWindow, &QWindow::heightChanged, this, resendIfProposalChanged);
 }
 
 LayerShellSurface::~LayerShellSurface()
@@ -126,6 +138,7 @@ void LayerShellSurface::sendConfiguration()
         return;
 
     const QSize size = proposedSize();
+    mProposedSize = size;
     set_size(static_cast<uint32_t>(size.width()), static_cast<uint32_t>(size.height()));
     set_anchor(static_cast<uint32_t>(mLayerWindow->anchors().toInt()));
     set_exclusive_zone(mLayerWindow->exclusiveZone());
@@ -154,10 +167,25 @@ void LayerShellSurface::zwlr_layer_surface_v1_configure(uint32_t serial, uint32_
     // event niri is waiting for, and a buffer that arrives before it is a protocol error.
     ack_configure(serial);
 
-    // Zero on an axis is the compositor leaving the size to the client, so fall back to the size the
-    // window asked for rather than collapsing to nothing.
-    const int resolvedWidth = width > 0 ? static_cast<int>(width) : mLayerWindow->width();
-    const int resolvedHeight = height > 0 ? static_cast<int>(height) : mLayerWindow->height();
+    // Which size wins depends on the axis. On a stretched one the compositor chooses, so its number is the
+    // window's. On any other the client named the size with `set_size`, and a configure arriving now may be
+    // the answer to an *earlier* request — measured on a live compositor, a toast whose text made it taller
+    // was configured back to the height it had been mapped at, and resizing the window to that stale answer
+    // both clipped its text and turned the change into another request. So the window's own size stands, and
+    // the compositor's is used only where the window declared nothing (zero), which is the case the
+    // screen-sized proposal exists for.
+    const LayerShellWindow::Anchors anchors = mLayerWindow->anchors();
+    const bool stretchesHorizontally =
+        anchors.testFlag(LayerShellWindow::LeftEdge) && anchors.testFlag(LayerShellWindow::RightEdge);
+    const bool stretchesVertically =
+        anchors.testFlag(LayerShellWindow::TopEdge) && anchors.testFlag(LayerShellWindow::BottomEdge);
+    const auto resolve = [](bool stretched, uint32_t compositor, int declared) {
+        if (!stretched && declared > 0)
+            return declared;
+        return compositor > 0 ? static_cast<int>(compositor) : declared;
+    };
+    const int resolvedWidth = resolve(stretchesHorizontally, width, mLayerWindow->width());
+    const int resolvedHeight = resolve(stretchesVertically, height, mLayerWindow->height());
     mPendingSize = QSize(resolvedWidth, resolvedHeight);
 
     mConfigured = true;

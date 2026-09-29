@@ -979,21 +979,37 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    shell publishes *and* answers a `Notify` sent to the name — and with the export
                    tolerance removed it fails on exactly that, which is the falsifier. Publishing is
                    guarded by the value it sets, so a registration that changes nothing emits nothing.
-                   A third is still open, and recorded rather than patched: after a `stop()`, a report
-                   of the shell's own earlier registration re-registers it, which is why
-                   `stop()` is not final and why nothing in the shipped shell calls it except a
-                   shutdown. What the service does not do at all is recorded beside them:
-                   `CloseNotification` only logs, the ids it issues are not tracked, and
-                   `GetCapabilities` advertises `body` and `body-markup` over a body that is carried and
-                   published but that nothing draws yet. The open one is in `ENGINEERING_SPEC.md` §6 with
-                   the rest of the honest limitations, and the fix is in `QUANTUM_SHELL.md` with its
-                   measurement.
+                   The third, after a `stop()` a report of the shell's own earlier registration
+                   re-registering it, was fixed by `stopped_` and is pinned by
+                   `aRegistrationReportFromBeforeStopDoesNotReacquireTheName`; the prose here and in
+                   `ENGINEERING_SPEC.md` §6 called it open after the code had closed it.
 
-                   `main`'s most recent commits are `a848eb5`, `474d8e1`, `bcdd521`, `a449a39`,
-                   `3420d9b` and `f89873f`. The notification daemon and the changes that go with it are
-                   uncommitted; everything through `3420d9b` — the bar's wiring, the IPC and the
-                   logging, the arrangement, the system status, the volume module and the battery and
-                   media readouts — is committed.
+                   The audit that followed found and fixed what the tests could not see, some of it only
+                   by running the built shell on a headless sway (wlroots' layer-shell, since this
+                   environment has no niri). The toast declared no size, and a layer surface anchored to
+                   two edges that declares nothing is proposed the whole output, so every notification was
+                   a screen-sized opaque surface on the top layer; it now declares its width and takes its
+                   height from its text. `set_size` was sent once and never again, so a live edit of
+                   `bar.height` moved the exclusive zone and left the compositor's surface at the old
+                   size; it now follows the window, and a configure that lags a resize no longer puts the
+                   window back (measured: the toast's height flapped 44, 108, 44 before that). The daemon
+                   now tracks the showing notification's id: `CloseNotification` emits
+                   `NotificationClosed(id, 3)`, the toast's expiry emits it with reason 1, a notification
+                   that takes the slot closes the older one with 4, ids skip the id that is showing, and
+                   `body-markup` is no longer advertised because every text is drawn as plain text. The
+                   toast did not cancel an earlier timed notification's clock when a never-expiring one
+                   replaced it, and becoming the daemon (a handover from another notifier that exited) put a blank toast on every output, because the service announces that change and the toast host treated every announcement as a notification. Every `Text` in the bar is plain text, because a sender's `<b>` restyled
+                   the readout and an `<img>` in a title is a file reference. The IPC socket, which has no
+                   permission bits, checks the peer's uid (`SO_PEERCRED`) and closes any other user's
+                   connection unanswered. The shuffled order check found a timing assumption in `network-test`'s `aReplyFromADaemonThatIsGoneIsNotApplied` (it delayed replies by 150 ms and assumed that outlasted a bus release; under load it did not, one order in some hundreds); the test double now holds replies until the daemon has received the request and the name has gone. That slot proves the property end to end through several layers of guards in the service, so no single-guard mutation fails it, which is stated rather than claimed. Building the CI matrix's Clang half found what GCC does not report: two unused `this` captures (`BatteryService`, `NetworkService`) and an unused constant in `media-test` whose comment claimed a compile-time guard on the QML type name that did not exist — `MediaService` now declares `QmlTypeName` and the test holds it. Not done, and recorded rather than claimed: a live niri test
+                   for the resent `set_size` (this environment cannot run niri); the toast's panel
+                   colours are literals because `[bar.colors]` has no background key and a config key is
+                   public interface.
+
+                   The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
+                   packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,
+                   the toast and the battery and media readouts are committed. The audit changes above
+                   are on the branch `claude/loving-euler-notbh4`.
 ```
 
 Consequences:

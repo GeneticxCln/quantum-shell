@@ -23,6 +23,11 @@ LayerShellWindow {
     required property string toastSummary
     required property string toastBody
 
+    // A person clicked the toast, which is the spec's "dismissed by the user". The window only says so;
+    // `ToastHost` is what withdraws the surface and tells the sender, because both are lifetime and a bus
+    // signal, and neither belongs in QML.
+    signal dismissRequested()
+
     layer: LayerShellWindow.Top
     anchors: LayerShellWindow.TopEdge | LayerShellWindow.RightEdge
     keyboardInteractivity: LayerShellWindow.NoKeyboard
@@ -38,9 +43,14 @@ LayerShellWindow {
     // person did not ask for, and the spec's own model of a notification is one that is drawn and then goes.
     exclusiveZone: 0
 
-    // The toast's own size, on the axis it is not stretched along: anchored to the top and right edges only,
-    // so the width is this window's and the compositor chooses the height — a notification is as tall as its
-    // text, and the text is the one thing here that knows how long it is.
+    // The toast's own size. Anchored to the top and right edges only, so neither axis is stretched and the
+    // *client* names both: a surface that declared nothing would be proposed the whole screen, which is a
+    // toast the size of the desktop. The width is fixed; the height is the text's — the column's own
+    // implicit height and its margins — so a notification is as tall as what it says, and the layer-shell
+    // integration sends the new size again when the text changes it.
+    width: 380
+    height: content.implicitHeight + 44
+
     readonly property color foreground: Config.bar.colors.foreground
     readonly property color muted: Config.bar.colors.muted
     readonly property color accent: Config.bar.colors.accent
@@ -48,7 +58,8 @@ LayerShellWindow {
     readonly property int fontSize: Config.bar.font.size
     readonly property int fontWeight: Config.bar.font.weight
 
-    color: "#12131a"
+    // Transparent, so what is drawn is the panel below and not a rectangle behind its rounded corners.
+    color: "transparent"
     visible: false
 
     Rectangle {
@@ -58,13 +69,23 @@ LayerShellWindow {
         radius: 8
         color: "#1a1b26"
 
-        Column {
+        MouseArea {
             anchors.fill: parent
+            acceptedButtons: Qt.LeftButton
+            onClicked: toastWindow.dismissRequested()
+        }
+
+        Column {
+            id: content
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
             anchors.margins: 12
             spacing: 4
 
             Text {
                 id: application
+                textFormat: Text.PlainText
                 text: toastWindow.toastApplication
                 color: toastWindow.muted
                 font.family: toastWindow.face
@@ -76,6 +97,7 @@ LayerShellWindow {
 
             Text {
                 id: summary
+                textFormat: Text.PlainText
                 text: toastWindow.toastSummary
                 color: toastWindow.foreground
                 font.family: toastWindow.face
@@ -87,6 +109,9 @@ LayerShellWindow {
 
             Text {
                 id: body
+                textFormat: Text.PlainText
+                maximumLineCount: 8
+                elide: Text.ElideRight
                 text: toastWindow.toastBody
                 color: toastWindow.foreground
                 font.family: toastWindow.face

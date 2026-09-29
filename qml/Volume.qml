@@ -122,6 +122,9 @@ Item {
         spacing: 5
 
         Text {
+            // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+            // markup, which would let a sender restyle the bar or reference an image from a track title.
+            textFormat: Text.PlainText
             text: "VOL"
             color: root.muted
             font.family: root.face
@@ -130,6 +133,9 @@ Item {
         }
 
         Text {
+            // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+            // markup, which would let a sender restyle the bar or reference an image from a track title.
+            textFormat: Text.PlainText
             objectName: "volumeValue"
             text: root.reading()
             // Muted is drawn in the accent colour, so the state is legible at a glance rather than only

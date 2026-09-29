@@ -13,6 +13,9 @@ import QtQuick
 // text would differ, so the shell wakes once a minute instead of sixty times, and the minute shown is
 // never stale by a second either.
 Text {
+    // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+    // markup, which would let a sender restyle the bar or reference an image from a track title.
+    textFormat: Text.PlainText
     id: clock
 
     property string face

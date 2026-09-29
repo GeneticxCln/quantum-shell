@@ -54,6 +54,10 @@ public:
     QString playbackStatus() const { return reading_.playbackStatus; }
 
     // Register this service as a QML singleton named "MediaService"
+    // The name QML binds to, declared once and used by the registration, so a test can hold the spelling in
+    // `qml/Media.qml` against it — the way the other services' names are held.
+    inline static constexpr auto QmlTypeName = "MediaService";
+
     static void registerQmlSingleton(MediaService& service);
 
     // Start monitoring MPRIS players on the given bus. Called after the QML engine loads.
