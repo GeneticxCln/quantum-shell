@@ -102,8 +102,15 @@ foreach(qs_qml IN LISTS QS_QML_FILES)
         set(QS_GROUP_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "Toast\\.qml$")
         set(QS_TOAST_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
+    elseif(qs_qml MATCHES "NotificationHistory\\.qml$")
+        set(QS_HISTORY_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     endif()
 endforeach()
+if(NOT DEFINED QS_HISTORY_QML)
+    message(FATAL_ERROR
+        "no NotificationHistory.qml is named in QS_QML_FILES, so notification-test would have no history panel "
+        "to load and would fail at run time instead of here.")
+endif()
 if(NOT DEFINED QS_TOAST_QML)
     message(FATAL_ERROR
         "no Toast.qml is named in QS_QML_FILES, so notification-test would have no toast to load and would "
@@ -173,7 +180,7 @@ target_link_libraries(notification-test PRIVATE quantum-shell-toasts quantum-she
 target_compile_definitions(notification-test PRIVATE FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
 # The component itself, from the source tree rather than a resource of this binary: the packed copy loading in
 # a real shell is what the layer-shell live tests assert, on the built binary.
-target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QML}")
+target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QML}" QS_HISTORY_QML="${QS_HISTORY_QML}")
 
 # The configuration schema, the QObject tree QML binds to, and the watcher that keeps the two in step
 # with the file. Nothing here needs a compositor or a display: the schema is a pure function of a string,

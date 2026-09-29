@@ -70,6 +70,7 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTest>
 #include <QTimer>
@@ -336,6 +337,7 @@ private slots:
     void theNetworkReadoutFollowsItsConfiguration();
 
     void theNotificationReadoutDrawsWhatTheSenderWrote();
+    void theNotificationReadoutsClicksSwitchDoNotDisturbAndTheHistoryPanel();
     void theNotificationReadoutFollowsItsConfiguration();
     void everyTextTheBarDrawsIsPlainText();
     void theBatteryReadoutSitsInTheTrailingGroupAndShowsItsEmptyState();
@@ -1604,6 +1606,59 @@ void BarInteractionTest::theNotificationReadoutDrawsWhatTheSenderWrote() {
     QCOMPARE(widget->width(), 0.0);
     QVERIFY2(notifications_->notificationSummary().isEmpty(),
              "the shell stood down but kept the reading it was last sent");
+}
+
+// The two gestures on the readout, and what they are the service's: a left click is Do Not Disturb and a right
+// click is the history panel. Both land on the service's own properties — the readout holds no state of its
+// own for either — so what is asserted is the service after a real click and what the widget draws from it: the
+// "DND" label exists on screen only while the mode is on.
+void BarInteractionTest::theNotificationReadoutsClicksSwitchDoNotDisturbAndTheHistoryPanel() {
+    if (!notificationBus_.isRunning())
+        QSKIP(qPrintable(notificationBus_.error()));
+
+    QQuickItem* widget = itemNamed(QStringLiteral("notifications"));
+    QVERIFY2(widget != nullptr, "the bar has no notification readout");
+
+    // A bar as wide as a real one. The test's window is 400 px, at which the bar's groups overlap — a documented
+    // limitation of a bar too narrow for its widgets — and the readout can sit under another widget's mouse
+    // area, so a click aimed at its centre would be that widget's. The width goes back at the end.
+    const QSize originalSize = window_->size();
+    window_->resize(1600, originalSize.height());
+    auto restoreWidth = qScopeGuard([&] { window_->resize(originalSize); });
+
+    theShellBecomesTheNotificationDaemon();
+    QVERIFY2(deliverNotification(QStringLiteral("Click Test"), QStringLiteral("Something to click on"),
+                                 QString()) != 0,
+             "the shell's notification daemon did not answer a Notify call");
+    QTRY_VERIFY_WITH_TIMEOUT(widget->isVisible() && widget->width() > 30, 5000);
+    const QPointF overReadout = centreOf(widget);
+
+    // Reset to the states this slot starts from, whatever an earlier slot left.
+    notifications_->setNotificationDoNotDisturb(false);
+    notifications_->setNotificationHistoryOpen(false);
+    QQuickItem* label = itemNamed(QStringLiteral("notificationDoNotDisturb"));
+    QVERIFY2(label != nullptr, "the readout has no Do Not Disturb label");
+    QTRY_VERIFY_WITH_TIMEOUT(!label->isVisible(), 5000);
+
+    QTest::mouseClick(window_.get(), Qt::LeftButton, Qt::NoModifier, overReadout.toPoint());
+    QTRY_VERIFY_WITH_TIMEOUT(notifications_->notificationDoNotDisturb(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(label->isVisible(), 5000);
+    QVERIFY2(!notifications_->notificationHistoryOpen(), "a left click opened the history panel");
+
+    // The label is on the readout, so the widget is wider by it: the click target moved, and a second click at
+    // the centre of what is there now switches it off again.
+    QTRY_VERIFY_WITH_TIMEOUT(widget->width() > 0, 5000);
+    QTest::mouseClick(window_.get(), Qt::LeftButton, Qt::NoModifier, centreOf(widget).toPoint());
+    QTRY_VERIFY_WITH_TIMEOUT(!notifications_->notificationDoNotDisturb(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!label->isVisible(), 5000);
+
+    QTest::mouseClick(window_.get(), Qt::RightButton, Qt::NoModifier, centreOf(widget).toPoint());
+    QTRY_VERIFY_WITH_TIMEOUT(notifications_->notificationHistoryOpen(), 5000);
+    QVERIFY2(!notifications_->notificationDoNotDisturb(), "a right click switched Do Not Disturb");
+    QTest::mouseClick(window_.get(), Qt::RightButton, Qt::NoModifier, centreOf(widget).toPoint());
+    QTRY_VERIFY_WITH_TIMEOUT(!notifications_->notificationHistoryOpen(), 5000);
+
+    theShellStopsBeingTheNotificationDaemon();
 }
 
 // The readout's configuration, with a reading in hand.

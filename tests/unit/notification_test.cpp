@@ -15,6 +15,7 @@
 #include "dbus/NotificationService.h"
 #include "NotificationBus.h"
 
+#include "app/HistoryHost.h"
 #include "app/ToastHost.h"
 #include "config/Config.h"
 #include "wayland/LayerShellWindow.h"
@@ -34,12 +35,15 @@
 #include "config/Config.h"
 
 #include <QQmlEngine>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QUrl>
 
 #include <QGuiApplication>
 #include <QQmlEngine>
 #include <QScreen>
 #include <QWindow>
+#include <QPointer>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -106,6 +110,13 @@ private slots:
     void aToastIsNotTheSizeOfTheScreen();
     void aClickOnAToastDismissesItAndTheSenderIsTold();
     void becomingTheDaemonCreatesNoToast();
+    void theHistoryHoldsEveryNotificationNewestFirstAndDropsTheOldest();
+    void anUpdateOfANotificationReplacesItsHistoryEntry();
+    void theHistoryOutlivesAClose();
+    void anEntryCanBeRemovedAndTheHistoryCleared();
+    void doNotDisturbShowsNoToastAndStillRecordsAndTellsTheSender();
+    void switchingDoNotDisturbOnTakesDownTheToastThatIsUp();
+    void theHistoryPanelExistsWhileTheServiceSaysItIsOpen();
 
 private:
     void closeOverTheWire(quint32 id);
@@ -121,6 +132,7 @@ private:
     // business: a toast created in one slot and expected in another would be a lifetime that outlives the slot
     // that made it.
     std::unique_ptr<quantum::app::ToastHost> toasts_;
+    std::unique_ptr<quantum::app::HistoryHost> history_;
     std::unique_ptr<QQmlEngine> engine_;
     quantum::config::Config config_;
 
@@ -183,11 +195,18 @@ void NotificationTest::initTestCase() {
     // made of is registered the way the composition root does: a component whose root is a
     // `LayerShellWindow` cannot load in an engine that has not been told about it.
     engine_ = std::make_unique<QQmlEngine>();
+    // The service the panel binds to, registered once for the whole binary and as the very object under test: a
+    // QML singleton is looked up by name, so a second instance registered in a slot would be the one a later
+    // component found — and would be gone by then.
+    quantum::dbus::NotificationService::registerQmlSingleton(*service_);
     qmlRegisterType<QuantumShell::LayerShellWindow>("QuantumShell", 1, 0, "LayerShellWindow");
     quantum::config::Config::registerQmlSingleton(config_);
     toasts_ = std::make_unique<quantum::app::ToastHost>(*service_, config_, *engine_,
                                                         QUrl::fromLocalFile(QStringLiteral(QS_TOAST_QML)));
     QVERIFY2(toasts_->ready(), qPrintable(toasts_->componentError()));
+    history_ = std::make_unique<quantum::app::HistoryHost>(*service_, *engine_,
+                                                           QUrl::fromLocalFile(QStringLiteral(QS_HISTORY_QML)));
+    QVERIFY2(history_->ready(), qPrintable(history_->componentError()));
 
     // The toast's default expiry, made short here for the same reason every wait in this suite is short: a
     // `-1` resolves to whatever the configuration says, and the suite waits for that expiry, so the value is
@@ -709,11 +728,12 @@ void NotificationTest::theExpiryTheSenderAskedForIsTheOneTheToastLivesFor() {
 }
 
 void NotificationTest::serviceRegistersWithQml() {
-    // The QML side resolves `NotificationService` by that name, so the registration is interface. The
-    // properties are read off the meta-object because that is the spelling a QML binding resolves
-    // against, and a `Q_PROPERTY` renamed on one side would fail here rather than at load time.
-    quantum::dbus::NotificationService service;
-    service.registerQmlSingleton(service);
+    // The QML side resolves `NotificationService` by that name, so the registration is interface. It is made once,
+    // in `initTestCase`, with the service every slot uses — a component that names the singleton loads against it,
+    // which is what `theHistoryPanelExistsWhileTheServiceSaysItIsOpen` relies on. What is checked here is the
+    // properties, read off the meta-object because that is the spelling a QML binding resolves against, and a
+    // `Q_PROPERTY` renamed on one side would fail here rather than at load time.
+    quantum::dbus::NotificationService& service = *service_;
 
     const QMetaObject* meta = service.metaObject();
     QVERIFY(meta->indexOfProperty("notificationAvailable") >= 0);
@@ -722,6 +742,11 @@ void NotificationTest::serviceRegistersWithQml() {
     QVERIFY(meta->indexOfProperty("notificationApplication") >= 0);
     QVERIFY(meta->indexOfProperty("notificationCount") >= 0);
     QVERIFY(meta->indexOfSignal("notificationChanged()") >= 0);
+    for (const char* name : {"notificationHistory", "notificationHistoryCount", "notificationDoNotDisturb",
+                             "notificationHistoryOpen"})
+        QVERIFY2(meta->indexOfProperty(name) >= 0, name);
+    QVERIFY(meta->indexOfMethod("clearNotificationHistory()") >= 0);
+    QVERIFY(meta->indexOfMethod("removeFromNotificationHistory(quint32)") >= 0);
 }
 
 void NotificationTest::closeOverTheWire(quint32 id) {
@@ -742,6 +767,11 @@ void NotificationTest::closeOverTheWire(quint32 id) {
 // signal the recorder hears the one the slot caused: the bus routes a signal when it is emitted, and a
 // match rule added after the close's reply cannot receive it.
 bool NotificationTest::settle() {
+    // The state a slot before this one may have left that is not a notification: the mode, the panel and the
+    // history, which the slots below count and would otherwise inherit.
+    service_->setNotificationDoNotDisturb(false);
+    service_->setNotificationHistoryOpen(false);
+    service_->clearNotificationHistory();
     if (!service_->notificationAvailable()) {
         service_->start();
         if (!waitUntilAvailable(5000)) {
@@ -935,6 +965,167 @@ void NotificationTest::becomingTheDaemonCreatesNoToast() {
     QVERIFY(waitUntilAvailable(5000));
     QCOMPARE(service_->currentNotificationId(), 0u);
     QVERIFY2(toasts_->toasts().isEmpty(), "becoming the daemon put a toast on screen for no notification");
+}
+
+void NotificationTest::theHistoryHoldsEveryNotificationNewestFirstAndDropsTheOldest() {
+    // Do Not Disturb for the flood, so sixty toasts are not created and withdrawn for a claim about a list; the
+    // mode does not change what is recorded, which is the next slots' claim.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    service_->setNotificationDoNotDisturb(true);
+    const int total = quantum::dbus::NotificationHistoryLimit + 10;
+    for (int i = 0; i < total; ++i)
+        QVERIFY(notify(QStringLiteral("Entry %1").arg(i), QStringLiteral("body %1").arg(i), 0, 0) != 0);
+
+    QCOMPARE(service_->notificationHistoryCount(), quantum::dbus::NotificationHistoryLimit);
+    const QVariantList history = service_->notificationHistory();
+    QCOMPARE(history.size(), quantum::dbus::NotificationHistoryLimit);
+    // Newest first, the oldest ten gone: the first is the last one sent, the last is the eleventh.
+    QCOMPARE(history.constFirst().toMap().value(QStringLiteral("summary")).toString(),
+             QStringLiteral("Entry %1").arg(total - 1));
+    QCOMPARE(history.constLast().toMap().value(QStringLiteral("summary")).toString(),
+             QStringLiteral("Entry %1").arg(total - quantum::dbus::NotificationHistoryLimit));
+    const QVariantMap first = history.constFirst().toMap();
+    QCOMPARE(first.value(QStringLiteral("application")).toString(), QStringLiteral("Quantum Shell Test"));
+    QCOMPARE(first.value(QStringLiteral("body")).toString(), QStringLiteral("body %1").arg(total - 1));
+    QVERIFY(first.value(QStringLiteral("received")).toLongLong() > 0);
+    QVERIFY(first.value(QStringLiteral("id")).toUInt() != 0);
+    service_->setNotificationDoNotDisturb(false);
+}
+
+void NotificationTest::anUpdateOfANotificationReplacesItsHistoryEntry() {
+    // A sender that reports progress ten times is one notification with a newer state: one row, at the front,
+    // with the latest text — not ten copies of one thing.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    service_->setNotificationDoNotDisturb(true);
+    const quint32 a = notify(QStringLiteral("Download"), QStringLiteral("10%"), 0, 0);
+    const quint32 b = notify(QStringLiteral("Other"), QString(), 0, 0);
+    QCOMPARE(service_->notificationHistoryCount(), 2);
+    QCOMPARE(notify(QStringLiteral("Download"), QStringLiteral("90%"), a, 0), a);
+    QCOMPARE(service_->notificationHistoryCount(), 2);
+    const QVariantList history = service_->notificationHistory();
+    QCOMPARE(history.at(0).toMap().value(QStringLiteral("id")).toUInt(), a);
+    QCOMPARE(history.at(0).toMap().value(QStringLiteral("body")).toString(), QStringLiteral("90%"));
+    QCOMPARE(history.at(1).toMap().value(QStringLiteral("id")).toUInt(), b);
+    service_->setNotificationDoNotDisturb(false);
+}
+
+void NotificationTest::theHistoryOutlivesAClose() {
+    // What is in the history is what was sent, not what is showing: closing a notification, and letting one
+    // expire, leave its entry where it was.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    const quint32 id = notify(QStringLiteral("Closed later"), QString(), 0, 0);
+    QCOMPARE(service_->notificationHistoryCount(), 1);
+    closeOverTheWire(id);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+    QCOMPARE(service_->notificationHistoryCount(), 1);
+}
+
+void NotificationTest::anEntryCanBeRemovedAndTheHistoryCleared() {
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    service_->setNotificationDoNotDisturb(true);
+    const quint32 a = notify(QStringLiteral("One"), QString(), 0, 0);
+    const quint32 b = notify(QStringLiteral("Two"), QString(), 0, 0);
+    QSignalSpy changed(service_.get(), &quantum::dbus::NotificationService::notificationHistoryChanged);
+    service_->removeFromNotificationHistory(a + b + 1000);  // an id the history does not hold
+    QCOMPARE(changed.count(), 0);
+    service_->removeFromNotificationHistory(a);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(service_->notificationHistoryCount(), 1);
+    QCOMPARE(service_->notificationHistory().constFirst().toMap().value(QStringLiteral("id")).toUInt(), b);
+    service_->clearNotificationHistory();
+    QCOMPARE(service_->notificationHistoryCount(), 0);
+    QCOMPARE(changed.count(), 2);
+    service_->clearNotificationHistory();  // already empty: nothing changed, nothing announced
+    QCOMPARE(changed.count(), 2);
+    service_->setNotificationDoNotDisturb(false);
+}
+
+void NotificationTest::doNotDisturbShowsNoToastAndStillRecordsAndTellsTheSender() {
+    // The mode stops a notification being *shown*; the daemon's part — receiving, answering, recording — is
+    // unchanged. The sender is told it is over (the spec's "undefined" reason) rather than left waiting on a
+    // notification nothing will ever close.
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    ClosedRecorder recorder;
+    listenForClosed(recorder);
+    service_->setNotificationDoNotDisturb(true);
+    const quint32 id = notify(QStringLiteral("Quiet"), QStringLiteral("not shown"), 0, 0);
+    QVERIFY(id != 0);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 1, 5000);
+    QCOMPARE(recorder.seen.constFirst().id, id);
+    QCOMPARE(recorder.seen.constFirst().reason, 4u);
+    QCOMPARE(toasts_->toasts().size(), 0);
+    QCOMPARE(service_->notificationHistoryCount(), 1);
+    QCOMPARE(service_->notificationSummary(), QStringLiteral("Quiet"));  // the readout still has it
+
+    // Off again, a notification is shown as before.
+    service_->setNotificationDoNotDisturb(false);
+    const quint32 shown = notify(QStringLiteral("Loud"), QString(), 0, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000);
+    closeOverTheWire(shown);
+    QTRY_COMPARE_WITH_TIMEOUT(toasts_->toasts().size(), 0, 5000);
+}
+
+void NotificationTest::switchingDoNotDisturbOnTakesDownTheToastThatIsUp() {
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    ClosedRecorder recorder;
+    listenForClosed(recorder);
+    const quint32 id = notify(QStringLiteral("On screen"), QString(), 0, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!toasts_->toasts().isEmpty(), 5000);
+    service_->setNotificationDoNotDisturb(true);
+    QCOMPARE(toasts_->toasts().size(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.seen.size(), 1, 5000);
+    QCOMPARE(recorder.seen.constFirst().id, id);
+    QCOMPARE(recorder.seen.constFirst().reason, 4u);
+    // Switching it off shows nothing: what was suppressed is in the history, and replaying it would be a burst
+    // of stale toasts.
+    service_->setNotificationDoNotDisturb(false);
+    QTest::qWait(50);
+    QCOMPARE(toasts_->toasts().size(), 0);
+}
+
+void NotificationTest::theHistoryPanelExistsWhileTheServiceSaysItIsOpen() {
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    service_->setNotificationDoNotDisturb(true);
+    QVERIFY(notify(QStringLiteral("In the panel"), QStringLiteral("a body"), 0, 0) != 0);
+    QVERIFY(history_->window() == nullptr);
+
+    service_->setNotificationHistoryOpen(true);
+    QVERIFY2(history_->window() != nullptr, "the panel was not created when the service said it was open");
+    QWindow* panel = history_->window();
+    QTRY_VERIFY_WITH_TIMEOUT(panel->isVisible(), 5000);
+    // The namespace is the frozen public name; the size is the panel's own (a surface anchored to two edges that
+    // declared none would be proposed the whole output), and it holds its content: the list has the entry.
+    QCOMPARE(panel->property("layerNamespace").toString(), QStringLiteral("quantum-shell-notification-history"));
+    QCOMPARE(panel->width(), 400);
+    QVERIFY2(panel->height() > 0 && panel->height() < panel->screen()->geometry().height(),
+             qPrintable(QString::number(panel->height())));
+    QQuickItem* list = panel->findChild<QQuickItem*>(QStringLiteral("historyList"));
+    QVERIFY2(list != nullptr, "the panel has no history list");
+    QTRY_COMPARE_WITH_TIMEOUT(list->property("count").toInt(), 1, 5000);
+    QQuickItem* empty = panel->findChild<QQuickItem*>(QStringLiteral("historyEmpty"));
+    QVERIFY(empty != nullptr);
+    QVERIFY2(!empty->isVisible(), "the empty state is drawn over a list that has an entry");
+
+    // Emptied, the list is gone and the line that says so is drawn: a check on the count, not a label that is
+    // always there.
+    service_->clearNotificationHistory();
+    QTRY_COMPARE_WITH_TIMEOUT(list->property("count").toInt(), 0, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(empty->isVisible(), 5000);
+
+    // Closed by the service, the surface is destroyed — the object itself, not only the host's pointer to it:
+    // deleting the window is what destroys the layer surface.
+    QPointer<QWindow> closed = panel;
+    service_->setNotificationHistoryOpen(false);
+    QVERIFY(history_->window() == nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(closed.isNull(), 5000);
+
+    // And the other direction: a panel the compositor closes is not open any more, so the next toggle opens it
+    // instead of doing nothing.
+    service_->setNotificationHistoryOpen(true);
+    QVERIFY(history_->window() != nullptr);
+    history_->window()->hide();
+    QTRY_VERIFY_WITH_TIMEOUT(!service_->notificationHistoryOpen(), 5000);
+    service_->setNotificationDoNotDisturb(false);
 }
 
 #include "notification_test.moc"

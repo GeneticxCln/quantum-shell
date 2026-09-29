@@ -182,7 +182,7 @@ Real files in this repository:
                          categories and the record format every other library logs through; and the
                          three capabilities the IPC exposes, each a delegation to the service, the
                          schema or the bars
-  qml/                   the bar: the layer-shell window, its arrangement, the workspace strip bound
+  qml/                   the bar and its notification surfaces (`Toast.qml`, `NotificationHistory.qml`): the layer-shell window, its arrangement, the workspace strip bound
                          to NiriService and acted on through NiriActions (a click focuses the
                          workspace a capsule names, the wheel moves to the one below or above), and the
                          system status, which draws the readouts `Config.bar.system` names and the form
@@ -1035,6 +1035,20 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    can be stale for up to a minute, and the fix is a logind or `timerfd` subscription this
                    environment cannot verify; and 0.5 KiB per bar hide/show pair is still unaccounted for,
                    with no owner identified.
+
+                   The roadmap's next item landed after the audits: **notification history and Do Not
+                   Disturb**. `NotificationService` keeps the last 50 notifications (newest first, an
+                   update by id replaces its entry, entries survive a close), Do Not Disturb stops a toast
+                   being shown while the daemon still receives, answers and records and tells the sender
+                   `NotificationClosed(id, 4)`, and the bar readout's left click switches the mode while its
+                   right click opens `qml/NotificationHistory.qml` — one layer surface, namespace
+                   `quantum-shell-notification-history`, created and destroyed by `src/app/HistoryHost.*`
+                   as the service's `notificationHistoryOpen` moves. The mode and the panel's state are
+                   runtime state on the service: no config key and no IPC verb were added. Covered by nine
+                   new `notification-test` slots (cap, replace-in-place, removal, clear, mode, the toast
+                   taken down, the panel's namespace, size, list and lifetime) and a click slot in
+                   `bar-interaction-test`, each mutation-checked, and verified on a headless sway with a
+                   virtual pointer. Not verified: niri; and the panel is not dismissed by a click elsewhere.
 
                    The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
                    packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,

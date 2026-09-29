@@ -6,6 +6,7 @@
 #include <QDBusConnectionInterface>
 #include <QDBusMessage>
 #include <QDBusServiceWatcher>
+#include <QDateTime>
 #include <QQmlEngine>
 #include <QVariantMap>
 
@@ -160,6 +161,7 @@ quint32 NotificationService::Notify(const QString& appName, quint32 replacesId, 
                                  << (appName.isEmpty() ? QStringLiteral("(unnamed)") : appName) << ":"
                                  << summary;
 
+    recordInHistory(id, appName, summary, body);
     emit notificationChanged();
 
     // The notification this one took the place of is gone from the screen and from the readout, and its
@@ -275,6 +277,68 @@ void NotificationService::clearReading() {
     notificationBody_.clear();
     notificationApplication_.clear();
     emit notificationChanged();
+}
+
+void NotificationService::recordInHistory(quint32 id, const QString& application, const QString& summary,
+                                          const QString& body) {
+    // An update of a notification the history already holds replaces that entry rather than adding a second: a
+    // sender that reports progress ten times is one notification with a newer state, and ten rows would be
+    // ten copies of one thing. It moves to the front, because it is the newest thing that was sent.
+    for (qsizetype i = 0; i < history_.size(); ++i) {
+        if (history_.at(i).id == id) {
+            history_.removeAt(i);
+            break;
+        }
+    }
+    history_.prepend({id, application, summary, body, QDateTime::currentMSecsSinceEpoch()});
+    while (history_.size() > NotificationHistoryLimit)
+        history_.removeLast();
+    emit notificationHistoryChanged();
+}
+
+QVariantList NotificationService::notificationHistory() const {
+    QVariantList list;
+    list.reserve(history_.size());
+    for (const HistoryEntry& entry : history_) {
+        list.append(QVariantMap{{QStringLiteral("id"), entry.id},
+                                {QStringLiteral("application"), entry.application},
+                                {QStringLiteral("summary"), entry.summary},
+                                {QStringLiteral("body"), entry.body},
+                                {QStringLiteral("received"), entry.received}});
+    }
+    return list;
+}
+
+void NotificationService::clearNotificationHistory() {
+    if (history_.isEmpty())
+        return;
+    history_.clear();
+    emit notificationHistoryChanged();
+}
+
+void NotificationService::removeFromNotificationHistory(quint32 id) {
+    for (qsizetype i = 0; i < history_.size(); ++i) {
+        if (history_.at(i).id == id) {
+            history_.removeAt(i);
+            emit notificationHistoryChanged();
+            return;
+        }
+    }
+}
+
+void NotificationService::setNotificationDoNotDisturb(bool on) {
+    if (doNotDisturb_ == on)
+        return;
+    doNotDisturb_ = on;
+    qCInfo(app::notificationLog) << "Do Not Disturb" << (on ? "on: toasts are not shown" : "off");
+    emit notificationDoNotDisturbChanged();
+}
+
+void NotificationService::setNotificationHistoryOpen(bool open) {
+    if (historyOpen_ == open)
+        return;
+    historyOpen_ = open;
+    emit notificationHistoryOpenChanged();
 }
 
 void NotificationService::registerQmlSingleton(NotificationService& service) {

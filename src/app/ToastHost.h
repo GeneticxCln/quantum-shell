@@ -72,6 +72,7 @@ private:
 
     void handleNotificationChanged();
     void handleNotificationClosed(quint32 id);
+    void handleDoNotDisturbChanged();
     void expire();
     void showToasts();
     void dismissToasts();

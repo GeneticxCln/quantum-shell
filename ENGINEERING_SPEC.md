@@ -50,10 +50,13 @@ Renaming anything here breaks scripts, QML files, or clients. Approval required.
 ### 2.1 Layer-shell namespaces
 
 Prefix `quantum-shell-` (`LayerNamespacePrefix`, mirrored in
-`LayerShellIntegration.cpp`). Two surfaces today: `quantum-shell-bar` (the bar,
-`qml/Main.qml`) and `quantum-shell-toast` (the toast, `qml/Toast.qml` — a literal
+`LayerShellIntegration.cpp`). Three surfaces today: `quantum-shell-bar` (the bar,
+`qml/Main.qml`), `quantum-shell-toast` (the toast, `qml/Toast.qml` — a literal
 in the QML rather than a configured key, because a notification is a surface of its
-own kind and not a readout's setting). Enforced twice:
+own kind and not a readout's setting) and `quantum-shell-notification-history` (the
+history panel, `qml/NotificationHistory.qml`, likewise a literal; one surface on the
+primary output while `notificationHistoryOpen` is true, 400 wide and as tall as its
+content up to 520, keyboard interactivity none, no exclusive zone). Enforced twice:
 schema refuses a configured value outside the prefix; integration refuses the surface
 (no role, record on `quantum.shell.wayland`).
 
@@ -151,7 +154,7 @@ coerced). Unusable file (non-TOML, bad `schema_version`) applies nothing.
 | `NetworkService` | `available`, `state`, `connectionName`, `interfaceName`, `deviceKind`, `hasStrength`, `strength`, `connectivity` | `state`/`deviceKind`/`connectivity` are tokens (`disconnected\|connecting\|connected`, `wifi\|ethernet\|other`, `none\|portal\|limited\|full`); `connectivity` is empty when the daemon has not said, which is not `full`. `strength` 0 while `hasStrength` false — read the flag. No `Q_INVOKABLE`: the shell has no control centre to open, so there is no gesture to offer |
 | `BatteryService` | `available`, `present`, `onBattery`, `hasPercentage`, `percentage`, `state`, `warning`, `hasTimeRemaining`, `timeRemaining` | all 0/empty/false while `available` false; `percentage`/`timeRemaining` 0/empty while their `has*` flag false; `present` false on desktop (no battery). `state` tokens: `unknown\|charging\|discharging\|fully-charged\|empty\|pending-charge\|pending-discharge`. `warning` tokens: `unknown\|none\|discharging\|low\|critical\|action`. No `Q_INVOKABLE`: the shell has no power panel to open |
 | `MediaService` | `available`, `title`, `artist`, `playerName`, `playbackStatus` | all empty/false while `available` false — the widget draws nothing, not a dash, because "no media" is a complete reading; `playbackStatus` tokens: `playing\|paused\|stopped` (empty = unknown). No player or player with no track = `available` false. No `Q_INVOKABLE`: transport controls are Phase 2 |
-| `NotificationService` | `notificationAvailable`, `notificationSummary`, `notificationBody`, `notificationApplication`, `notificationCount`, `notificationExpireTimeout` | all empty/false while `notificationAvailable` false; `notificationSummary` is the sender's own text, `notificationBody` is the sender's own body, `notificationApplication` is the sender's own application name. `notificationCount` is a running total for the life of the service: it counts what this process has been sent, so it is deliberately **not** withdrawn with the reading when the name is released, and no widget draws it today. `notificationExpireTimeout` is the sender's own `expire_timeout`, published as the spec hands it and **not** resolved here: `-1` is the spec's use-the-default and which default that is, `0` is never-expire, and a positive count is milliseconds — the toast's business, not a daemon's. Every one of them moves together and only on a real change: a repeat registration emits nothing, and the queued handover publishes availability as soon as the bus makes the name the shell's |
+| `NotificationService` | `notificationAvailable`, `notificationSummary`, `notificationBody`, `notificationApplication`, `notificationCount`, `notificationExpireTimeout`, `notificationHistory`, `notificationHistoryCount`, `notificationDoNotDisturb`, `notificationHistoryOpen`; `clearNotificationHistory()`, `removeFromNotificationHistory(id)` | all empty/false while `notificationAvailable` false; `notificationSummary` is the sender's own text, `notificationBody` is the sender's own body, `notificationApplication` is the sender's own application name. `notificationCount` is a running total for the life of the service: it counts what this process has been sent, so it is deliberately **not** withdrawn with the reading when the name is released, and no widget draws it today. `notificationExpireTimeout` is the sender's own `expire_timeout`, published as the spec hands it and **not** resolved here: `-1` is the spec's use-the-default and which default that is, `0` is never-expire, and a positive count is milliseconds — the toast's business, not a daemon's. Every one of them moves together and only on a real change: a repeat registration emits nothing, and the queued handover publishes availability as soon as the bus makes the name the shell's History and mode: `notificationHistory` is a list of `{id, application, summary, body, received}` maps, newest first, capped at `NotificationHistoryLimit` = 50 (a fixed length, not a key); an update that reuses an id replaces its entry and moves it to the front; entries survive a close, an expiry and Do Not Disturb, and are not withdrawn with the reading. `notificationDoNotDisturb` and `notificationHistoryOpen` are **runtime state, never configuration**: both start false every launch and neither is persisted. Do Not Disturb stops a toast being shown — the notification is still received, answered, recorded and drawn by the readout — and tells the sender it is over (`NotificationClosed` reason 4); switching it on takes down a toast that is up, switching it off replays nothing |
 | `LayerShellWindow` | `layer`, `anchors`, `exclusiveZone`, `keyboardInteractivity`, `layerNamespace`, `margins`; `present()` | `present()` is called by `BarHost`, not from QML, and only after the window's screen is assigned: showing the window is what assigns the layer role against an output and the role is assigned once, and the output cannot be chosen from QML because `screen` is not a QML property of a `QQuickWindow`. Set all props first |
 
 Every row above is checked against code by `spec-values-test`, in both directions: every
@@ -526,7 +529,7 @@ config path, socket bind result) on `quantum.shell`.
   (`PipeWireService` records a successful write as the base for the next), so a burst
   no longer loses steps to the daemon's not having echoed yet.
 - Narrow bar: centre group overlaps side groups rather than yielding.
-- Notifications: the daemon and the toast are real; history and interaction are not.
+- Notifications: the daemon, the toast, the history panel and Do Not Disturb are real; actions are not.
   `NotificationService` owns `org.freedesktop.Notifications` (queued, never stolen) and answers
   the spec's four methods. One notification is showing at a time — the newest wins — and the
   daemon tracks its id (`currentNotificationId()`): `CloseNotification` for that id closes it and
@@ -544,8 +547,12 @@ config path, socket bind result) on `quantum.shell`.
   `[bar.notifications] timeout_ms`, `0` never expires — and cancels the clock an earlier timed
   notification armed — and a positive count is milliseconds. Becoming the daemon announces a change but no notification (`currentNotificationId()` stays zero), so it creates no toast. The bar's readout draws one
   notification (the sender's application name and summary) and keeps it after a close, because a
-  close does not make the text that was in it into something else. `History.qml`, a history
-  list and Do Not Disturb are not landed at all. A shell that is queued behind another notifier
+  close does not make the text that was in it into something else. The history is the last
+  `NotificationHistoryLimit` (50) notifications, in memory only — it is not kept across a
+  restart — and the panel that shows it takes no keyboard and grabs no pointer, so a click
+  elsewhere leaves it open: only its own Do Not Disturb/Clear controls, the readout's right
+  click, the compositor closing it or its output going away end it. It is on the primary output
+  only, not one per output. Do Not Disturb has no schedule and no per-application rules. A shell that is queued behind another notifier
   publishes nothing and draws nothing, which is a life the shell can spend entirely on a
   desktop that runs its own daemon — measured on the author's, where `swaync` holds the name.
 - Layer surfaces: on an axis that is not stretched the client's size wins over the compositor's

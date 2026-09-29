@@ -542,6 +542,7 @@ Typical surfaces:
 | Dock | top | none | `quantum-shell-dock` |
 | Wallpaper | background | none | `quantum-shell-wallpaper` |
 | Notifications | overlay | on-demand | `quantum-shell-notification` |
+| Notification history (landed) | top | none | `quantum-shell-notification-history` |
 | OSD | overlay | none | `quantum-shell-osd` |
 | Control Center | overlay | on-demand | `quantum-shell-control-center` |
 | Launcher | overlay | exclusive | `quantum-shell-launcher` |
@@ -2613,10 +2614,11 @@ The readout landed with it, as `qml/Notifications.qml` in the bar's trailing gro
 shell is the name's owner, a dash when it has been sent nothing, and off when
 `bar.notifications.show_notifications` says so — and the service stayed the half that owns the bus, so
 nothing in the widget knows a D-Bus name, an interface or a spec. What landed is not the notification
-surface this document plans: it is one notification at a time, the most recent, with no history and
-nothing acting on it, and it draws *inside the bar* rather than creating a surface of its own — the
-`qml/notification/` toast stack with `History.qml` and the `quantum-shell-notification` overlay are
-still the plan, and the section above is explicit about which rows of that table exist today.
+surface this document plans: the readout is one notification at a time, the most recent, and it draws
+*inside the bar* rather than creating a surface of its own — the `qml/notification/` toast stack and the
+`quantum-shell-notification` overlay are still the plan, and the section above is explicit about which
+rows of that table exist today. The history and Do Not Disturb that this paragraph once listed as absent
+landed after it, and are described under Phase 2 below.
 
 `notification-test` starts a `dbus-daemon` of its own in a scratch directory carrying the shell's own service file (a
 `--session` bus with an emptied `XDG_DATA_DIRS` is not isolation, because the desktop's notifications
@@ -2692,9 +2694,8 @@ statistics for the exception and the waiver it needs.
 
 Launcher, notifications (with history and D-Bus service), OSD, control center, panels, media
 controls, system controls. Of the notification surface, the D-Bus service, the bar readout and the
-**toast overlay** have landed (above) and nothing else in this list has started: what remains of
-notifications is `History.qml`, the history it draws, and Do Not Disturb — and DND is deliberately
-last, because it suppresses toasts and there were none to suppress until the toast landed. The toast
+**toast overlay** have landed (above), and so have the **history and Do Not Disturb**, described
+after the toast paragraph; nothing else in this list has started. The toast
 overlay is `qml/Toast.qml` and `src/app/ToastHost.*`: one surface per output, created when a
 notification arrives and withdrawn when its expiry runs out, the expiry resolved as the daemon
 publishes the sender's own `expire_timeout` and `[bar.notifications] timeout_ms` says what a `-1`
@@ -2708,6 +2709,28 @@ name, summary and body are read off the window, and the expiry the sender asked 
 toast lives for. What is **not** verified of it: the surface on a real compositor — the toast's unit
 test maps its windows on the offscreen platform, and a live test that drives the built shell and reads
 `niri msg layers` for the toast's namespace is the one thing still owed.
+
+**History and Do Not Disturb.** The service keeps the last fifty notifications it was sent
+(`NotificationHistoryLimit`, a fixed length rather than a key), newest first, as maps a list model
+reads; an update that reuses an id replaces its entry rather than adding a row, and an entry survives
+the notification closing, expiring or being suppressed. Do Not Disturb stops a toast being *shown* and
+nothing else — the daemon still receives, answers and records, the readout still draws the summary — and
+the sender is told it is over (`NotificationClosed` reason 4, the same as a displaced notification);
+switching it on takes down a toast that is up, and switching it off replays nothing. Both the mode and
+whether the history panel is open are **runtime state on the service, not configuration**: a mode a
+person switches from the bar is not a setting they edit in a file, so it starts off every launch, and
+no config key or IPC verb was added for either. The readout's left click switches the mode and its right
+click opens and closes the panel; the panel is `qml/NotificationHistory.qml`, one layer surface on the
+primary output under the namespace `quantum-shell-notification-history`, created and destroyed by
+`src/app/HistoryHost.*` as the service's `notificationHistoryOpen` moves (and closed on the service's
+behalf when the compositor closes it or its output goes away). It lists each entry — application,
+receipt time, summary, and up to two lines of body — with a Do Not Disturb switch, a Clear button, and
+a click on an entry removing it; empty, it says so from the count rather than from a label that is
+always there. Verified on a headless sway with a virtual pointer: a right click opens the panel, a left
+click on the readout draws "DND", a notification sent under the mode shows no toast, the sender is sent
+`NotificationClosed(id, 4)` and the entry is in the history. What is **not** verified: niri, and that
+the panel is dismissed by anything but its own switch — it takes no keyboard and grabs no pointer, so a
+click elsewhere leaves it open.
 
 **Exit criteria:** replaces the major pieces normally provided by a standalone desktop shell;
 notification daemon passes `notify-send`-based smoke tests. The smoke test is
