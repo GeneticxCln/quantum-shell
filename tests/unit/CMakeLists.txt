@@ -104,6 +104,10 @@ foreach(qs_qml IN LISTS QS_QML_FILES)
         set(QS_TOAST_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "VolumeOsd\\.qml$")
         set(QS_OSD_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
+    elseif(qs_qml MATCHES "Launcher\\.qml$")
+        set(QS_LAUNCHER_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
+    elseif(qs_qml MATCHES "ControlCenter\\.qml$")
+        set(QS_CONTROL_CENTER_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "NotificationHistory\\.qml$")
         set(QS_HISTORY_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     endif()
@@ -112,6 +116,16 @@ if(NOT DEFINED QS_HISTORY_QML)
     message(FATAL_ERROR
         "no NotificationHistory.qml is named in QS_QML_FILES, so notification-test would have no history panel "
         "to load and would fail at run time instead of here.")
+endif()
+if(NOT DEFINED QS_CONTROL_CENTER_QML)
+    message(FATAL_ERROR
+        "no ControlCenter.qml is named in QS_QML_FILES, so control-center-test would have no panel to load and "
+        "would fail at run time instead of here.")
+endif()
+if(NOT DEFINED QS_LAUNCHER_QML)
+    message(FATAL_ERROR
+        "no Launcher.qml is named in QS_QML_FILES, so launcher-test would have no launcher to load and would "
+        "fail at run time instead of here.")
 endif()
 if(NOT DEFINED QS_OSD_QML)
     message(FATAL_ERROR
@@ -178,7 +192,7 @@ target_link_libraries(battery-test PRIVATE quantum-shell-battery)
 # and no display — the cases here include the shapes a healthy player never sends, which is the half a live
 # test cannot reach. `quantum-shell-media` carries the functions.
 qs_unit_test(media-test media_test.cpp)
-target_link_libraries(media-test PRIVATE quantum-shell-media)
+target_link_libraries(media-test PRIVATE quantum-shell-media qs-test-support)
 qs_unit_test(notification-test notification_test.cpp)
 # `qs-test-support` for `NotificationBus.h`: the private `dbus-daemon` this test's daemon registers on, which
 # `bar-interaction-test` drives the same way — one spelling of the bus config, the service directory it names
@@ -192,7 +206,20 @@ target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QM
 # The launcher's two halves: every shape a desktop entry, an `Exec` line and a query can take as pure functions,
 # and the service against directories of its own with a real process started at the end. No display, no bus.
 qs_unit_test(apps-test apps_test.cpp)
-target_link_libraries(apps-test PRIVATE quantum-shell-apps Qt6::Qml)
+target_link_libraries(apps-test PRIVATE quantum-shell-apps quantum-shell-config Qt6::Qml)
+
+# The control centre's surface: the host, the panel it creates, and the controls on it reaching the services they
+# are drawn from — Do Not Disturb, and a click on transport arriving at a real MPRIS player double on a private bus.
+qs_unit_test(control-center-test control_center_test.cpp)
+target_link_libraries(control-center-test PRIVATE quantum-shell-toasts quantum-shell-bars quantum-shell-audio
+                      quantum-shell-notifications quantum-shell-media quantum-shell-config
+                      Qt6::Gui Qt6::Quick qs-test-support)
+target_compile_definitions(control-center-test PRIVATE QS_CONTROL_CENTER_QML="${QS_CONTROL_CENTER_QML}")
+
+# The launcher's surface: the host, the QML it creates, and keys typed into it reaching the service. Offscreen.
+qs_unit_test(launcher-test launcher_test.cpp)
+target_link_libraries(launcher-test PRIVATE quantum-shell-toasts quantum-shell-apps quantum-shell-config Qt6::Gui Qt6::Quick)
+target_compile_definitions(launcher-test PRIVATE QS_LAUNCHER_QML="${QS_LAUNCHER_QML}")
 
 # The volume's on-screen display: the host driven by the audio service's `volumeAdjusted`, the surface it
 # creates per output, and the surface's rule for turning a reading into text. Offscreen, and against a service
@@ -226,7 +253,7 @@ target_link_libraries(ipc-server-test PRIVATE quantum-shell-ipc)
 qs_unit_test(ipc-capabilities-test
     ipc_capabilities_test.cpp
     FakeNiriServer.cpp)
-target_link_libraries(ipc-capabilities-test PRIVATE quantum-shell-capabilities)
+target_link_libraries(ipc-capabilities-test PRIVATE quantum-shell-capabilities quantum-shell-apps quantum-shell-control-center)
 
 # The shell's logging: the format a record is written in, and the category names a person filters on. No
 # socket and no display, which is the point of the facility taking no sink of its own.
@@ -256,6 +283,8 @@ target_link_libraries(spec-values-test PRIVATE
     quantum-shell-network
     quantum-shell-battery
     quantum-shell-media
+    quantum-shell-apps
+    quantum-shell-control-center
     quantum-shell-ipc)
 # `quantum-shell-wayland` is deliberately *not* linked, and the reason is measured rather than a preference.
 # The bar's window derives from `QQuickWindow`, so including its header and linking it here would drag Qt

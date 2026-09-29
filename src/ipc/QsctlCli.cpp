@@ -16,6 +16,8 @@ constexpr auto ConfigWord = "config";
 constexpr auto GetWord = "get";
 constexpr auto BarWord = "bar";
 constexpr auto ToggleWord = "toggle";
+constexpr auto LauncherWord = "launcher";
+constexpr auto ControlCenterWord = "control-center";
 
 Command usageProblem(const QString& problem)
 {
@@ -105,6 +107,42 @@ Command parseCommandLine(const QStringList& arguments)
         return command;
     }
 
+    if (first == QLatin1StringView(LauncherWord)) {
+        if (arguments.size() < 2 || arguments.at(1) != QLatin1StringView(ToggleWord)) {
+            const QString given = arguments.mid(1).join(QLatin1Char(' '));
+            return usageProblem(
+                given.isEmpty()
+                    ? QStringLiteral("\"launcher\" needs a subcommand, and there is one: `launcher toggle`")
+                    : QStringLiteral("\"launcher %1\" is not a command this shell implements; it implements "
+                                     "\"launcher toggle\"")
+                          .arg(given));
+        }
+        if (const std::optional<QString> problem = tooManyArguments(arguments, 2); problem.has_value())
+            return usageProblem(*problem);
+        Command command;
+        command.request.version = ProtocolVersion;
+        command.request.verb = QString::fromLatin1(verb::LauncherToggle);
+        return command;
+    }
+
+    if (first == QLatin1StringView(ControlCenterWord)) {
+        if (arguments.size() < 2 || arguments.at(1) != QLatin1StringView(ToggleWord)) {
+            const QString given = arguments.mid(1).join(QLatin1Char(' '));
+            return usageProblem(
+                given.isEmpty()
+                    ? QStringLiteral("\"control-center\" needs a subcommand, and there is one: `control-center toggle`")
+                    : QStringLiteral("\"control-center %1\" is not a command this shell implements; it implements "
+                                     "\"control-center toggle\"")
+                          .arg(given));
+        }
+        if (const std::optional<QString> problem = tooManyArguments(arguments, 2); problem.has_value())
+            return usageProblem(*problem);
+        Command command;
+        command.request.version = ProtocolVersion;
+        command.request.verb = QString::fromLatin1(verb::ControlCenterToggle);
+        return command;
+    }
+
     if (first == QLatin1StringView(ConfigWord)) {
         if (arguments.size() < 2 || arguments.at(1) != QLatin1StringView(GetWord)) {
             const QString given = arguments.mid(1).join(QLatin1Char(' '));
@@ -141,6 +179,8 @@ QString usageText()
         "  state                  the state the bar is drawn from, as one line of JSON\n"
         "  config get <key>       one configuration value, unquoted, for use in a script\n"
         "  bar toggle             hide or show the bar, and report which\n"
+        "  launcher toggle        open or close the launcher, and report which\n"
+        "  control-center toggle  open or close the control centre, and report which\n"
         "\n"
         "exit codes: 0 answered, 1 refused, 2 bad command line, 3 no shell listening, 4 protocol mismatch");
 }

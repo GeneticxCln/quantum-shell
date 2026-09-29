@@ -119,7 +119,7 @@ static_assert(quantum::config::MinVolumeStepDecibels == coveredMinVolumeStepDeci
 // The key paths the shell offers to `qsctl config get`, mirrored the same way and for a sharper reason: a
 // path is what a script types. It is interface, so a rename has to be acknowledged here — and in the
 // document that lists the keys — rather than being free to happen in the schema alone.
-constexpr std::array<const char*, 28> coveredKeyPaths{"bar.height",
+constexpr std::array<const char*, 29> coveredKeyPaths{"bar.height",
                                                        "bar.layerNamespace",
                                                        "bar.system.sample_interval_ms",
                                                        "bar.system.show_cpu",
@@ -138,6 +138,7 @@ constexpr std::array<const char*, 28> coveredKeyPaths{"bar.height",
                                                        "bar.media.show_media",
                                                        "bar.notifications.show_notifications",
                                                        "bar.notifications.timeout_ms",
+                                                       "launcher.max_results",
                                                        "bar.osd.show_osd",
                                                        "bar.osd.timeout_ms",
                                                        "bar.colors.foreground",
@@ -210,6 +211,7 @@ private slots:
     void refusesAnAudioSettingItCannotHonour();
     void refusesABatterySettingItCannotHonour();
     void theOsdTableIsReadRefusedAndFollowed();
+    void theLauncherTableIsReadRefusedAndFollowed();
     void refusesAColourItCannotDraw();
     void readsTheColoursTheFileSets();
     void refusesATypefaceSettingItCannotHonour();
@@ -674,6 +676,56 @@ void ConfigTest::theOsdTableIsReadRefusedAndFollowed() {
              std::optional<QVariant>(false));
     QCOMPARE(quantum::config::configValueForPath(set.values, QStringLiteral("bar.osd.timeout_ms")),
              std::optional<QVariant>(2500));
+}
+
+void ConfigTest::theLauncherTableIsReadRefusedAndFollowed() {
+    // A top-level table beside `[bar]`, not inside it: the file's shape is the tree's, `Config.launcher`.
+    const ParseResult none = parseConfig(QByteArrayLiteral("schema_version = 1\n"));
+    QVERIFY(none.warnings.isEmpty());
+    QCOMPARE(none.values.launcher.maxResults, 8);
+
+    const ParseResult set = parseConfig(QByteArrayLiteral("schema_version = 1\n[launcher]\nmax_results = 12\n"));
+    QVERIFY2(set.warnings.isEmpty(), qPrintable(set.warnings.join(QStringLiteral("; "))));
+    QCOMPARE(set.values.launcher.maxResults, 12);
+    // Both bounds are inclusive; one past either is refused by name and the default stands, not clamped.
+    QCOMPARE(parseConfig(QByteArrayLiteral("schema_version = 1\n[launcher]\nmax_results = 1\n"))
+                 .values.launcher.maxResults, 1);
+    QCOMPARE(parseConfig(QByteArrayLiteral("schema_version = 1\n[launcher]\nmax_results = 50\n"))
+                 .values.launcher.maxResults, 50);
+    for (const char* bad : {"0", "51", "-3", "1.5", "\"many\"", "true"}) {
+        const ParseResult refused = parseConfig(
+            QByteArray("schema_version = 1\n[launcher]\nmax_results = ") + bad + "\n");
+        QCOMPARE(refused.warnings.size(), 1);
+        QVERIFY2(mentions(refused.warnings, QStringLiteral("launcher.max_results")), bad);
+        QCOMPARE(refused.values.launcher.maxResults, 8);
+    }
+    // A boolean is not a number: toml++'s own `value<int64_t>()` would have answered 1 for `true`, and a key of
+    // the wrong type is reported and not converted — for every integer key, the bar's height included.
+    const ParseResult boolAsHeight = parseConfig(QByteArrayLiteral("schema_version = 1\n[bar]\nheight = true\n"));
+    QCOMPARE(boolAsHeight.warnings.size(), 1);
+    QVERIFY(mentions(boolAsHeight.warnings, QStringLiteral("bar.height")));
+    QCOMPARE(boolAsHeight.values.bar.height, ConfigValues{}.bar.height);
+
+    const ParseResult unknown = parseConfig(QByteArrayLiteral("schema_version = 1\n[launcher]\nmax_result = 3\n"));
+    QCOMPARE(unknown.warnings.size(), 1);
+    QVERIFY(mentions(unknown.warnings, QStringLiteral("launcher.max_result")));
+    const ParseResult notATable = parseConfig(QByteArrayLiteral("schema_version = 1\nlauncher = 3\n"));
+    QCOMPARE(notATable.warnings.size(), 1);
+    QVERIFY(mentions(notATable.warnings, QStringLiteral("a table")));
+
+    // Followed live: one signal for the value that moved and none for a re-read of the same one.
+    Config config;
+    QSignalSpy changed(config.launcher(), &quantum::config::ConfigLauncher::maxResultsChanged);
+    config.apply(set.values);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(config.launcher()->maxResults(), 12);
+    config.apply(set.values);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(config.values().launcher.maxResults, 12);
+
+    // And the IPC's reading of the key is the schema's.
+    QCOMPARE(quantum::config::configValueForPath(set.values, QStringLiteral("launcher.max_results")),
+             std::optional<QVariant>(12));
 }
 
 void ConfigTest::refusesANamespaceOutsideTheFrozenPrefix() {
@@ -1183,6 +1235,8 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
                          QStringLiteral("Config.bar.notifications"),
                          QStringLiteral("Config.bar.notifications.showNotifications"),
                          QStringLiteral("Config.bar.notifications.timeoutMs"),
+                         QStringLiteral("Config.launcher"),
+                         QStringLiteral("Config.launcher.maxResults"),
                          QStringLiteral("Config.bar.osd"),
                          QStringLiteral("Config.bar.osd.showOsd"),
                          QStringLiteral("Config.bar.osd.timeoutMs"),
@@ -1253,6 +1307,13 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
          ++index) {
         const QMetaProperty property = notificationsMeta->property(index);
         actual.append(QStringLiteral("Config.bar.notifications.") + QString::fromLatin1(property.name()));
+        QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
+    }
+
+    const QMetaObject* launcherMeta = config.launcher()->metaObject();
+    for (int index = launcherMeta->propertyOffset(); index < launcherMeta->propertyCount(); ++index) {
+        const QMetaProperty property = launcherMeta->property(index);
+        actual.append(QStringLiteral("Config.launcher.") + QString::fromLatin1(property.name()));
         QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
     }
 

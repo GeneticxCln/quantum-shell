@@ -13,6 +13,7 @@
 // that a frame means the same thing, so raising it must be a deliberate edit that says so, not a constant
 // that follows the code.
 #include "ipc/IPCProtocol.h"
+#include "ipc/QsctlCli.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -25,7 +26,8 @@ namespace {
 
 // The verbs, written out as the documents spell them. `AGENTS.md` freezes them and `QUANTUM_SHELL.md` § IPC
 // is where they are designed, so a change here is a change to a document as well as to the code.
-constexpr std::array<const char*, 4> coveredVerbs{"version", "state", "config get", "bar toggle"};
+constexpr std::array<const char*, 6> coveredVerbs{"version", "state", "config get", "bar toggle",
+                                                 "launcher toggle", "control-center toggle"};
 
 template <std::size_t Declared, std::size_t Covered>
 constexpr bool sameVerbs(const std::array<const char*, Declared>& declared,
@@ -57,6 +59,8 @@ class IpcProtocolTest : public QObject {
 private slots:
     void theFrozenVerbSetIsTheOneThisTestDeclares();
     void everyVerbRoundTripsThroughTheWire();
+    void theLauncherCommandLineIsTheLauncherToggleVerbAndNothingElse();
+    void theControlCenterCommandLineIsItsToggleVerbAndNothingElse();
     void theHandshakeIsTheVersionRequestWrittenWithoutAVerb();
     void aRequestWithoutAVersionIsRefusedByName();
     void aLineThatIsNotAJsonObjectIsRefused();
@@ -76,6 +80,44 @@ void IpcProtocolTest::theFrozenVerbSetIsTheOneThisTestDeclares() {
     for (std::size_t index = 0; index < coveredVerbs.size(); ++index) {
         QCOMPARE(QString::fromLatin1(quantum::ipc::verb::All[index]), QString::fromLatin1(coveredVerbs[index]));
     }
+}
+
+void IpcProtocolTest::theLauncherCommandLineIsTheLauncherToggleVerbAndNothingElse() {
+    using namespace quantum::ipc;
+
+    // The words a person types are the verb on the wire.
+    const Command toggle = parseCommandLine({QStringLiteral("launcher"), QStringLiteral("toggle")});
+    QVERIFY2(toggle.problem.isEmpty(), qPrintable(toggle.problem));
+    QCOMPARE(toggle.request.verb, QString::fromLatin1(verb::LauncherToggle));
+    QCOMPARE(toggle.request.version, ProtocolVersion);
+
+    // Everything else is a usage problem naming the words at fault, and sends nothing.
+    const Command bare = parseCommandLine({QStringLiteral("launcher")});
+    QVERIFY(bare.problem.contains(QStringLiteral("launcher toggle")));
+    const Command wrong = parseCommandLine({QStringLiteral("launcher"), QStringLiteral("open")});
+    QVERIFY(wrong.problem.contains(QStringLiteral("launcher open")));
+    const Command extra = parseCommandLine(
+        {QStringLiteral("launcher"), QStringLiteral("toggle"), QStringLiteral("now")});
+    QVERIFY(extra.problem.contains(QStringLiteral("now")));
+
+    // And the usage text names it, because a command that exists and is not listed is not discoverable.
+    QVERIFY(usageText().contains(QStringLiteral("launcher toggle")));
+}
+
+void IpcProtocolTest::theControlCenterCommandLineIsItsToggleVerbAndNothingElse() {
+    using namespace quantum::ipc;
+
+    const Command toggle = parseCommandLine({QStringLiteral("control-center"), QStringLiteral("toggle")});
+    QVERIFY2(toggle.problem.isEmpty(), qPrintable(toggle.problem));
+    QCOMPARE(toggle.request.verb, QString::fromLatin1(verb::ControlCenterToggle));
+    QCOMPARE(toggle.request.version, ProtocolVersion);
+
+    QVERIFY(parseCommandLine({QStringLiteral("control-center")}).problem.contains(QStringLiteral("control-center toggle")));
+    QVERIFY(parseCommandLine({QStringLiteral("control-center"), QStringLiteral("open")})
+                .problem.contains(QStringLiteral("control-center open")));
+    QVERIFY(parseCommandLine({QStringLiteral("control-center"), QStringLiteral("toggle"), QStringLiteral("now")})
+                .problem.contains(QStringLiteral("now")));
+    QVERIFY(usageText().contains(QStringLiteral("control-center toggle")));
 }
 
 void IpcProtocolTest::everyVerbRoundTripsThroughTheWire() {

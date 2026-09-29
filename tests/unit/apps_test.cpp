@@ -7,6 +7,7 @@
 // moved by what is installed on the machine that runs it.
 #include "apps/DesktopEntry.h"
 #include "apps/LauncherService.h"
+#include "config/ConfigSchema.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -52,6 +53,16 @@ DesktopEntry make(const QString& id, const QString& name, const QString& program
     e.comment = comment;
     return e;
 }
+
+// The launcher's list length is the file's `[launcher] max_results` and the service's own bound, and the two
+// spellings are compared here, at compile time, so the file and the service cannot disagree about what a list
+// length may be — the same rule the sampling cadence and the volume steps are held to.
+static_assert(quantum::config::LauncherConfig{}.maxResults == LauncherService::DefaultMaxResults,
+              "the schema's default and the service's default for max_results differ");
+static_assert(quantum::config::MinLauncherMaxResults == LauncherService::MinMaxResults,
+              "the schema's floor and the service's floor for max_results differ");
+static_assert(quantum::config::MaxLauncherMaxResults == LauncherService::MaxMaxResults,
+              "the schema's ceiling and the service's ceiling for max_results differ");
 
 }  // namespace
 

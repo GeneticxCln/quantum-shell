@@ -18,8 +18,12 @@
 #include "app/Logging.h"
 #include "app/ShellCapabilities.h"
 #include "app/HistoryHost.h"
+#include "app/ControlCenterHost.h"
+#include "app/ControlCenterService.h"
+#include "app/LauncherHost.h"
 #include "app/OsdHost.h"
 #include "app/ToastHost.h"
+#include "apps/LauncherService.h"
 #include "audio/PipeWireService.h"
 #include "config/Config.h"
 #include "config/ConfigWatcher.h"
@@ -148,6 +152,26 @@ int main(int argc, char **argv)
     QObject::connect(config.bar()->audio(), &quantum::config::ConfigAudio::volumeScaleChanged, &audio,
                      [&audio, &config] { audio.setWheelStepUnit(config.bar()->audio()->volumeScale()); });
 
+    // The launcher's model, registered before the engine loads so the surface naming `LauncherService` resolves.
+    // It reads the machine's own environment for what to scan and which desktop it is on: the XDG data
+    // directories, `XDG_CURRENT_DESKTOP` (colon-separated, as the Desktop Entry Specification defines it) and
+    // the locale Qt resolved. The first scan is asked for here, off the GUI thread, so the list is ready by the
+    // time the launcher is first opened. `[launcher] max_results` is the file's, followed live.
+    quantum::apps::LauncherService launcher(quantum::apps::LauncherService::defaultDataDirs(),
+                                            qEnvironmentVariable("XDG_CURRENT_DESKTOP")
+                                                .split(QLatin1Char(':'), Qt::SkipEmptyParts),
+                                            QLocale::system().name());
+    quantum::apps::LauncherService::registerQmlSingleton(launcher);
+    launcher.setMaxResults(config.launcher()->maxResults());
+    QObject::connect(config.launcher(), &quantum::config::ConfigLauncher::maxResultsChanged, &launcher,
+                     [&launcher, &config] { launcher.setMaxResults(config.launcher()->maxResults()); });
+    launcher.refresh();
+
+    // The control centre's open state, registered before the engine loads so the panel naming
+    // `ControlCenterService` resolves. What the panel shows and does belongs to the services it is drawn from.
+    quantum::app::ControlCenterService controlCenter;
+    quantum::app::ControlCenterService::registerQmlSingleton(controlCenter);
+
     quantum::niri::NiriIPC requests;
     quantum::niri::NiriEventStream stream;
     quantum::niri::NiriState state;
@@ -264,7 +288,20 @@ int main(int argc, char **argv)
     if (!osd.ready())
         return EXIT_FAILURE;
 
-    quantum::app::ShellCapabilities capabilities(service, config, &bars);
+    // The launcher's surface, on the primary output while the service says it is open. It fails the process for the
+    // same reason the toast does: a verb that opens a surface that cannot be drawn is a control that lies.
+    quantum::app::LauncherHost launcherHost(launcher, engine, QUrl(QStringLiteral("qrc:/qml/Launcher.qml")));
+    if (!launcherHost.ready())
+        return EXIT_FAILURE;
+
+    // The control centre's surface, on the primary output while its state says it is open; fails the process for
+    // the same reason the launcher's does.
+    quantum::app::ControlCenterHost controlCenterHost(controlCenter, engine,
+                                                      QUrl(QStringLiteral("qrc:/qml/ControlCenter.qml")));
+    if (!controlCenterHost.ready())
+        return EXIT_FAILURE;
+
+    quantum::app::ShellCapabilities capabilities(service, config, &bars, &launcher, &controlCenter);
     quantum::ipc::IPCServer ipc(capabilities, QString::fromLatin1(quantum::ipc::SocketName));
     QString ipcError;
     if (ipc.listen(&ipcError)) {

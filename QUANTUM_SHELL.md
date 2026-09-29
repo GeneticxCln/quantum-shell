@@ -544,8 +544,8 @@ Typical surfaces:
 | Notifications | overlay | on-demand | `quantum-shell-notification` |
 | Notification history (landed) | top | none | `quantum-shell-notification-history` |
 | OSD (volume, landed) | overlay | none | `quantum-shell-osd` |
-| Control Center | overlay | on-demand | `quantum-shell-control-center` |
-| Launcher | overlay | exclusive | `quantum-shell-launcher` |
+| Control Center (landed, partial) | overlay | on-demand | `quantum-shell-control-center` |
+| Launcher (landed) | overlay | exclusive | `quantum-shell-launcher` |
 | Lock surface | session-lock (not layer-shell) | exclusive | `quantum-shell-lock` |
 
 One of those rows is partly real. The bar exists, and the notification daemon that landed draws on it —
@@ -1060,6 +1060,8 @@ The verbs exist only where a handler answers them, and they are declared once in
 | `state` | the same six values `NiriService` exposes: `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` | read from the service itself, so the keys are its property names and cannot be a second mapping |
 | `config get <path>` | `path` and `value` | the schema resolves it; the paths that exist are its own `KeyPaths` list — `bar.height`, `bar.layerNamespace`, `bar.system.sample_interval_ms`, `bar.system.show_cpu`, `bar.system.show_memory`, `bar.system.memory_format`, `bar.audio.show_volume`, `bar.audio.volume_scale`, `bar.audio.step_percent`, `bar.audio.step_decibels`, `bar.network.show_status`, `bar.network.show_name`, `bar.network.show_strength`, `bar.battery.show_status`, `bar.battery.show_percentage`, `bar.battery.show_time`, `bar.media.show_media`, `bar.notifications.show_notifications`, each asserted against the resolver in `ipc-capabilities-test` |
 | `bar toggle` | `visible` | every bar window's own visibility, moved together, and the compositor's layer list loses and regains each surface |
+| `control-center toggle` | `open` | the control centre state's own value after the move — the state the panel follows — so a key binding `spawn "qsctl" "control-center" "toggle"` opens and closes it |
+| `launcher toggle` | `open` | the launcher service's own state after the move — the object the launcher surface follows — so a niri key binding `Mod+Space { spawn "qsctl" "launcher" "toggle"; }` opens and closes it |
 
 `qsctl` prints one line of JSON for `version`, `state` and `bar toggle`, and the bare value for
 `config get` — that verb exists to be used as `x=$(qsctl config get bar.height)`, and quoting a number for
@@ -2695,7 +2697,7 @@ statistics for the exception and the waiver it needs.
 Launcher, notifications (with history and D-Bus service), OSD, control center, panels, media
 controls, system controls. Of the notification surface, the D-Bus service, the bar readout and the
 **toast overlay** have landed (above), and so have the **history and Do Not Disturb**, described
-after the toast paragraph, and the **volume OSD** (below); nothing else in this list has started. The toast
+after the toast paragraph, and the **volume OSD** (below); the **launcher** (below); nothing else in this list has started. The toast
 overlay is `qml/Toast.qml` and `src/app/ToastHost.*`: one surface per output, created when a
 notification arrives and withdrawn when its expiry runs out, the expiry resolved as the daemon
 publishes the sender's own `expire_timeout` and `[bar.notifications] timeout_ms` says what a `-1`
@@ -2756,6 +2758,34 @@ signal, against a private PipeWire daemon) and by eye on a headless sway with `w
 sink. Not done: brightness, keyboard-layout and media OSDs (no service behind them that this shell
 owns yet), and the panel is not click-through — its transparent 132×60 px margin and the panel take
 pointer input like any surface.
+
+**Launcher (landed).** `qsctl launcher toggle` opens a centred overlay with a text field and the applications
+that match it; Enter starts the highlighted one, Escape closes, the arrows move the highlight, a click starts a
+row. The model is `src/apps/`: `DesktopEntry` parses freedesktop `.desktop` files and splits `Exec` into an
+argument vector with no shell; `LauncherService` scans the XDG `applications/` directories on a worker thread each
+time the launcher opens (never on a timer; a user's copy shadows the system's, a user's `Hidden` deletes an entry)
+and starts the chosen entry with `QProcess::startDetached`. The surface is `qml/Launcher.qml`
+(`quantum-shell-launcher`, overlay, exclusive keyboard, anchored to nothing so the compositor centres it), created
+and destroyed by `src/app/LauncherHost.*` as the service's `open` moves. One config key, `[launcher] max_results`
+(default 8, 1 to 50); one IPC verb, `launcher toggle`. Terminal applications are not offered: starting one means
+choosing a terminal emulator and there is no verified convention to choose by. Not done: the design's provider
+plugins (emoji, calculator, window switcher), frecency ordering, icons, and dismissal by clicking outside (the
+surface holds the keyboard exclusively, so Escape is the way out). Verified by `apps-test`, `launcher-test`
+(offscreen, keys sent through the window's own event path, a real process started by Enter) and the IPC tests.
+
+**Control centre (landed, partial).** `qsctl control-center toggle` opens a panel in the top-right corner (overlay
+layer, keyboard on demand, `quantum-shell-control-center`) holding only the controls this shell has a real service
+behind: a volume track (click or drag sets `PipeWireService.setVolumePercent`) with a mute button (`toggleMute`),
+the Do Not Disturb switch the notification readout also flips, and the followed media player's title with previous,
+play/pause and next. `MediaService` gained the three transport methods for it, sent as the MPRIS2 `Player`
+methods to the player the reading comes from (a request; what is drawn is the property change that comes back).
+The state it owns is one bool, `ControlCenterService.open`, shared by the surface (`ControlCenterHost`), the
+panel's Escape key and the IPC verb. **Not built, on purpose:** brightness, Bluetooth, power/session actions and
+per-application volume — there is no service behind any of them yet, and a slider that moved nothing is a dead
+control. Verified by `control-center-test` (offscreen; clicks through the window's event path, a click on
+transport arriving at a real MPRIS player double on a private bus), `media-test`, the IPC tests, and on a headless
+sway with a private PipeWire daemon: a click on the track set the daemon to 0.30, the mute click muted it, the
+Do Not Disturb click turned the mode on.
 
 ### Phase 3 — Quantum 3D Layer
 

@@ -53,7 +53,23 @@ public:
         return visible;
     }
 
+    bool toggleLauncher() override {
+        launcherOpen = !launcherOpen;
+        ++launcherToggles;
+        return launcherOpen;
+    }
+
+    bool toggleControlCenter() override {
+        controlCenterOpen = !controlCenterOpen;
+        ++controlCenterToggles;
+        return controlCenterOpen;
+    }
+
     QJsonObject reportedState;
+    bool controlCenterOpen = false;
+    int controlCenterToggles = 0;
+    bool launcherOpen = false;
+    int launcherToggles = 0;
     int height = 32;
     int toggles = 0;
     bool visible = true;
@@ -175,6 +191,8 @@ private slots:
     void theStateAnsweredIsTheStateItWasGiven();
     void aConfigurationKeyResolvesAndOneThisShellDoesNotReadIsRefused();
     void theBarToggleReportsTheBarAndChangesIt();
+    void theLauncherToggleReportsTheLauncherAndChangesIt();
+    void theControlCenterToggleReportsItAndChangesIt();
     void aMismatchedProtocolVersionIsRefusedAndTheConnectionClosed();
     void aMalformedFrameIsRefusedAndClosesTheConnection();
     void aLineThatNeverEndsIsRefusedRatherThanBuffered();
@@ -339,6 +357,48 @@ void IpcServerTest::theBarToggleReportsTheBarAndChangesIt() {
     QVERIFY2(second.has_value(), qPrintable(client.lastDecodeError()));
     QCOMPARE(second->data.value(QStringLiteral("visible")).toBool(), before);
     QCOMPARE(capabilities_.toggles, togglesBefore + 2);
+}
+
+void IpcServerTest::theLauncherToggleReportsTheLauncherAndChangesIt() {
+    ShellClient client(socketName_);
+    QVERIFY(client.connected());
+
+    // As a transition, for the reason the bar's slot is: the double is shared by every slot in this binary.
+    const bool before = capabilities_.launcherOpen;
+    const int togglesBefore = capabilities_.launcherToggles;
+
+    const std::optional<quantum::ipc::Response> first =
+        client.request(requestFor(quantum::ipc::verb::LauncherToggle));
+    QVERIFY2(first.has_value(), qPrintable(client.lastDecodeError()));
+    QCOMPARE(first->ok, true);
+    QCOMPARE(first->data.value(QStringLiteral("open")).toBool(), !before);
+    QCOMPARE(capabilities_.launcherToggles, togglesBefore + 1);
+
+    const std::optional<quantum::ipc::Response> second =
+        client.request(requestFor(quantum::ipc::verb::LauncherToggle));
+    QVERIFY2(second.has_value(), qPrintable(client.lastDecodeError()));
+    QCOMPARE(second->data.value(QStringLiteral("open")).toBool(), before);
+    QCOMPARE(capabilities_.launcherToggles, togglesBefore + 2);
+}
+
+void IpcServerTest::theControlCenterToggleReportsItAndChangesIt() {
+    ShellClient client(socketName_);
+    QVERIFY(client.connected());
+    const bool before = capabilities_.controlCenterOpen;
+    const int togglesBefore = capabilities_.controlCenterToggles;
+
+    const std::optional<quantum::ipc::Response> first =
+        client.request(requestFor(quantum::ipc::verb::ControlCenterToggle));
+    QVERIFY2(first.has_value(), qPrintable(client.lastDecodeError()));
+    QCOMPARE(first->ok, true);
+    QCOMPARE(first->data.value(QStringLiteral("open")).toBool(), !before);
+    QCOMPARE(capabilities_.controlCenterToggles, togglesBefore + 1);
+
+    const std::optional<quantum::ipc::Response> second =
+        client.request(requestFor(quantum::ipc::verb::ControlCenterToggle));
+    QVERIFY2(second.has_value(), qPrintable(client.lastDecodeError()));
+    QCOMPARE(second->data.value(QStringLiteral("open")).toBool(), before);
+    QCOMPARE(capabilities_.controlCenterToggles, togglesBefore + 2);
 }
 
 void IpcServerTest::aMismatchedProtocolVersionIsRefusedAndTheConnectionClosed() {

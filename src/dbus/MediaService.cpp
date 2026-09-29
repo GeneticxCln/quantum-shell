@@ -195,11 +195,39 @@ void MediaService::onPropertiesChanged(const QString& interface, const QVariantM
     publish();
 }
 
-void MediaService::publish() {
+QMap<QString, MediaService::Player>::const_iterator MediaService::followedPlayer() const {
+    // The most recently active player: the one the reading is published from, and so the one a transport request
+    // is meant for. One rule in one place, so what is shown and what is controlled cannot be two different players.
     auto selected = players_.cend();
     for (auto it = players_.cbegin(); it != players_.cend(); ++it) {
         if (selected == players_.cend() || it->activity > selected->activity) selected = it;
     }
+    return selected;
+}
+
+bool MediaService::sendTransport(const char* method) {
+    const auto selected = followedPlayer();
+    if (selected == players_.cend() || !bus_.isConnected()) return false;
+    const QString player = selected.key();
+    auto request = QDBusMessage::createMethodCall(selected->owner, QLatin1String(c::mprisPath),
+                                                  QLatin1String(c::mprisPlayerInterface), QLatin1String(method));
+    auto* pending = new QDBusPendingCallWatcher(bus_.asyncCall(request), this);
+    connect(pending, &QDBusPendingCallWatcher::finished, this, [player, method](QDBusPendingCallWatcher* watcher) {
+        const QDBusPendingReply<> reply = *watcher;
+        if (reply.isError())
+            qCWarning(quantum::app::mediaLog) << player << "refused" << method << ":" << reply.error().message();
+        watcher->deleteLater();
+    });
+    qCInfo(quantum::app::mediaLog) << "asked" << player << "to" << method;
+    return true;
+}
+
+bool MediaService::playPause() { return sendTransport("PlayPause"); }
+bool MediaService::next() { return sendTransport("Next"); }
+bool MediaService::previous() { return sendTransport("Previous"); }
+
+void MediaService::publish() {
+    const auto selected = followedPlayer();
     mpris::MediaReading reading;
     if (selected != players_.cend()) {
         reading = mpris::parseMetadata(metadataMap(selected->properties.values().value(QLatin1String(c::propertyMetadata))));
