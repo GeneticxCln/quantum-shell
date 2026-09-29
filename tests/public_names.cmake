@@ -18,6 +18,7 @@
 
 set(QS_TEST_NAMES
     public-names-test
+    dist-test
     qs-scan-self-test
     repo-scan
     slot-order-independence
@@ -56,6 +57,7 @@ set(QS_TEST_NAMES
     apps-test
     launcher-test
     control-center-test
+    crash-handler-test
     ipc-protocol-test
     ipc-server-test
     ipc-capabilities-test

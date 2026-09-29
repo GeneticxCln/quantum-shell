@@ -208,6 +208,11 @@ target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QM
 qs_unit_test(apps-test apps_test.cpp)
 target_link_libraries(apps-test PRIVATE quantum-shell-apps quantum-shell-config Qt6::Qml)
 
+# What the shell says when a fatal signal kills it: the binary runs itself, a copy dies of each signal, and the
+# report and the manner of death are read off the real process. Core only, so no display is involved.
+qs_unit_test(crash-handler-test crash_handler_test.cpp)
+target_link_libraries(crash-handler-test PRIVATE quantum-shell-logging)
+
 # The control centre's surface: the host, the panel it creates, and the controls on it reaching the services they
 # are drawn from — Do Not Disturb, and a click on transport arriving at a real MPRIS player double on a private bus.
 qs_unit_test(control-center-test control_center_test.cpp)

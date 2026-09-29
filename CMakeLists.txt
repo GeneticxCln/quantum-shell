@@ -78,7 +78,7 @@ qt_standard_project_setup()
 #
 # Core only. Nothing here can drag a display or a socket into a library that must not have one, which is also
 # why the destination is left to Qt: a terminal when there is one, the systemd journal when there is not.
-add_library(quantum-shell-logging STATIC src/app/Logging.cpp)
+add_library(quantum-shell-logging STATIC src/app/Logging.cpp src/app/CrashHandler.cpp)
 target_include_directories(quantum-shell-logging PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-logging PUBLIC Qt6::Core quantum-shell-warnings)
 
@@ -352,6 +352,15 @@ target_link_libraries(quantum-shell-capabilities
 add_executable(qsctl src/ipc/qsctl/main.cpp)
 target_link_libraries(qsctl PRIVATE quantum-shell-ipc quantum-shell-warnings)
 target_compile_definitions(qsctl PRIVATE QS_VERSION="${PROJECT_VERSION}")
+
+# `dist`: the release tarball and its checksum, built from the committed tree by tools/dist.cmake, which refuses
+# a tree that is not clean and produces the same bytes from the same commit. It writes two files under
+# build/<preset>/dist and publishes nothing.
+add_custom_target(dist
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -DVERSION=${PROJECT_VERSION}
+            -DOUTPUT_DIR=${CMAKE_BINARY_DIR}/dist -P ${CMAKE_SOURCE_DIR}/tools/dist.cmake
+    COMMENT "Building the release tarball from the committed tree"
+    VERBATIM)
 
 # --- qs-scan: the repository real-code gate -------------------------------------------------------
 # A real program, not a shell one-liner in a document, so the rules in SYSTEM_PROMPT.md can fail a

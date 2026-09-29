@@ -76,6 +76,18 @@ If a distribution build must use the packages it was told to build against rathe
 second copy of toml++, configure with `-DQUANTUM_SHELL_SYSTEM_DEPS=ON`; the build then fails rather
 than fetching when no system toml++ is found.
 
+## Release tarball
+
+```sh
+cmake --build build/release --target dist
+sha256sum -c build/release/dist/quantum-shell-<version>.tar.gz.sha256
+```
+
+`dist` archives the *committed* tree (`git archive HEAD`) into `quantum-shell-<version>.tar.gz` with a checksum file
+`sha256sum -c` reads. It refuses a tree with uncommitted or untracked changes, and the same commit gives the same
+bytes. It writes two files and publishes nothing. How a version's files, protocol and configuration change between
+releases, and what to do about it, is in [UPGRADING.md](UPGRADING.md).
+
 ## Install
 
 ```sh
