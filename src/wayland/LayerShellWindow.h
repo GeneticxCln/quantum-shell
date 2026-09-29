@@ -2,6 +2,7 @@
 
 #include <QMargins>
 #include <QQuickWindow>
+#include <QRect>
 #include <QString>
 
 namespace QuantumShell {
@@ -24,6 +25,7 @@ class LayerShellWindow : public QQuickWindow
                    WRITE setKeyboardInteractivity NOTIFY configurationChanged)
     Q_PROPERTY(QString layerNamespace READ layerNamespace WRITE setLayerNamespace NOTIFY configurationChanged)
     Q_PROPERTY(QMargins margins READ margins WRITE setMargins NOTIFY configurationChanged)
+    Q_PROPERTY(QRect inputRect READ inputRect WRITE setInputRect NOTIFY inputRectChanged)
 
 public:
     // zwlr_layer_shell_v1.layer. The z-order a surface is drawn in, bottom-most first.
@@ -63,6 +65,13 @@ public:
     QMargins margins() const { return m_margins; }
     void setMargins(const QMargins &margins);
 
+    // The part of the surface that takes pointer input, in the surface's own coordinates. Anywhere else a click
+    // reaches whatever is beneath the surface: the compositor is told through `wl_surface.set_input_region`,
+    // which Qt's Wayland backend sends for a window mask. An empty rectangle, the default, is the whole surface,
+    // because that is what "no mask" means to Qt and to the protocol's default input region.
+    QRect inputRect() const { return m_inputRect; }
+    void setInputRect(const QRect &rect);
+
     // Maps the surface for the first time. Called by `BarHost` rather than from QML, and after that object has
     // assigned the window's screen: showing the window is what creates the Wayland surface and assigns the
     // layer role against an output, and the role is assigned once, so the output has to be right before the
@@ -80,6 +89,7 @@ Q_SIGNALS:
     // Emitted whenever a property above changes, so a live surface can apply the new value rather
     // than needing a restart. The integration connector applies them without a QML reload.
     void configurationChanged();
+    void inputRectChanged();
 
 private:
     Layer m_layer = Top;
@@ -88,6 +98,7 @@ private:
     KeyboardInteractivity m_keyboardInteractivity = NoKeyboard;
     QString m_layerNamespace;
     QMargins m_margins;
+    QRect m_inputRect;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(LayerShellWindow::Anchors)

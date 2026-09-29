@@ -36,6 +36,9 @@ LayerShellWindow {
     // clear of a dock or of the edge without a margin, which QML has no value type for.
     width: 300
     height: 132
+    // Only the panel takes the pointer: the strip beneath it is empty, and a click on empty space should reach
+    // the window under it rather than being swallowed by a display that is about to go.
+    inputRect: Qt.rect(0, 0, 300, 72)
 
     readonly property color foreground: Config.bar.colors.foreground
     readonly property color muted: Config.bar.colors.muted

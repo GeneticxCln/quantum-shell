@@ -1062,8 +1062,9 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    warning, which is how a `Qt.margins` call that does not exist was found (the display still
                    appeared without it); two host mutations are caught (ignoring `show_osd`, not restarting
                    the clock). Seen on a headless sway with `wpctl` moving a private PipeWire daemon's sink:
-                   62%, then MUTE, then gone. Unfixed and stated: the surface's transparent strip takes
-                   pointer input.
+                   62%, then MUTE, then gone. The surface's transparent strip used to take pointer input; the
+                   window type gained `inputRect` (sent as `wl_surface.set_input_region`, seen on the wire as
+                   `add(0, 0, 300, 72)`) and the display sets it to the panel alone, pinned by `osd-test`.
 
                    The launcher is the landing after the OSD: `qsctl launcher toggle` opens a centred overlay
                    (`quantum-shell-launcher`, exclusive keyboard) listing the applications the machine's XDG
