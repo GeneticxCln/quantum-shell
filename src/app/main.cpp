@@ -19,6 +19,7 @@
 #include "app/ShellCapabilities.h"
 #include "app/HistoryHost.h"
 #include "app/ControlCenterHost.h"
+#include "app/CrashHandler.h"
 #include "app/ControlCenterService.h"
 #include "app/LauncherHost.h"
 #include "app/OsdHost.h"
@@ -78,6 +79,10 @@ int main(int argc, char **argv)
     // no terminal, so its records are read with `journalctl --user` (QUANTUM_SHELL.md § Logging), and the
     // first one says which version is running.
     quantum::app::Logging::install();
+    // The account of a fatal signal, installed as early as anything can log: a shell started by niri has no
+    // terminal and nobody watching, and without this a crash leaves the journal a process that exited with a
+    // signal and nothing else. It re-raises, so core dumps and the supervisor's restart still work.
+    quantum::app::CrashHandler::install(QS_VERSION);
     qCInfo(quantum::app::shellLog) << "quantum-shell" << QCoreApplication::applicationVersion()
                                    << "starting; ipc protocol" << quantum::ipc::ProtocolVersion << "config"
                                    << quantum::config::ConfigWatcher::defaultPath();

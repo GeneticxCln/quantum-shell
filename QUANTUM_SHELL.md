@@ -1405,9 +1405,16 @@ provided — `nix` is not installed here, so a flake would be an unverified file
 unverified packaging file is exactly the kind of thing this project's rules refuse. A
 Debian-family package is in the same position for the same reason.
 
-**Still absent from packaging:** a release tarball with a checksum, a versioned package
-(a `-git` package is a moving target), and an upgrade path between shell versions. Those
-are the rest of Phase 8.
+**Release tarball and upgrade path (landed).** `cmake --build <build> --target dist` runs
+`tools/dist.cmake`: `git archive` of the committed tree under a `quantum-shell-<version>/` prefix, gzipped with
+`-n`, and a `<file>.sha256` in the format `sha256sum -c` reads. It refuses a tree with uncommitted or untracked
+changes, and the same commit gives the same bytes; `dist-test` drives it against a repository of its own and
+checks contents, verification (and that a wrong checksum is rejected), reproducibility and the refusal.
+`UPGRADING.md` is the documented upgrade path: what is versioned (shell, IPC protocol, config schema), what a
+mismatch does in each case, the restart the package upgrade needs, and the rule that a renamed public name is a
+breaking change with a row there. **Still absent from packaging:** a versioned package (the PKGBUILD is a `-git`
+package, a moving target, and a versioned one needs a published tarball to name), and the release itself —
+tagging and uploading are a decision for a person, not a build target.
 
 ---
 
@@ -2835,7 +2842,10 @@ Arch package has landed (§ Installation and Packaging) — `cmake --install` pl
 four artifacts, and `packaging/PKGBUILD` is verified by building it. What remains of the
 phase is crash handling, the two profilers, a release tarball, a versioned package, and
 an upgrade path between shell versions. The Nix flake waits on a machine where it can be
-built.
+built. **Landed since:** crash handling (`src/app/CrashHandler.*`: a report of the version, the signal and the call
+stack to standard error, from an alternate stack, then the default action re-raised so core dumps and the
+supervisor's restart still work), the release tarball with its checksum, and `UPGRADING.md`; what remains is the two
+profilers' measurements, a versioned package and the release.
 
 **Exit criteria:** reproducible packages for at least one distro, a released version, and a
 documented upgrade path between shell versions.

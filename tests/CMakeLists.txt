@@ -242,6 +242,7 @@ set(QS_ORDER_CHECK_COSTS
     osd-test=2400
     apps-test=390
     launcher-test=210
+    crash-handler-test=1500
     control-center-test=653
     # Reads seven files and compares them with constants compiled into it, plus the meta-objects of the four
     # QML singletons whose classes it links; it does no I/O beyond the read and no work that depends on the
@@ -525,6 +526,13 @@ add_test(NAME public-names-test
         "-DENVIRONMENT_NAMES=${QS_ENVIRONMENT_NAMES_ARG}"
         "-DDOCUMENTS=${QS_PUBLIC_DOCUMENTS}"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_public_names.cmake)
+# The release tarball's script, driven against a git repository the check makes for itself: contents, checksum
+# verification, reproducibility, and the refusal of a dirty tree.
+add_test(NAME dist-test
+    COMMAND ${CMAKE_COMMAND}
+        -DDIST_SCRIPT=${CMAKE_SOURCE_DIR}/tools/dist.cmake
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR}/dist-test-work
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_dist.cmake)
 # The other half — a test registered without being declared — is checked from the root build file, as a
 # deferred call, so that it runs after every registration in the project rather than after the ones
 # written above it. See the note there.

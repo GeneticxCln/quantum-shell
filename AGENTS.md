@@ -60,6 +60,8 @@ Real files in this repository:
   CMakePresets.json      presets dev, release, asan, ci, session
   .gitignore             build trees, CMake's in-tree markers and tool metadata
   LICENSE                MIT, the terms the shell is distributed under
+  UPGRADING.md           what is versioned (shell, IPC protocol, config schema), what a mismatch does, and
+                         what a person does when upgrading
   README.md              the front door: what the shell is, how to build, install, run and configure
                          it, the surface of the configuration file, and which tests need a session
   packaging/             what a distribution needs that the build does not: the D-Bus activation
@@ -264,7 +266,7 @@ Build system:     CMake 3.31 floor (4.4.3 tested), C++23, Qt 6.11 floor (6.11.2 
                   language for wayland-scanner's output alone; Qt Concurrent is used for the off-thread
                   config parse, and PipeWire's own thread loop is where its callbacks run, so nothing
                   in src/audio/ blocks the GUI thread
-Tests:            ctest, thirty-eight tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
+Tests:            ctest, forty tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
                   gate), public-names-test (the test names and environment variables the documents tell
                   people to run, against the declarations in tests/public_names.cmake), then two order
                   checks that read each test binary rather than its source:
@@ -308,7 +310,7 @@ Tests:            ctest, thirty-eight tests without a compositor socket or opt-i
                   combination flakier than one in a hundred thousand — six passes with that floor, say
                   — is refused before it runs) —
                   and
-                  twenty-nine unit tests that need no compositor or session daemon: niri-version-test, control-center-test (the control centre's surface: Do Not Disturb, a transport click reaching a real MPRIS player double, the volume section inert without a sink), osd-test (the volume display), launcher-test (the launcher's surface: keys typed into it, Enter starting a real process), apps-test (the launcher's desktop-entry parse, `Exec` split, ranking, scan and a real launch), niri-ipc-test,
+                  thirty unit tests that need no compositor or session daemon: niri-version-test, crash-handler-test (a copy of the binary dies of each fatal signal and the report and the manner of death are read back), dist-test (the release tarball against a repository of its own: contents, checksum, reproducibility, the dirty-tree refusal), control-center-test (the control centre's surface: Do Not Disturb, a transport click reaching a real MPRIS player double, the volume section inert without a sink), osd-test (the volume display), launcher-test (the launcher's surface: keys typed into it, Enter starting a real process), apps-test (the launcher's desktop-entry parse, `Exec` split, ranking, scan and a real launch), niri-ipc-test,
                   niri-event-stream-test, niri-state-test, niri-actions-test, niri-output-test,
                   niri-keyboard-layouts-test, niri-outputs-test, niri-reconnect-test and
                   niri-service-test (which loads a QML binding in a real engine, and still needs no
@@ -474,8 +476,8 @@ Tests:            ctest, thirty-eight tests without a compositor socket or opt-i
                   its access point with what that prints, so the reader and the code under test are
                   two things; it needs no opt-in because it only reads, and where the machine has no
                   system bus with NetworkManager it skips with the reason rather than passing
-                  quietly. The counts: 40 registered
-                  with a socket, 38 without one; QS_NIRI_SESSION_TESTS adds its two and
+                  quietly. The counts: 42 registered
+                  with a socket, 40 without one; QS_NIRI_SESSION_TESTS adds its two and
                   QS_NIRI_RESTART_TESTS its own two, both needing a socket, while QS_NIRI_SCALE_TESTS
                   adds its one — the scale matrix, which starts a compositor of its own and takes no
                   lock, because the window it maps is on the nested instance and not on the session's
@@ -1085,6 +1087,17 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    the buttons with no player is asserted, and is redundant with the service's own refusal, which is
                    stated rather than claimed as a second guard.
 
+                   Phase 8 has begun with the parts that can be verified here: crash handling
+                   (`CrashHandler` installs handlers for SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT that write the
+                   version, the signal and the call stack to standard error from an alternate stack — so a stack
+                   overflow is reported too — and then re-raise the default action, so the process still dies of the
+                   signal and core dumps and a supervisor's restart are untouched; `crash-handler-test` runs copies of
+                   itself that die of each signal and reads the report and the manner of death back, and removing the
+                   alternate stack or the re-raise each fails it), a `dist` target that builds a reproducible release
+                   tarball with a `sha256sum -c` checksum from the committed tree and refuses a dirty one
+                   (`dist-test`), and `UPGRADING.md`. Not done: a versioned package, the release itself, the two
+                   profilers' measurements, the Nix flake.
+
                    The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
                    packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,
                    the toast and the battery and media readouts are committed. The audit changes above
@@ -1364,7 +1377,7 @@ DESTDIR=/tmp/stage cmake --install build/release --prefix /usr
                                                    # is resolved at install time, so an install under
                                                    # a prefix the build was not configured with names
                                                    # the prefix it landed in
-ctest --preset dev                                 # thirty-eight tests with no session;
+ctest --preset dev                                 # forty tests with no session;
                                                    # live tests join them only when NIRI_SOCKET is set,
                                                    # and the preset runs four tests at a time
 ctest --preset dev -R audio-test                   # the volume module's pure half: the Props pod parse,
@@ -1408,6 +1421,11 @@ ctest --preset dev -R ipc-server-test              # the IPC server over a real 
 ctest --preset dev -R ipc-protocol-test            # the wire format as pure functions, ~0.02 s
 ctest --preset dev -R ipc-capabilities-test        # what the IPC may reach, against a real service
 ctest --preset dev -R app-logging-test             # the record format and the category names
+ctest --preset dev -R crash-handler-test           # a fatal signal's report and manner of death, read off real
+                                                   # child processes, ~0.05 s
+ctest --preset dev -R dist-test                    # the release tarball and checksum against a git repository of
+                                                   # its own, ~0.1 s; `cmake --build build/release --target dist`
+                                                   # builds the real one
 ctest --preset dev -R control-center-test          # the control centre offscreen: one overlay surface per open,
                                                    # the Do Not Disturb row, transport clicks arriving at a real
                                                    # MPRIS player double, the volume section inert without a sink,
