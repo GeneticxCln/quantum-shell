@@ -162,16 +162,24 @@ Item {
     // `TouchPad` is named explicitly because it is not the default device set, and a touchpad that sends
     // scroll phases rather than wheel ticks would otherwise be ignored.
     //
-    // One gap, stated rather than hidden: a continuous touchpad scroll can send several events per gesture
-    // and this handler acts on every one of them, so a flick moves several steps where a mouse wheel moves
-    // one. A cooldown is where that is fixed, and it belongs with the other gestures when the shell has one.
+    // One step per notch of distance, for the reason the workspace strip's wheel is: a touchpad sends a notch as
+    // many small deltas, and a step for each of them moved the volume several notches for one swipe. The
+    // distance is accumulated, every whole 120 of it is one step (a mouse wheel's notch exactly), and what is
+    // left is dropped when the gesture ends.
     WheelHandler {
+        property real travelled: 0
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onActiveChanged: if (!active) travelled = 0
         onWheel: (event) => {
-            if (event.angleDelta.y < 0)
-                PipeWireService.stepVolume(-1)
-            else if (event.angleDelta.y > 0)
+            travelled += event.angleDelta.y
+            while (travelled >= 120) {
                 PipeWireService.stepVolume(1)
+                travelled -= 120
+            }
+            while (travelled <= -120) {
+                PipeWireService.stepVolume(-1)
+                travelled += 120
+            }
         }
     }
 }

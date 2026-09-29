@@ -72,7 +72,8 @@ schema refuses a configured value outside the prefix; integration refuses the su
   uid other than the server's own effective uid (`IPCServer::permittedUid()`) is closed
   before a byte is read — no answer, no refusal frame, one warning on
   `quantum.shell.ipc`. A connection whose uid the kernel will not report is refused the
-  same way. `setPermittedUid` exists so the refusal is testable without a second user.
+  same way. A closed connection's socket is deleted with its helper (`openConnections()` is
+  the count of client sockets the server holds). `setPermittedUid` exists so the refusal is testable without a second user.
 - Non-JSON / non-object / version mismatch → refuse naming the problem and close.
   Unknown verb, missing argument, unknown config key → refuse by name, connection stays
   open.
@@ -428,9 +429,9 @@ change, height change, guarded to settle) gives every child the group height; co
 centers itself in the given height; invisible widgets hold no space. Centre group is
 bar-centered — a too-narrow bar overlaps rather than squeezes (decision deferred to
 the group that must give way). Click = `focusWorkspaceById` with the model's id text
-(skipped when already focused); wheel = niri up/down (mouse 1:1; no 150 ms cooldown —
-rapid touchpad scrolls step repeatedly, cooldown belongs with the gestures when one
-exists). Widgets: honest empty states only — workspaces show the `niri` dot iff
+(skipped when already focused); wheel = niri up/down, one step per 120 units of accumulated
+`angleDelta` (a mouse notch exactly; a touchpad's small deltas add up, the remainder
+is dropped when `WheelHandler` ends the gesture after its 100 ms of silence). Widgets: honest empty states only — workspaces show the `niri` dot iff
 `!connected`; CPU/memory/volume show a dash while their `available` flag is false;
 hidden-by-config readouts take zero width. Boundary: pixels/geometry/animation in
 `qml/` only; sockets/TOML/PAM/processes in `src/` only; state crosses via QObject
@@ -517,8 +518,13 @@ config path, socket bind result) on `quantum.shell`.
 - Outputs: changes firing neither a workspace output-set change nor a config reload
   (transient `niri msg output` edits; hotplug without a workspace) wait for the next
   trigger; `refresh()` is the escape hatch.
-- Wheels (strip + volume) act per event with no cooldown; niri's own bind rate-limits
-  at 150 ms. Mouse 1:1; touchpad flings multi-step.
+- Wheels (strip + volume) step once per 120 units of accumulated distance, not per event,
+  so a touchpad swipe is as many steps as the distance it covers and a mouse notch is one.
+  A fast fling still covers a lot of distance and steps that many times; there is no
+  time-based rate limit of niri's `cooldown-ms=150` kind. Consecutive volume notches in
+  one turn of the event loop each start from the volume the previous one wrote
+  (`PipeWireService` records a successful write as the base for the next), so a burst
+  no longer loses steps to the daemon's not having echoed yet.
 - Narrow bar: centre group overlaps side groups rather than yielding.
 - Notifications: the daemon and the toast are real; history and interaction are not.
   `NotificationService` owns `org.freedesktop.Notifications` (queued, never stolen) and answers
@@ -550,6 +556,18 @@ config path, socket bind result) on `quantum.shell`.
   therefore declares both (`width: 380`, height from its text). Verified against a headless
   sway (wlroots layer-shell), not against niri: the niri live tests that would pin it are not
   written, and this environment has no niri.
+- Clock: `qml/Clock.qml` re-arms a single-shot timer for the next minute boundary, and Qt timers run on the
+  monotonic clock, which does not advance during suspend. After a resume, or a manual clock or timezone
+  change, the time shown can be stale for up to a minute. The fix needs an event source (logind's
+  `PrepareForSleep`, or a `CLOCK_REALTIME` timerfd with cancel-on-set) that has not been built.
+- Bar hide/show: 0.5 KiB of heap per hide/show pair is unaccounted for (measured: +96 KiB over 400
+  pairs). The much larger leak that used to sit here was the IPC server keeping every closed client's
+  socket (fixed; `IPCServer::openConnections()`).
+- toml++ 3.4.0 defects the schema works around rather than fixes, because the dependency is pinned:
+  `TOML_ASSERT` is disabled for `ConfigSchema.cpp` (a `[` followed by a newline asserts in the key parser
+  and aborts assertion-enabled builds), and `parseConfig` refuses a non-ASCII byte outside a string or
+  comment by line before parsing (U+00A1..U+0499 reaches `__builtin_unreachable()` in the library's
+  whitespace test). Both are pinned in `config-test`; a toml++ upgrade should re-run them.
 - Reconcile cannot catch a dropped event later overwritten by a newer one on the same
   field — agreement after the fact is agreement.
 - Volume writes refuse past 64 channels; above-unity volumes are read, never written

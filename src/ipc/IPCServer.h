@@ -89,6 +89,10 @@ public:
     // The name handed to Qt, which is the abstract address without its leading NUL.
     QString socketName() const;
 
+    // How many client sockets the server is holding right now. A client that has gone is not one of them: the
+    // count is what says a closed connection was let go of rather than kept for the life of the server.
+    int openConnections() const;
+
     // The one uid whose connections are served. It is the effective uid of this process from construction,
     // and a setter exists so that the refusal can be shown in a test without a second user on the machine:
     // naming any other uid makes this process's own connections the foreign ones.

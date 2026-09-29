@@ -62,7 +62,12 @@ public:
         , server_(server)
     {
         connect(socket_, &QLocalSocket::readyRead, this, &Connection::onReadyRead);
-        connect(socket_, &QLocalSocket::disconnected, this, &QObject::deleteLater);
+        // The *socket* is what is deleted, and this helper goes with it as its child. A socket handed out by
+        // `nextPendingConnection()` is owned by the `QLocalServer` and stays there until the server is destroyed,
+        // so deleting only this helper — which is what this line used to do — left every closed client's socket
+        // and its buffers behind: measured on a running shell, 8.5 KiB per `qsctl` call, without bound, which is
+        // a status widget polling once a second growing by about 700 MB a day.
+        connect(socket_, &QLocalSocket::disconnected, socket_, &QObject::deleteLater);
 
         // No initial read of whatever may already be in the buffer, and that is a measured decision rather
         // than an omission: a client can put its first frame on the wire before this side has processed the
@@ -169,6 +174,11 @@ bool IPCServer::isListening() const
 QString IPCServer::socketName() const
 {
     return socketName_;
+}
+
+int IPCServer::openConnections() const
+{
+    return static_cast<int>(server_.findChildren<QLocalSocket*>(Qt::FindDirectChildrenOnly).size());
 }
 
 Response IPCServer::dispatch(const Request& request)

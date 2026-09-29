@@ -518,32 +518,50 @@ void PipeWireService::Impl::stepVolume(int direction)
 {
     if (direction != 1 && direction != -1)
         return;
-    if (loop == nullptr || sink == nullptr || !haveReading) {
+    if (loop == nullptr) {
         qCInfo(quantum::app::audioLog) << "no reading to step from; nothing was written";
         return;
     }
-
-    // The current value is read and turned into a new one in one turn of the lock, so two wheel notches
-    // in the same event-loop turn cannot both step from the same starting point and lose a step.
-    pw_thread_loop_lock(loop);
-    const SinkState current = state;
-    pw_thread_loop_unlock(loop);
 
     // One notch, in the unit the readout is drawn in: the step's *distance* is the configuration's and which of
     // the two distances applies is too, so the arithmetic itself is the pure half's — what is left here is
     // which factor to write. It starts from the daemon's own factor rather than from the rounded percentage,
     // which is what makes a decibel notch a fixed gain: a step derived from a rounded percentage would be a
-    // step in a number that had already lost the precision the gain needs.
-    const double next = linearAfterWheelStep(current.linearVolume, direction, service->wheelStepUnit(),
-                                             service->stepPercent(), service->stepDecibels(),
-                                             PipeWireService::MaxPercent);
-    const PropsWrite write(current.channels, next, current.muted);
-    if (write.pod() == nullptr)
-        return;
+    // step in a number that had already lost the precision the gain needs. Read from the service before the
+    // lock is taken: they are the GUI thread's, and this runs on it.
+    const WheelStepUnit unit = service->wheelStepUnit();
+    const int stepPercent = service->stepPercent();
+    const double stepDecibels = service->stepDecibels();
 
+    // Read, computed, written and recorded in one turn of the lock. The recording is what makes a burst of
+    // notches — a wheel or a touchpad delivers several before the daemon has echoed the first — each start
+    // from the volume the last one wrote: `state` is otherwise the daemon's last *report*, so the second notch
+    // of a burst stepped from the same starting point as the first and wrote the same target, and a fast
+    // scroll lost every notch but one. (Measured against a real daemon: two notches from 30 with a step of ten
+    // reached 40, not 50.) The daemon's echo overwrites the recorded value and is what is published, so a
+    // daemon that clamped or refused the write corrects it. It is also read here, under the lock, rather than
+    // tested beforehand: `sink` and `haveReading` are the loop thread's.
+    double next = 0.0;
+    int result = 0;
+    bool wrote = false;
     pw_thread_loop_lock(loop);
-    const int result = sink == nullptr ? -ENOTSUP : pw_node_set_param(sink, SPA_PARAM_Props, 0, write.pod());
+    if (sink != nullptr && haveReading) {
+        next = linearAfterWheelStep(state.linearVolume, direction, unit, stepPercent, stepDecibels,
+                                    PipeWireService::MaxPercent);
+        const PropsWrite write(state.channels, next, state.muted);
+        if (write.pod() != nullptr) {
+            result = pw_node_set_param(sink, SPA_PARAM_Props, 0, write.pod());
+            if (result >= 0)
+                state.linearVolume = next;
+            wrote = true;
+        }
+    }
     pw_thread_loop_unlock(loop);
+
+    if (!wrote) {
+        qCInfo(quantum::app::audioLog) << "no reading to step from; nothing was written";
+        return;
+    }
     if (result < 0)
         // Both renderings of one factor, because which one the person was reading is what the gesture was:
         // a step that looks wrong in the unit they are not using is not a second write.
@@ -553,45 +571,65 @@ void PipeWireService::Impl::stepVolume(int direction)
 
 void PipeWireService::Impl::setVolumePercent(int percent)
 {
-    if (loop == nullptr || sink == nullptr || !haveReading) {
+    if (loop == nullptr) {
         qCInfo(quantum::app::audioLog) << "no reading to set from; nothing was written";
         return;
     }
     const int target = percent < 0 ? 0 : qMin(percent, PipeWireService::MaxPercent);
+
+    // One turn of the lock for the same reason `stepVolume`'s is: the recorded value is what the next gesture
+    // starts from, and `sink` and `haveReading` are read where they cannot change under the read.
+    int result = 0;
+    bool wrote = false;
     pw_thread_loop_lock(loop);
-    const SinkState current = state;
+    if (sink != nullptr && haveReading) {
+        const double factor = linearFromPercent(target);
+        const PropsWrite write(state.channels, factor, state.muted);
+        if (write.pod() != nullptr) {
+            result = pw_node_set_param(sink, SPA_PARAM_Props, 0, write.pod());
+            if (result >= 0)
+                state.linearVolume = factor;
+            wrote = true;
+        }
+    }
     pw_thread_loop_unlock(loop);
 
-    const PropsWrite write(current.channels, linearFromPercent(target), current.muted);
-    if (write.pod() == nullptr)
+    if (!wrote) {
+        qCInfo(quantum::app::audioLog) << "no reading to set from; nothing was written";
         return;
-
-    pw_thread_loop_lock(loop);
-    const int result = sink == nullptr ? -ENOTSUP : pw_node_set_param(sink, SPA_PARAM_Props, 0, write.pod());
-    pw_thread_loop_unlock(loop);
+    }
     if (result < 0)
         qCWarning(quantum::app::audioLog) << "the daemon refused a volume of" << target << "%:" << result;
 }
 
 void PipeWireService::Impl::toggleMute()
 {
-    if (loop == nullptr || sink == nullptr || !haveReading) {
+    if (loop == nullptr) {
         qCInfo(quantum::app::audioLog) << "no reading to mute; nothing was written";
         return;
     }
     // The volume is carried through unchanged: a mute that reset the volume would lose a setting the
-    // person chose, and `wpctl set-mute` keeps it too.
+    // person chose, and `wpctl set-mute` keeps it too. Recorded like the volume is, so two clicks before the
+    // echo mute and unmute rather than muting twice.
+    int result = 0;
+    bool wrote = false;
     pw_thread_loop_lock(loop);
-    const SinkState current = state;
+    if (sink != nullptr && haveReading) {
+        const bool muted = !state.muted;
+        const PropsWrite write(state.channels, state.linearVolume, muted);
+        if (write.pod() != nullptr) {
+            result = pw_node_set_param(sink, SPA_PARAM_Props, 0, write.pod());
+            if (result >= 0)
+                state.muted = muted;
+            wrote = true;
+        }
+    }
     pw_thread_loop_unlock(loop);
 
-    const PropsWrite write(current.channels, current.linearVolume, !current.muted);
-    if (write.pod() == nullptr)
+    if (!wrote) {
+        qCInfo(quantum::app::audioLog) << "no reading to mute; nothing was written";
         return;
-
-    pw_thread_loop_lock(loop);
-    const int result = sink == nullptr ? -ENOTSUP : pw_node_set_param(sink, SPA_PARAM_Props, 0, write.pod());
-    pw_thread_loop_unlock(loop);
+    }
     if (result < 0)
         qCWarning(quantum::app::audioLog) << "the daemon refused the mute change:" << result;
 }

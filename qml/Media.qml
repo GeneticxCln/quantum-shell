@@ -35,10 +35,10 @@ Item {
 
         // Playback status indicator
         Text {
+            id: statusIcon
             // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
             // markup, which would let a sender restyle the bar or reference an image from a track title.
             textFormat: Text.PlainText
-            id: statusIcon
             text: {
                 switch (MediaService.playbackStatus) {
                 case "playing":
@@ -58,10 +58,10 @@ Item {
 
         // Track info: "Title - Artist" or just title if no artist
         Text {
+            id: trackText
             // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
             // markup, which would let a sender restyle the bar or reference an image from a track title.
             textFormat: Text.PlainText
-            id: trackText
             text: {
                 const title = MediaService.title || "";
                 const artist = MediaService.artist || "";

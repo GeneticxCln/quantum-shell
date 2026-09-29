@@ -1278,10 +1278,12 @@ Three rules, each with a reason that is a real behaviour rather than a preferenc
 - **The gesture is niri's, not the strip's.** `focus-workspace-down` and `focus-workspace-up` are what
   niri's own default config binds to the same wheel gesture (`Mod+WheelScrollDown cooldown-ms=150 {
   focus-workspace-down; }`), so which workspace is below is the compositor's answer and not an index
-  computed from the strip. The bar does not walk its own model to decide where the wheel goes. One gap,
-  stated rather than hidden: niri rate-limits its bind with `cooldown-ms=150` and the bar's handler acts
-  on every wheel event it is given. A mouse wheel sends one event per notch, so the two agree there; a
-  continuous touchpad scroll is the case where a cooldown belongs once the bar has one.
+  computed from the strip. The bar does not walk its own model to decide where the wheel goes. The handler
+  takes one step per 120 units of accumulated `angleDelta` rather than one per event — a mouse notch is
+  exactly one step, a touchpad's small deltas add up, and what is left over is dropped when the gesture
+  ends — so a swipe steps as far as it travelled and not once per event. It has no rate limit of niri's
+  `cooldown-ms=150` kind. `bar-interaction-test` pins it (twelve deltas of ten are one step) and fails
+  with a step per event.
 - **A click on the already-focused capsule asks for nothing.** niri resolves the reference and then
   switches to it, and with `workspace-auto-back-and-forth` — which this project's own session sets —
   switching to the workspace already focused lands on the previously focused one. A bar that moved a
