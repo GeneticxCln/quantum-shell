@@ -239,6 +239,7 @@ set(QS_ORDER_CHECK_COSTS
     # and closes the panel, none of them waiting out a clock: 3695 ms, the middle of five passes at 3641, 3673,
     # 3695, 3750 and 3788.
     notification-test=3700
+    osd-test=2400
     # Reads seven files and compares them with constants compiled into it, plus the meta-objects of the four
     # QML singletons whose classes it links; it does no I/O beyond the read and no work that depends on the
     # machine, which is why it is near the cheapest binary in the table. Measured as the middle of three runs:

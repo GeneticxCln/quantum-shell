@@ -312,12 +312,12 @@ target_link_libraries(quantum-shell-bars
 # rather than something the bar reads — and because linking it into `quantum-shell-capabilities` would drag
 # the notifications service into the binary that drives the IPC, which has no toast verb. Core, Gui and Qml:
 # it instantiates a QML component per output and reaches the resulting windows, the way the bar host does.
-add_library(quantum-shell-toasts STATIC src/app/ToastHost.cpp src/app/HistoryHost.cpp)
+add_library(quantum-shell-toasts STATIC src/app/ToastHost.cpp src/app/HistoryHost.cpp src/app/OsdHost.cpp)
 target_include_directories(quantum-shell-toasts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-toasts
     PUBLIC Qt6::Core Qt6::Gui Qt6::Qml
     PRIVATE quantum-shell-wayland quantum-shell-logging quantum-shell-notifications
-            quantum-shell-config quantum-shell-warnings)
+            quantum-shell-config quantum-shell-audio quantum-shell-warnings)
 
 add_library(quantum-shell-capabilities STATIC src/app/ShellCapabilities.cpp)
 target_include_directories(quantum-shell-capabilities PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -450,6 +450,7 @@ set(QS_QML_FILES
     qml/Media.qml
     qml/Notifications.qml
     qml/Toast.qml
+    qml/VolumeOsd.qml
     qml/NotificationHistory.qml
     qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"

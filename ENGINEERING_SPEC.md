@@ -50,13 +50,17 @@ Renaming anything here breaks scripts, QML files, or clients. Approval required.
 ### 2.1 Layer-shell namespaces
 
 Prefix `quantum-shell-` (`LayerNamespacePrefix`, mirrored in
-`LayerShellIntegration.cpp`). Three surfaces today: `quantum-shell-bar` (the bar,
+`LayerShellIntegration.cpp`). Four surfaces today: `quantum-shell-bar` (the bar,
 `qml/Main.qml`), `quantum-shell-toast` (the toast, `qml/Toast.qml` — a literal
 in the QML rather than a configured key, because a notification is a surface of its
 own kind and not a readout's setting) and `quantum-shell-notification-history` (the
 history panel, `qml/NotificationHistory.qml`, likewise a literal; one surface on the
 primary output while `notificationHistoryOpen` is true, 400 wide and as tall as its
-content up to 520, keyboard interactivity none, no exclusive zone). Enforced twice:
+content up to 520, keyboard interactivity none, no exclusive zone) and
+`quantum-shell-osd` (the volume display, `qml/VolumeOsd.qml`, likewise a literal; one
+surface per output while an adjustment is on screen, overlay layer, anchored to the
+bottom edge alone so the compositor centres it, 300×72, 72 px above the edge, keyboard
+interactivity none, no exclusive zone). Enforced twice:
 schema refuses a configured value outside the prefix; integration refuses the surface
 (no role, record on `quantum.shell.wayland`).
 
@@ -131,6 +135,8 @@ File: `$XDG_CONFIG_HOME/quantum-shell/config.toml` (`~/.config/...` fallback).
 | `[bar.media] show_media` | `bar.media.show_media` | `true` | strict boolean | yes |
 | `[bar.notifications] show_notifications` | `bar.notifications.show_notifications` | `true` | strict boolean | yes |
 | `[bar.notifications] timeout_ms` | `bar.notifications.timeout_ms` | `5000` | an integer of at least 500 ms, or the spec's `0` (never expire); anything else below the floor refused | yes, and it is the value a sender's `-1` resolves to |
+| `[bar.osd] show_osd` | `bar.osd.show_osd` | `true` | strict boolean | yes; switching it off takes down a display that is up |
+| `[bar.osd] timeout_ms` | `bar.osd.timeout_ms` | `1500` | an integer of at least 500 ms (`MinOsdTimeoutMs`); below it, or not an integer, refused by name and the default kept — there is no "never" for a volume bar | yes, the next adjustment uses it |
 | `[bar.colors] foreground` | `bar.colors.foreground` | `"#c8cad8"` | colour literal: `#` and 6 hex digits, or 8 with the alpha first; anything else refused by name | yes, repaints what reads it |
 | `[bar.colors] muted` | `bar.colors.muted` | `"#5a5d70"` | colour literal, same rule | yes |
 | `[bar.colors] accent` | `bar.colors.accent` | `"#7aa2f7"` | colour literal, same rule | yes |
@@ -146,7 +152,7 @@ coerced). Unusable file (non-TOML, bad `schema_version`) applies nothing.
 ### 2.6 QML singletons (module `QuantumShell 1.0`, one place: `QmlModule.h`)
 
 | Name | Properties / calls | Notes |
-| `Config` | `bar.height`, `bar.layerNamespace`, `bar.system.*` (4), `bar.audio.*` (4), `bar.network.*` (3), `bar.battery.*` (3), `bar.media.*` (1), `bar.notifications.*` (1), `bar.colors.*` (4), `bar.font.*` (3); per-leaf NOTIFY; `bar`/`system`/`audio`/`network`/`battery`/`media`/`notifications`/`colors`/`font` objects CONSTANT | no engine reload, ever |
+| `Config` | `bar.height`, `bar.layerNamespace`, `bar.system.*` (4), `bar.audio.*` (4), `bar.network.*` (3), `bar.battery.*` (3), `bar.media.*` (1), `bar.notifications.*` (2), `bar.osd.*` (2), `bar.colors.*` (4), `bar.font.*` (3); per-leaf NOTIFY; `bar`/`system`/`audio`/`network`/`battery`/`media`/`notifications`/`osd`/`colors`/`font` objects CONSTANT | no engine reload, ever |
 | `NiriService` | `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` — each with NOTIFY, emitted only on real change | absent = empty map/list, never plausible zero; ids as text |
 | `NiriActions` | `focusWorkspaceById(idText)`, `focusWorkspaceUp()`, `focusWorkspaceDown()`; signal `actionFailed` | every non-`handled` outcome also logged |
 | `SysMonService` | `cpuPercent`, `cpuAvailable`, `memoryUsedKb`, `memoryTotalKb`, `memoryAvailableKb`, `memoryAvailable`, `active`, `sampleIntervalMs` | `cpuPercent` 0 while `cpuAvailable` false; read the flags |
@@ -198,11 +204,11 @@ journal otherwise (`journalctl --user _COMM=quantum-shell`). Secrets are never l
 
 ### 2.8 Test and environment names (declared once, `tests/public_names.cmake`)
 
-42 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
+43 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
 `slot-order-independence`, `slot-order-randomised-shard-{1..4}`, `niri-live-test`,
 `niri-live-stream-test`, `niri-live-action-test`, `niri-live-layershell-test`,
 `niri-live-restart-test`, `niri-live-shell-restart-test`, `niri-live-scale-test`, `audio-live-test`,
-`network-live-test`, `notification-test`, `niri-version-test`, `niri-ipc-test`, `niri-event-stream-test`,
+`network-live-test`, `notification-test`, `osd-test`, `niri-version-test`, `niri-ipc-test`, `niri-event-stream-test`,
 `niri-state-test`, `niri-actions-test`, `niri-output-test`,
 `niri-keyboard-layouts-test`, `niri-outputs-test`, `niri-service-test`,
 `niri-reconnect-test`, `config-test`, `config-watcher-test`, `sysmon-test`,
@@ -478,6 +484,7 @@ registers the scale test, which starts a compositor of its own and takes no lock
 | `/proc` parsers, refusals, cadence + its record | `sysmon-test` (fixtures + 2 real-`/proc` slots) | `ctest --preset dev -R sysmon-test` |
 | Props parse, cube-root, decibel conversion (unity 0, silence `-INFINITY`, above-unity positive), wheel math in both units (a dB notch as a fixed gain, its clamp, the percentage notch's growing dB span, silence), write pod, refusals, the unit's token round trip, `[bar.audio]` rules incl. the two scale tokens | `audio-test` (no daemon) | `ctest --preset dev -R audio-test` |
 | The notifications name taken on a bus of the test's own, `Notify` answered with an id, `replaces_id` echoed as the caller's own id, the sender's text published verbatim, the spec's other two methods, `NotificationClosed` for a close, an expiry and a displaced notification (read off the wire from a second connection) and silence for an id that is not showing, ids that never collide with an echoed `replaces_id`, the toast's size (declared width, height following the text), an earlier notification's clock not withdrawing a never-expiring toast, a queued shell publishing when the holder leaves, the shell dark while another connection holds the name, and the real `notify-send` reaching it (probed first, that one slot skipped by name on a machine that cannot run it) | `notification-test` (starts a `dbus-daemon` of its own; the shell takes the name there) | `ctest --preset dev -R notification-test` |
+| The volume display: none up before an adjustment, one surface per output for one announced by the audio service and withdrawn by its clock, a further adjustment restarting the clock without adding a surface, `show_osd = false` never showing one and taking down one that is up, the overlay layer / bottom anchor / no keyboard / no exclusive zone / declared size the surface is created with, and the text and bar fill the surface draws for a percentage, a decibel value, silence, a mute and no reading — with a warning from the QML failing the slot. What the *service* announces (an adjustment of the followed sink, and not the first reading, a switch or a repeat) is `audio-live-test`'s | `osd-test` (offscreen, a service that is never started); `audio-live-test` for the signal | `ctest --preset dev -R osd-test` |
 | Every D-Bus name against the daemon's own spelling, its state/connectivity/device-type numbers as the widget's tokens (unknown refused, not guessed), the property map read through its variants (bare and `QDBusVariant` both, text for a number and a number for text refused, `ao` arriving as a raw `QDBusArgument`), a change that overtakes an object's first read not undone by the reply, the reading the chain adds up to (wifi/ethernet/unassociated/offline/clamped/unknown state), and the service against a NetworkManager test double on a private bus: the reading arriving, following `PropertiesChanged` with **zero** calls to the daemon counted after the first read, a chain that moves with the objects it left no longer followed, a daemon leaving and arriving, a reply from a daemon that is gone dropped, an object that refuses leaving the rest standing, an unreachable bus refused with a record | `network-test` (starts a `dbus-daemon` of its own; the test double owns the name there) | `ctest --preset dev -R network-test` |
 | Schema, diffing, `Config` bindings, compile-time mirrors (defaults, floors, token list, key paths) | `config-test`, `config-watcher-test` (scratch dirs) | `ctest --preset dev -R config` |
 | IPC frames, refusals, a connection from another uid closed unanswered, server over a real socket, capabilities vs real service | `ipc-protocol-test`, `ipc-server-test`, `ipc-capabilities-test` | `ctest --preset dev -R ipc` |
@@ -529,6 +536,10 @@ config path, socket bind result) on `quantum.shell`.
   (`PipeWireService` records a successful write as the base for the next), so a burst
   no longer loses steps to the daemon's not having echoed yet.
 - Narrow bar: centre group overlaps side groups rather than yielding.
+- Volume OSD: shown for an adjustment of the followed sink only (`PipeWireService::volumeAdjusted`); the
+  surface takes pointer input over its whole 300×132 area (the transparent strip under the panel
+  included) because the layer-shell integration sets no input region; primary and every other output
+  alike; brightness, keyboard-layout and media displays do not exist.
 - Notifications: the daemon, the toast, the history panel and Do Not Disturb are real; actions are not.
   `NotificationService` owns `org.freedesktop.Notifications` (queued, never stolen) and answers
   the spec's four methods. One notification is showing at a time — the newest wins — and the

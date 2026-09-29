@@ -29,7 +29,7 @@ bool isKnownTopLevelKey(std::string_view key) {
 bool isKnownBarKey(std::string_view key) {
     return key == "height" || key == "namespace" || key == "system" || key == "audio" ||
            key == "network" || key == "battery" || key == "media" || key == "notifications" ||
-           key == "colors" || key == "font";
+           key == "colors" || key == "font" || key == "osd";
 }
 
 // `[bar.system]`'s keys, in the file's spelling and in the order a warning names them, so that the list a
@@ -123,6 +123,22 @@ QString knownMediaKeysText()
 {
     QStringList names;
     for (const std::string_view key : mediaKeys)
+        names.append(QString::fromUtf8(key.data(), static_cast<int>(key.size())));
+    return names.join(QStringLiteral(", "));
+}
+
+// `[bar.osd]`'s keys, same shape as the tables around it.
+constexpr std::array<std::string_view, 2> osdKeys{"show_osd", "timeout_ms"};
+
+bool isKnownOsdKey(std::string_view key)
+{
+    return std::find(osdKeys.begin(), osdKeys.end(), key) != osdKeys.end();
+}
+
+QString knownOsdKeysText()
+{
+    QStringList names;
+    for (const std::string_view key : osdKeys)
         names.append(QString::fromUtf8(key.data(), static_cast<int>(key.size())));
     return names.join(QStringLiteral(", "));
 }
@@ -355,6 +371,52 @@ void readMediaTable(const toml::table& table, MediaConfig& media, QStringList& w
             continue;
         }
         media.showMedia = shown->get();
+    }
+}
+
+// `[bar.osd]`, read by the same rule as every other table: a key of the wrong type is reported and the default
+// kept, and a timeout below the floor is refused rather than clamped into something nobody asked for.
+void readOsdTable(const toml::table& table, OsdConfig& osd, QStringList& warnings)
+{
+    for (const auto& [key, node] : table) {
+        const std::string_view name = keyText(key);
+        if (!isKnownOsdKey(name)) {
+            warnings.append(QStringLiteral("%1 is not a key this shell reads; known keys in [bar.osd]: %2")
+                                .arg(keyPath("bar.osd", name), knownOsdKeysText()));
+            continue;
+        }
+        const QString path = keyPath("bar.osd", name);
+
+        if (name == "timeout_ms") {
+            const std::optional<int64_t> number = node.value<int64_t>();
+            if (!number.has_value()) {
+                warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
+                                    .arg(path)
+                                    .arg(typeName(node))
+                                    .arg(osd.timeoutMs));
+                continue;
+            }
+            if (*number < MinOsdTimeoutMs || *number > std::numeric_limits<int>::max()) {
+                warnings.append(QStringLiteral("%1: %2 is outside %3 to %4 ms; keeping %5")
+                                    .arg(path)
+                                    .arg(*number)
+                                    .arg(MinOsdTimeoutMs)
+                                    .arg(std::numeric_limits<int>::max())
+                                    .arg(osd.timeoutMs));
+                continue;
+            }
+            osd.timeoutMs = static_cast<int>(*number);
+            continue;
+        }
+
+        const toml::value<bool>* shown = node.as_boolean();
+        if (shown == nullptr) {
+            warnings.append(QStringLiteral("%1: expected a boolean, found %2; keeping %3")
+                                .arg(path, typeName(node),
+                                     osd.showOsd ? QStringLiteral("true") : QStringLiteral("false")));
+            continue;
+        }
+        osd.showOsd = shown->get();
     }
 }
 
@@ -731,7 +793,7 @@ void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warning
         if (!isKnownBarKey(name)) {
             warnings.append(QStringLiteral("%1 is not a key this shell reads; known keys in [bar]: "
                                            "height, namespace, system, audio, network, battery, media, "
-                                           "notifications")
+                                           "notifications, colors, font, osd")
                                 .arg(keyPath("bar", name)));
             continue;
         }
@@ -808,6 +870,18 @@ void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warning
                 continue;
             }
             readNotificationsTable(*notificationsTable, bar.notifications, warnings);
+            continue;
+        }
+
+        // The ninth table inside `[bar]`: the on-screen display's two settings.
+        if (name == "osd") {
+            const toml::table* osdTable = node.as_table();
+            if (osdTable == nullptr) {
+                warnings.append(QStringLiteral("%1: expected a table, found %2; keeping the defaults for it")
+                                    .arg(path, typeName(node)));
+                continue;
+            }
+            readOsdTable(*osdTable, bar.osd, warnings);
             continue;
         }
 
@@ -1087,6 +1161,10 @@ std::optional<QVariant> configValueForPath(const ConfigValues& values, QStringVi
         return QVariant(values.bar.notifications.showNotifications);
     if (path == QLatin1StringView(KeyBarNotificationsTimeoutMs))
         return QVariant(values.bar.notifications.timeoutMs);
+    if (path == QLatin1StringView(KeyBarOsdShowOsd))
+        return QVariant(values.bar.osd.showOsd);
+    if (path == QLatin1StringView(KeyBarOsdTimeoutMs))
+        return QVariant(values.bar.osd.timeoutMs);
     if (path == QLatin1StringView(KeyBarColorsForeground))
         return QVariant(values.bar.colors.foreground);
     if (path == QLatin1StringView(KeyBarColorsMuted))

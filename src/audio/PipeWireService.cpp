@@ -838,6 +838,10 @@ void PipeWireService::applyReading(bool available, bool muted, int percent, doub
         return;
     }
     const bool becameAvailable = available && !available_;
+    // An adjustment is a change of the sink that was already being followed. Compared by name and by the
+    // previous availability, so neither the first reading nor a sink switch is announced as one.
+    const bool adjusted = available && available_ && sinkName == readingSink_;
+    readingSink_ = available ? sinkName : QString();
     available_ = available;
     muted_ = muted;
     volumePercent_ = percent;
@@ -846,6 +850,8 @@ void PipeWireService::applyReading(bool available, bool muted, int percent, doub
         qCInfo(quantum::app::audioLog)
             << "the volume readout is live:" << sinkName << percent << "%," << decibels << "dB";
     emit readingChanged();
+    if (adjusted)
+        emit volumeAdjusted();
 }
 
 void PipeWireService::registerQmlSingleton(PipeWireService& service)

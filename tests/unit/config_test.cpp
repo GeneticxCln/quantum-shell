@@ -119,7 +119,7 @@ static_assert(quantum::config::MinVolumeStepDecibels == coveredMinVolumeStepDeci
 // The key paths the shell offers to `qsctl config get`, mirrored the same way and for a sharper reason: a
 // path is what a script types. It is interface, so a rename has to be acknowledged here — and in the
 // document that lists the keys — rather than being free to happen in the schema alone.
-constexpr std::array<const char*, 26> coveredKeyPaths{"bar.height",
+constexpr std::array<const char*, 28> coveredKeyPaths{"bar.height",
                                                        "bar.layerNamespace",
                                                        "bar.system.sample_interval_ms",
                                                        "bar.system.show_cpu",
@@ -138,6 +138,8 @@ constexpr std::array<const char*, 26> coveredKeyPaths{"bar.height",
                                                        "bar.media.show_media",
                                                        "bar.notifications.show_notifications",
                                                        "bar.notifications.timeout_ms",
+                                                       "bar.osd.show_osd",
+                                                       "bar.osd.timeout_ms",
                                                        "bar.colors.foreground",
                                                        "bar.colors.muted",
                                                        "bar.colors.accent",
@@ -207,6 +209,7 @@ private slots:
     void refusesASystemSettingItCannotHonour();
     void refusesAnAudioSettingItCannotHonour();
     void refusesABatterySettingItCannotHonour();
+    void theOsdTableIsReadRefusedAndFollowed();
     void refusesAColourItCannotDraw();
     void readsTheColoursTheFileSets();
     void refusesATypefaceSettingItCannotHonour();
@@ -607,6 +610,70 @@ void ConfigTest::aValueOfTheWrongTypeIsReportedAndTheDefaultKept() {
     QVERIFY(mentions(notANotificationsTable.warnings, QStringLiteral("bar.notifications")));
     QVERIFY(mentions(notANotificationsTable.warnings, QStringLiteral("a table")));
     QCOMPARE(notANotificationsTable.values.bar.notifications.showNotifications, true);
+}
+
+void ConfigTest::theOsdTableIsReadRefusedAndFollowed() {
+    // The defaults are what a file with no table gives: the display on, and a timeout that is long enough to
+    // read a number and short enough not to be a fixture.
+    const ParseResult none = parseConfig(QByteArrayLiteral("schema_version = 1\n"));
+    QVERIFY(none.warnings.isEmpty());
+    QCOMPARE(none.values.bar.osd.showOsd, true);
+    QCOMPARE(none.values.bar.osd.timeoutMs, 1500);
+
+    const ParseResult set = parseConfig(QByteArrayLiteral(
+        "schema_version = 1\n[bar.osd]\nshow_osd = false\ntimeout_ms = 2500\n"));
+    QVERIFY2(set.warnings.isEmpty(), qPrintable(set.warnings.join(QStringLiteral("; "))));
+    QCOMPARE(set.values.bar.osd.showOsd, false);
+    QCOMPARE(set.values.bar.osd.timeoutMs, 2500);
+
+    // Below the floor is refused by name and the default stands — not clamped to the floor, which would be a
+    // value nobody wrote.
+    const ParseResult tooShort = parseConfig(QByteArrayLiteral(
+        "schema_version = 1\n[bar.osd]\ntimeout_ms = 499\n"));
+    QCOMPARE(tooShort.warnings.size(), 1);
+    QVERIFY(mentions(tooShort.warnings, QStringLiteral("bar.osd.timeout_ms")));
+    QCOMPARE(tooShort.values.bar.osd.timeoutMs, 1500);
+    const ParseResult atFloor = parseConfig(QByteArrayLiteral(
+        "schema_version = 1\n[bar.osd]\ntimeout_ms = 500\n"));
+    QVERIFY(atFloor.warnings.isEmpty());
+    QCOMPARE(atFloor.values.bar.osd.timeoutMs, 500);
+
+    const ParseResult wrongTypes = parseConfig(QByteArrayLiteral(
+        "schema_version = 1\n[bar.osd]\nshow_osd = \"yes\"\ntimeout_ms = 1.5\nshow_osdd = true\n"));
+    QCOMPARE(wrongTypes.warnings.size(), 3);
+    QVERIFY(mentions(wrongTypes.warnings, QStringLiteral("bar.osd.show_osd")));
+    QVERIFY(mentions(wrongTypes.warnings, QStringLiteral("bar.osd.timeout_ms")));
+    QVERIFY(mentions(wrongTypes.warnings, QStringLiteral("bar.osd.show_osdd")));
+    QCOMPARE(wrongTypes.values.bar.osd.showOsd, true);
+    QCOMPARE(wrongTypes.values.bar.osd.timeoutMs, 1500);
+
+    const ParseResult notATable = parseConfig(QByteArrayLiteral("schema_version = 1\n[bar]\nosd = 3\n"));
+    QCOMPARE(notATable.warnings.size(), 1);
+    QVERIFY(mentions(notATable.warnings, QStringLiteral("bar.osd")));
+    QVERIFY(mentions(notATable.warnings, QStringLiteral("a table")));
+
+    // The bar's own table names it as a table it knows: `osd` is not reported as an unknown key of `[bar]`.
+    QVERIFY(!mentions(set.warnings, QStringLiteral("not a key")));
+
+    // Followed live: one signal for the value that moved and none for the one that did not.
+    Config config;
+    QSignalSpy shown(config.bar()->osd(), &quantum::config::ConfigOsd::showOsdChanged);
+    QSignalSpy timeout(config.bar()->osd(), &quantum::config::ConfigOsd::timeoutMsChanged);
+    config.bar()->osd()->apply(set.values.bar.osd);
+    QCOMPARE(shown.count(), 1);
+    QCOMPARE(timeout.count(), 1);
+    QCOMPARE(config.bar()->osd()->timeoutMs(), 2500);
+    quantum::config::OsdConfig timeoutOnly = set.values.bar.osd;
+    timeoutOnly.timeoutMs = 3000;
+    config.bar()->osd()->apply(timeoutOnly);
+    QCOMPARE(shown.count(), 1);
+    QCOMPARE(timeout.count(), 2);
+
+    // And the IPC's reading of the same keys is the schema's own.
+    QCOMPARE(quantum::config::configValueForPath(set.values, QStringLiteral("bar.osd.show_osd")),
+             std::optional<QVariant>(false));
+    QCOMPARE(quantum::config::configValueForPath(set.values, QStringLiteral("bar.osd.timeout_ms")),
+             std::optional<QVariant>(2500));
 }
 
 void ConfigTest::refusesANamespaceOutsideTheFrozenPrefix() {
@@ -1116,6 +1183,9 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
                          QStringLiteral("Config.bar.notifications"),
                          QStringLiteral("Config.bar.notifications.showNotifications"),
                          QStringLiteral("Config.bar.notifications.timeoutMs"),
+                         QStringLiteral("Config.bar.osd"),
+                         QStringLiteral("Config.bar.osd.showOsd"),
+                         QStringLiteral("Config.bar.osd.timeoutMs"),
                          QStringLiteral("Config.bar.colors"),
                          QStringLiteral("Config.bar.colors.foreground"),
                          QStringLiteral("Config.bar.colors.muted"),
@@ -1183,6 +1253,13 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
          ++index) {
         const QMetaProperty property = notificationsMeta->property(index);
         actual.append(QStringLiteral("Config.bar.notifications.") + QString::fromLatin1(property.name()));
+        QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
+    }
+
+    const QMetaObject* osdMeta = config.bar()->osd()->metaObject();
+    for (int index = osdMeta->propertyOffset(); index < osdMeta->propertyCount(); ++index) {
+        const QMetaProperty property = osdMeta->property(index);
+        actual.append(QStringLiteral("Config.bar.osd.") + QString::fromLatin1(property.name()));
         QVERIFY2(property.hasNotifySignal(), qPrintable(property.name()));
     }
 

@@ -121,6 +121,7 @@ private slots:
     void theDaemonThisTestStartedIsTheOneTheShellReads();
     void anExternalVolumeChangeArrivesWithoutTheShellAsking();
     void anExternalMuteArrivesTheSameWay();
+    void onlyAChangeOfTheFollowedSinkIsAnAdjustment();
     void theShellsOwnWriteReachesTheDaemon();
     void theWheelStepIsTheConfiguredStepAndClampsAtFullScale();
     void notchesInOneTurnOfTheEventLoopAllCount();
@@ -454,6 +455,54 @@ void AudioLiveTest::anExternalMuteArrivesTheSameWay()
     // A mute is not a volume change and the volume is still the daemon's own: the reading carries both, which
     // is what lets the widget draw the percentage behind a mute rather than an invented zero.
     QCOMPARE(service.volumePercent(), 50);
+
+    service.stop();
+}
+
+void AudioLiveTest::onlyAChangeOfTheFollowedSinkIsAnAdjustment()
+{
+    // The on-screen display is driven by this signal, so what it must not be emitted for matters as much as
+    // what it must: the first reading of a connection is the shell learning the level, not the level changing,
+    // and a display announcing it would appear at every start of the shell.
+    PipeWireService service;
+    QSignalSpy adjusted(&service, &PipeWireService::volumeAdjusted);
+    service.start(remote_);
+    QTRY_VERIFY_WITH_TIMEOUT(service.available(), eventTimeoutMs);
+    // Give any reading still in flight a chance to arrive before the baseline is taken: the count that matters
+    // is what happens after the level is known, and a write to a value the sink already has changes nothing.
+    QVERIFY2(writeSink(QLatin1String(firstSink), linearFromPercent(40), false),
+             "could not write a volume from outside the shell");
+    QTRY_VERIFY_WITH_TIMEOUT(service.volumePercent() == 40 && !service.muted(), eventTimeoutMs);
+    adjusted.clear();
+
+    // A volume change by another client: an adjustment.
+    QVERIFY(writeSink(QLatin1String(firstSink), linearFromPercent(60), false));
+    QTRY_VERIFY_WITH_TIMEOUT(adjusted.count() == 1, eventTimeoutMs);
+    QCOMPARE(service.volumePercent(), 60);
+
+    // A mute by another client: also one.
+    adjusted.clear();
+    QVERIFY(writeSink(QLatin1String(firstSink), linearFromPercent(60), true));
+    QTRY_VERIFY_WITH_TIMEOUT(adjusted.count() == 1, eventTimeoutMs);
+    QVERIFY(service.muted());
+
+    // A daemon that repeats itself is not an adjustment: the same write again changes no published value, so
+    // nothing is announced.
+    adjusted.clear();
+    QVERIFY(writeSink(QLatin1String(firstSink), linearFromPercent(60), true));
+    QTest::qWait(300);
+    QCOMPARE(adjusted.count(), 0);
+
+    // The shell going away withdraws the reading, and the next start's first reading is not an adjustment
+    // even though the sink's level differs from the one before: the baseline is the connection's, not the
+    // process's.
+    QVERIFY(writeSink(QLatin1String(firstSink), linearFromPercent(30), false));
+    service.stop();
+    adjusted.clear();
+    service.start(remote_);
+    QTRY_VERIFY_WITH_TIMEOUT(service.available(), eventTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(service.volumePercent() == 30, eventTimeoutMs);
+    QCOMPARE(adjusted.count(), 0);
 
     service.stop();
 }

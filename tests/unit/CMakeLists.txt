@@ -102,6 +102,8 @@ foreach(qs_qml IN LISTS QS_QML_FILES)
         set(QS_GROUP_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "Toast\\.qml$")
         set(QS_TOAST_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
+    elseif(qs_qml MATCHES "VolumeOsd\\.qml$")
+        set(QS_OSD_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "NotificationHistory\\.qml$")
         set(QS_HISTORY_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     endif()
@@ -110,6 +112,11 @@ if(NOT DEFINED QS_HISTORY_QML)
     message(FATAL_ERROR
         "no NotificationHistory.qml is named in QS_QML_FILES, so notification-test would have no history panel "
         "to load and would fail at run time instead of here.")
+endif()
+if(NOT DEFINED QS_OSD_QML)
+    message(FATAL_ERROR
+        "no VolumeOsd.qml is named in QS_QML_FILES, so osd-test would have no display to load and would "
+        "fail at run time instead of here.")
 endif()
 if(NOT DEFINED QS_TOAST_QML)
     message(FATAL_ERROR
@@ -181,6 +188,13 @@ target_compile_definitions(notification-test PRIVATE FIXTURES="${CMAKE_CURRENT_S
 # The component itself, from the source tree rather than a resource of this binary: the packed copy loading in
 # a real shell is what the layer-shell live tests assert, on the built binary.
 target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QML}" QS_HISTORY_QML="${QS_HISTORY_QML}")
+
+# The volume's on-screen display: the host driven by the audio service's `volumeAdjusted`, the surface it
+# creates per output, and the surface's rule for turning a reading into text. Offscreen, and against a service
+# that is never started, so no daemon and no compositor is involved.
+qs_unit_test(osd-test osd_test.cpp)
+target_link_libraries(osd-test PRIVATE quantum-shell-toasts quantum-shell-audio quantum-shell-config Qt6::Gui Qt6::Quick)
+target_compile_definitions(osd-test PRIVATE QS_OSD_QML="${QS_OSD_QML}")
 
 # The configuration schema, the QObject tree QML binds to, and the watcher that keeps the two in step
 # with the file. Nothing here needs a compositor or a display: the schema is a pure function of a string,
