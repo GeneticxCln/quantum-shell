@@ -1,6 +1,7 @@
 #include "app/ShellCapabilities.h"
 
 #include "app/BarHost.h"
+#include "app/ControlCenterService.h"
 #include "apps/LauncherService.h"
 #include "config/Config.h"
 #include "niri/NiriService.h"
@@ -10,11 +11,13 @@ namespace quantum::app {
 
 ShellCapabilities::ShellCapabilities(quantum::niri::NiriService& service,
                                      quantum::config::Config& config,
-                                     BarHost* bars, quantum::apps::LauncherService* launcher)
+                                     BarHost* bars, quantum::apps::LauncherService* launcher,
+                                     ControlCenterService* controlCenter)
     : service_(service)
     , config_(config)
     , bars_(bars)
     , launcher_(launcher)
+    , controlCenter_(controlCenter)
 {
 }
 
@@ -70,6 +73,13 @@ bool ShellCapabilities::toggleLauncher()
     // The service's own toggle, the one the launcher's surface follows: the answer is the service's state after
     // the move, not a flag kept here.
     return launcher_->toggle();
+}
+
+bool ShellCapabilities::toggleControlCenter()
+{
+    if (controlCenter_ == nullptr)
+        return false;
+    return controlCenter_->toggle();
 }
 
 }  // namespace quantum::app

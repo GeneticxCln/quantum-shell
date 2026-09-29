@@ -69,6 +69,9 @@ public:
     // the verb a compositor key binding runs (`Mod+Space { spawn "qsctl" "launcher" "toggle"; }`): niri binds
     // keys to commands and a shell has no other way to be told a key was pressed.
     virtual bool toggleLauncher() = 0;
+
+    // The same for the control centre, which is the verb's other half of the same key-binding story.
+    virtual bool toggleControlCenter() = 0;
 };
 
 class IPCServer : public QObject {

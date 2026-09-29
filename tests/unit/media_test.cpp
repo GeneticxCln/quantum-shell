@@ -3,12 +3,16 @@
 #include "dbus/MediaService.h"
 #include "dbus/MediaStatus.h"
 
+#include "MprisFixtures.h"
+
 #include <QTest>
 #include <QDBusVirtualObject>
 #include <QProcess>
 #include <optional>
 
 namespace constants = quantum::dbus::mpris::constants;
+using mprisfix::FakeMprisPlayer;
+using mprisfix::PrivateMediaBus;
 using quantum::dbus::mpris::extractString;
 using quantum::dbus::mpris::extractStringList;
 using quantum::dbus::mpris::MediaReading;
@@ -47,76 +51,6 @@ constexpr std::string_view normalizedStatusPaused = "paused";
 constexpr std::string_view normalizedStatusStopped = "stopped";
 
 
-class PrivateMediaBus {
-public:
-    bool start() {
-        process_.start(QStringLiteral("dbus-daemon"),
-                       {QStringLiteral("--session"), QStringLiteral("--print-address=1"),
-                        QStringLiteral("--nofork")});
-        if (!process_.waitForStarted(5000) || !process_.waitForReadyRead(5000)) return false;
-        address_ = QString::fromUtf8(process_.readLine()).trimmed();
-        return !address_.isEmpty();
-    }
-    QDBusConnection connect(const QString& name) {
-        connections_.append(name);
-        return QDBusConnection::connectToBus(address_, name);
-    }
-    ~PrivateMediaBus() {
-        for (const auto& name : connections_) QDBusConnection::disconnectFromBus(name);
-        process_.terminate();
-        if (!process_.waitForFinished(3000)) {
-            process_.kill();
-            process_.waitForFinished(3000);
-        }
-    }
-private:
-    QProcess process_;
-    QString address_;
-    QStringList connections_;
-};
-
-class FakeMprisPlayer : public QDBusVirtualObject {
-public:
-    explicit FakeMprisPlayer(QDBusConnection bus) : bus_(std::move(bus)) {}
-    bool own(const QString& name) {
-        return bus_.registerVirtualObject(QString::fromLatin1(constants::mprisPath), this)
-            && bus_.registerService(name);
-    }
-    QString introspect(const QString&) const override { return {}; }
-    bool handleMessage(const QDBusMessage& message, const QDBusConnection&) override {
-        if (message.interface() != QStringLiteral("org.freedesktop.DBus.Properties")
-            || message.member() != QStringLiteral("GetAll")) return false;
-        ++calls;
-        const bool identity = message.arguments().first().toString()
-            == QString::fromLatin1(constants::mprisInterface);
-        auto reply = message.createReply();
-        reply << (identity ? QVariantMap{{QStringLiteral("Identity"), QStringLiteral("Initial player")}}
-                           : properties);
-        if (!identity && holdInitial) {
-            held = reply;
-            return true;
-        }
-        return bus_.send(reply);
-    }
-    bool announce(const QString& interface, const QVariantMap& changed) {
-        auto signal = QDBusMessage::createSignal(QString::fromLatin1(constants::mprisPath),
-            QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"));
-        signal << interface << changed << QStringList{};
-        return bus_.send(signal);
-    }
-    bool release() {
-        if (!held) return false;
-        const bool sent = bus_.send(*held);
-        held.reset();
-        return sent;
-    }
-    QVariantMap properties;
-    std::optional<QDBusMessage> held;
-    bool holdInitial = false;
-    int calls = 0;
-private:
-    QDBusConnection bus_;
-};
 }  // namespace
 
 class MediaTest : public QObject {
@@ -137,6 +71,9 @@ private Q_SLOTS:
     void metadataWithWrongTypesReturnsEmpty();
     void aSecondPlayersSignalSelectsItsReading();
     void aNewerSignalSurvivesTheInitialReply();
+    void transportGoesToTheFollowedPlayerOnly();
+    void transportWithNoPlayerSendsNothing();
+    void aPlayerThatRefusesTransportIsRecorded();
 };
 
 void MediaTest::mprisNamesMatchCoveredValues()
@@ -336,6 +273,74 @@ void MediaTest::aNewerSignalSurvivesTheInitialReply()
     QCOMPARE(service.title(), QStringLiteral("New track"));
     QVERIFY(service.available());
     QCOMPARE(player.calls, 2);
+}
+
+void MediaTest::transportGoesToTheFollowedPlayerOnly()
+{
+    PrivateMediaBus bus;
+    QVERIFY(bus.start());
+    FakeMprisPlayer first(bus.connect(QStringLiteral("media-first")));
+    FakeMprisPlayer second(bus.connect(QStringLiteral("media-second")));
+    first.properties = {{QStringLiteral("Metadata"), QVariantMap{{QStringLiteral("xesam:title"), QStringLiteral("First track")}}}};
+    second.properties = {{QStringLiteral("Metadata"), QVariantMap{{QStringLiteral("xesam:title"), QStringLiteral("Second track")}}}};
+    QVERIFY(first.own(QStringLiteral("org.mpris.MediaPlayer2.alpha")));
+    QVERIFY(second.own(QStringLiteral("org.mpris.MediaPlayer2.beta")));
+    quantum::dbus::MediaService service;
+    service.start(bus.connect(QStringLiteral("media-reader")));
+    QTRY_COMPARE(service.title(), QStringLiteral("First track"));
+    QTRY_COMPARE(first.calls, 2);
+    QTRY_COMPARE(second.calls, 2);
+
+    // The first player is the one followed, so it is the one asked; the second hears nothing.
+    QVERIFY(service.playPause());
+    QTRY_COMPARE(first.transportCalls, QStringList{QStringLiteral("PlayPause")});
+    QVERIFY(service.next());
+    QVERIFY(service.previous());
+    QTRY_COMPARE(first.transportCalls,
+                 (QStringList{QStringLiteral("PlayPause"), QStringLiteral("Next"), QStringLiteral("Previous")}));
+    QVERIFY(second.transportCalls.isEmpty());
+
+    // The second player becomes the followed one when it is the one that last changed, and the controls follow the
+    // reading: what is shown and what is controlled are the same player.
+    QVERIFY(second.announce(QStringLiteral("org.mpris.MediaPlayer2.Player"),
+                            {{QStringLiteral("PlaybackStatus"), QStringLiteral("Playing")}}));
+    QTRY_COMPARE(service.title(), QStringLiteral("Second track"));
+    QVERIFY(service.playPause());
+    QTRY_COMPARE(second.transportCalls, QStringList{QStringLiteral("PlayPause")});
+    QCOMPARE(first.transportCalls.size(), 3);
+}
+
+void MediaTest::transportWithNoPlayerSendsNothing()
+{
+    PrivateMediaBus bus;
+    QVERIFY(bus.start());
+    quantum::dbus::MediaService service;
+    // Not started at all, and then started with nothing on the bus: neither has a player to ask.
+    QVERIFY(!service.playPause());
+    service.start(bus.connect(QStringLiteral("media-reader")));
+    QTest::qWait(200);
+    QVERIFY(!service.playPause());
+    QVERIFY(!service.next());
+    QVERIFY(!service.previous());
+}
+
+void MediaTest::aPlayerThatRefusesTransportIsRecorded()
+{
+    PrivateMediaBus bus;
+    QVERIFY(bus.start());
+    FakeMprisPlayer player(bus.connect(QStringLiteral("media-refuser")));
+    player.refuseTransport = true;
+    player.properties = {{QStringLiteral("Metadata"), QVariantMap{{QStringLiteral("xesam:title"), QStringLiteral("A track")}}}};
+    QVERIFY(player.own(QStringLiteral("org.mpris.MediaPlayer2.refuser")));
+    quantum::dbus::MediaService service;
+    service.start(bus.connect(QStringLiteral("media-reader")));
+    QTRY_COMPARE(service.title(), QStringLiteral("A track"));
+
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("refused.*Next.*not now")));
+    QVERIFY(service.next());
+    QTRY_COMPARE(player.transportCalls, QStringList{QStringLiteral("Next")});
+    // The refusal's record arrives with the reply; waiting for the ignored message is what consumes it.
+    QTest::qWait(300);
 }
 
 QTEST_MAIN(MediaTest)

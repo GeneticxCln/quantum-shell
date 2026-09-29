@@ -15,6 +15,7 @@
 // for real: `niri-live-layershell-test` toggles the bar of a running shell and watches it leave and return to
 // the compositor's layer list.
 #include "app/ShellCapabilities.h"
+#include "app/ControlCenterService.h"
 #include "apps/LauncherService.h"
 #include "config/Config.h"
 #include "config/ConfigSchema.h"
@@ -113,6 +114,7 @@ private slots:
     void aKeyThisShellDoesNotReadResolvesToNothing();
     void withNoBarThereIsNothingToToggle();
     void theLauncherToggleIsTheServicesOwn();
+    void theControlCenterToggleIsTheServicesOwn();
 
 private:
     void pushEvent(const QString& name, const QJsonObject& fields = {});
@@ -127,6 +129,7 @@ private:
     // A real launcher over no directories: what is asserted is that the IPC reaches the service the QML also has,
     // not what the service lists.
     quantum::apps::LauncherService launcher_{{}, {}, QString()};
+    quantum::app::ControlCenterService controlCenter_;
     std::unique_ptr<ShellCapabilities> capabilities_;
 };
 
@@ -145,7 +148,7 @@ void IpcCapabilitiesTest::initTestCase() {
     stream_.connectToCompositor(server_.path());
     QTRY_VERIFY_WITH_TIMEOUT(streaming.count() == 1, 5000);
 
-    capabilities_ = std::make_unique<ShellCapabilities>(service_, config_, nullptr, &launcher_);
+    capabilities_ = std::make_unique<ShellCapabilities>(service_, config_, nullptr, &launcher_, &controlCenter_);
 }
 
 void IpcCapabilitiesTest::pushEvent(const QString& name, const QJsonObject& fields) {
@@ -281,7 +284,7 @@ void IpcCapabilitiesTest::aKeyThisShellDoesNotReadResolvesToNothing() {
 void IpcCapabilitiesTest::withNoBarThereIsNothingToToggle() {
     // A shell whose QML failed to load still has state to report, and the honest answer to `bar toggle` is
     // that there is no bar rather than a visibility for a window that does not exist.
-    ShellCapabilities withoutBar(service_, config_, nullptr, nullptr);
+    ShellCapabilities withoutBar(service_, config_, nullptr, nullptr, nullptr);
     QCOMPARE(withoutBar.toggleBar(), false);
 }
 
@@ -300,8 +303,23 @@ void IpcCapabilitiesTest::theLauncherToggleIsTheServicesOwn() {
     QVERIFY(!launcher_.isOpen());
 
     // A shell whose launcher did not load has nothing to open, and says so.
-    ShellCapabilities withoutLauncher(service_, config_, nullptr, nullptr);
+    ShellCapabilities withoutLauncher(service_, config_, nullptr, nullptr, nullptr);
     QCOMPARE(withoutLauncher.toggleLauncher(), false);
+}
+
+void IpcCapabilitiesTest::theControlCenterToggleIsTheServicesOwn() {
+    QVERIFY(!controlCenter_.isOpen());
+    QCOMPARE(capabilities_->toggleControlCenter(), true);
+    QVERIFY(controlCenter_.isOpen());
+    QCOMPARE(capabilities_->toggleControlCenter(), false);
+    QVERIFY(!controlCenter_.isOpen());
+
+    // Opened by the service itself (the panel's own Escape writes it the other way), the next toggle closes it.
+    controlCenter_.setOpen(true);
+    QCOMPARE(capabilities_->toggleControlCenter(), false);
+
+    ShellCapabilities without(service_, config_, nullptr, nullptr, nullptr);
+    QCOMPARE(without.toggleControlCenter(), false);
 }
 
 QTEST_GUILESS_MAIN(IpcCapabilitiesTest)

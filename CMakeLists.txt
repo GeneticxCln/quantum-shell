@@ -156,6 +156,14 @@ target_link_libraries(quantum-shell-system
     PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings
     PRIVATE quantum-shell-logging)
 
+# --- Quantum Shell: control centre state -----------------------------------------------------------
+# The one fact the control centre owns — whether the panel is open — as a QML singleton the surface, the panel's
+# Escape key and the IPC verb all share. Core and Qml only, its own target so the IPC's capabilities and the
+# spec-values test can link it without dragging in a window.
+add_library(quantum-shell-control-center STATIC src/app/ControlCenterService.cpp)
+target_include_directories(quantum-shell-control-center PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-control-center PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings)
+
 # --- Quantum Shell: launcher ----------------------------------------------------------------------
 # The applications this machine offers and the act of starting one: desktop entries parsed as pure functions
 # (`DesktopEntry`), the scan over the XDG data directories on a worker thread, the ranking, and the detached
@@ -325,18 +333,19 @@ target_link_libraries(quantum-shell-bars
 # the notifications service into the binary that drives the IPC, which has no toast verb. Core, Gui and Qml:
 # it instantiates a QML component per output and reaches the resulting windows, the way the bar host does.
 add_library(quantum-shell-toasts STATIC src/app/ToastHost.cpp src/app/HistoryHost.cpp src/app/OsdHost.cpp
-    src/app/LauncherHost.cpp)
+    src/app/LauncherHost.cpp src/app/ControlCenterHost.cpp)
 target_include_directories(quantum-shell-toasts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-toasts
     PUBLIC Qt6::Core Qt6::Gui Qt6::Qml
     PRIVATE quantum-shell-wayland quantum-shell-logging quantum-shell-notifications
-            quantum-shell-config quantum-shell-audio quantum-shell-apps quantum-shell-warnings)
+            quantum-shell-config quantum-shell-audio quantum-shell-apps quantum-shell-control-center
+            quantum-shell-warnings)
 
 add_library(quantum-shell-capabilities STATIC src/app/ShellCapabilities.cpp)
 target_include_directories(quantum-shell-capabilities PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-capabilities
     PUBLIC quantum-shell-ipc quantum-shell-niri quantum-shell-config Qt6::Gui
-    PRIVATE quantum-shell-bars quantum-shell-apps quantum-shell-warnings)
+    PRIVATE quantum-shell-bars quantum-shell-apps quantum-shell-control-center quantum-shell-warnings)
 
 # `qsctl`, the command the shell is answered by. Its own binary target (QUANTUM_SHELL.md § Project Layout)
 # and its own version, so a bug report quoting a client quotes the build it came from.
@@ -465,6 +474,7 @@ set(QS_QML_FILES
     qml/Toast.qml
     qml/VolumeOsd.qml
     qml/Launcher.qml
+    qml/ControlCenter.qml
     qml/NotificationHistory.qml
     qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"
@@ -473,7 +483,7 @@ qt_add_resources(quantum-shell "qml"
 target_link_libraries(quantum-shell
     PRIVATE quantum-shell-capabilities quantum-shell-bars quantum-shell-toasts quantum-shell-ipc quantum-shell-niri quantum-shell-config
             quantum-shell-system quantum-shell-audio quantum-shell-network quantum-shell-battery
-            quantum-shell-media quantum-shell-notifications quantum-shell-apps quantum-shell-wayland
+            quantum-shell-media quantum-shell-notifications quantum-shell-apps quantum-shell-control-center quantum-shell-wayland
             quantum-shell-warnings)
 # The build's version, compiled in: `qsctl version`, the startup record and the IPC handshake all report it,
 # and none of them should be quoting a copy of the number written out by hand.

@@ -18,6 +18,8 @@
 #include "app/Logging.h"
 #include "app/ShellCapabilities.h"
 #include "app/HistoryHost.h"
+#include "app/ControlCenterHost.h"
+#include "app/ControlCenterService.h"
 #include "app/LauncherHost.h"
 #include "app/OsdHost.h"
 #include "app/ToastHost.h"
@@ -165,6 +167,11 @@ int main(int argc, char **argv)
                      [&launcher, &config] { launcher.setMaxResults(config.launcher()->maxResults()); });
     launcher.refresh();
 
+    // The control centre's open state, registered before the engine loads so the panel naming
+    // `ControlCenterService` resolves. What the panel shows and does belongs to the services it is drawn from.
+    quantum::app::ControlCenterService controlCenter;
+    quantum::app::ControlCenterService::registerQmlSingleton(controlCenter);
+
     quantum::niri::NiriIPC requests;
     quantum::niri::NiriEventStream stream;
     quantum::niri::NiriState state;
@@ -287,7 +294,14 @@ int main(int argc, char **argv)
     if (!launcherHost.ready())
         return EXIT_FAILURE;
 
-    quantum::app::ShellCapabilities capabilities(service, config, &bars, &launcher);
+    // The control centre's surface, on the primary output while its state says it is open; fails the process for
+    // the same reason the launcher's does.
+    quantum::app::ControlCenterHost controlCenterHost(controlCenter, engine,
+                                                      QUrl(QStringLiteral("qrc:/qml/ControlCenter.qml")));
+    if (!controlCenterHost.ready())
+        return EXIT_FAILURE;
+
+    quantum::app::ShellCapabilities capabilities(service, config, &bars, &launcher, &controlCenter);
     quantum::ipc::IPCServer ipc(capabilities, QString::fromLatin1(quantum::ipc::SocketName));
     QString ipcError;
     if (ipc.listen(&ipcError)) {

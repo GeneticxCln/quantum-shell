@@ -27,6 +27,7 @@
 // test of their own under §4 of the document.
 
 #include "audio/AudioVolume.h"
+#include "app/ControlCenterService.h"
 #include "apps/LauncherService.h"
 #include "audio/PipeWireService.h"
 #include "config/ConfigSchema.h"
@@ -549,17 +550,17 @@ void SpecValuesTest::theConfigTableNamesEveryConfigPathTheSchemaResolves()
     declared.sort();
     QCOMPARE(stated, declared);
 
-    // The verb table, the same way: the five names on the wire, each as a row, and the count the document
+    // The verb table, the same way: the six names on the wire, each as a row, and the count the document
     // states in its heading.
     for (const char* verb : quantum::ipc::verb::All) {
         const QString anchor = QStringLiteral("| `%1").arg(QLatin1String(verb));
         QVERIFY2(row(anchor).found,
                  qPrintable(QStringLiteral("the verb table has no row for `%1`").arg(QLatin1String(verb))));
     }
-    QVERIFY2(quantum::ipc::verb::All.size() == 5,
-             "the verb list is no longer the five the document calls its whole surface");
+    QVERIFY2(quantum::ipc::verb::All.size() == 6,
+             "the verb list is no longer the six the document calls its whole surface");
     const QString verbHeading = lineWith(QStringLiteral("IPC verbs"));
-    QVERIFY2(verbHeading.contains(QStringLiteral("5 entries")),
+    QVERIFY2(verbHeading.contains(QStringLiteral("6 entries")),
              qPrintable(QStringLiteral("the verb table's heading no longer states the count: %1").arg(verbHeading)));
 }
 
@@ -745,12 +746,13 @@ void SpecValuesTest::everySingletonRowNamesExactlyWhatTheCodeExposes()
     // and every property and invokable the class declares is named by the row. The second direction is the
     // one that catches an addition — a property that arrived in the code and not in the document is a name
     // nobody is told about — which is why the rows are exhaustive rather than illustrative.
-    const std::array<SingletonCheck, 9> singletons{{
+    const std::array<SingletonCheck, 10> singletons{{
         {"| `NiriService` |", &quantum::niri::NiriService::staticMetaObject},
         {"| `NiriActions` |", &quantum::niri::NiriActions::staticMetaObject},
         {"| `SysMonService` |", &quantum::system::SysMonService::staticMetaObject},
         {"| `PipeWireService` |", &quantum::audio::PipeWireService::staticMetaObject},
         {"| `LauncherService` |", &quantum::apps::LauncherService::staticMetaObject},
+        {"| `ControlCenterService` |", &quantum::app::ControlCenterService::staticMetaObject},
         {"| `NetworkService` |", &quantum::dbus::NetworkService::staticMetaObject},
         {"| `BatteryService` |", &quantum::dbus::BatteryService::staticMetaObject},
         {"| `NotificationService` |", &quantum::dbus::NotificationService::staticMetaObject},

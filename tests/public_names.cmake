@@ -55,6 +55,7 @@ set(QS_TEST_NAMES
     osd-test
     apps-test
     launcher-test
+    control-center-test
     ipc-protocol-test
     ipc-server-test
     ipc-capabilities-test

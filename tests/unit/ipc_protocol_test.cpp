@@ -26,8 +26,8 @@ namespace {
 
 // The verbs, written out as the documents spell them. `AGENTS.md` freezes them and `QUANTUM_SHELL.md` § IPC
 // is where they are designed, so a change here is a change to a document as well as to the code.
-constexpr std::array<const char*, 5> coveredVerbs{"version", "state", "config get", "bar toggle",
-                                                 "launcher toggle"};
+constexpr std::array<const char*, 6> coveredVerbs{"version", "state", "config get", "bar toggle",
+                                                 "launcher toggle", "control-center toggle"};
 
 template <std::size_t Declared, std::size_t Covered>
 constexpr bool sameVerbs(const std::array<const char*, Declared>& declared,
@@ -60,6 +60,7 @@ private slots:
     void theFrozenVerbSetIsTheOneThisTestDeclares();
     void everyVerbRoundTripsThroughTheWire();
     void theLauncherCommandLineIsTheLauncherToggleVerbAndNothingElse();
+    void theControlCenterCommandLineIsItsToggleVerbAndNothingElse();
     void theHandshakeIsTheVersionRequestWrittenWithoutAVerb();
     void aRequestWithoutAVersionIsRefusedByName();
     void aLineThatIsNotAJsonObjectIsRefused();
@@ -101,6 +102,22 @@ void IpcProtocolTest::theLauncherCommandLineIsTheLauncherToggleVerbAndNothingEls
 
     // And the usage text names it, because a command that exists and is not listed is not discoverable.
     QVERIFY(usageText().contains(QStringLiteral("launcher toggle")));
+}
+
+void IpcProtocolTest::theControlCenterCommandLineIsItsToggleVerbAndNothingElse() {
+    using namespace quantum::ipc;
+
+    const Command toggle = parseCommandLine({QStringLiteral("control-center"), QStringLiteral("toggle")});
+    QVERIFY2(toggle.problem.isEmpty(), qPrintable(toggle.problem));
+    QCOMPARE(toggle.request.verb, QString::fromLatin1(verb::ControlCenterToggle));
+    QCOMPARE(toggle.request.version, ProtocolVersion);
+
+    QVERIFY(parseCommandLine({QStringLiteral("control-center")}).problem.contains(QStringLiteral("control-center toggle")));
+    QVERIFY(parseCommandLine({QStringLiteral("control-center"), QStringLiteral("open")})
+                .problem.contains(QStringLiteral("control-center open")));
+    QVERIFY(parseCommandLine({QStringLiteral("control-center"), QStringLiteral("toggle"), QStringLiteral("now")})
+                .problem.contains(QStringLiteral("now")));
+    QVERIFY(usageText().contains(QStringLiteral("control-center toggle")));
 }
 
 void IpcProtocolTest::everyVerbRoundTripsThroughTheWire() {

@@ -219,6 +219,11 @@ Response IPCServer::dispatch(const Request& request)
         return response;
     }
 
+    if (request.verb == QLatin1StringView(verb::ControlCenterToggle)) {
+        response.data.insert(QStringLiteral("open"), capabilities_.toggleControlCenter());
+        return response;
+    }
+
     // Named, never guessed at: a client asking for a verb this build does not implement is told which ones
     // it does, so a typo and a missing feature are distinguishable from the answer alone.
     return refusal(QStringLiteral("this shell does not implement the verb \"%1\"; it implements %2")

@@ -50,7 +50,7 @@ Renaming anything here breaks scripts, QML files, or clients. Approval required.
 ### 2.1 Layer-shell namespaces
 
 Prefix `quantum-shell-` (`LayerNamespacePrefix`, mirrored in
-`LayerShellIntegration.cpp`). Five surfaces today: `quantum-shell-bar` (the bar,
+`LayerShellIntegration.cpp`). Six surfaces today: `quantum-shell-bar` (the bar,
 `qml/Main.qml`), `quantum-shell-toast` (the toast, `qml/Toast.qml` — a literal
 in the QML rather than a configured key, because a notification is a surface of its
 own kind and not a readout's setting) and `quantum-shell-notification-history` (the
@@ -64,7 +64,11 @@ transparent strip that lifts it off the edge), keyboard interactivity none, no e
 and `quantum-shell-launcher` (the launcher, `qml/Launcher.qml`, likewise a literal; one
 surface on the primary output while `LauncherService.open` is true, overlay layer,
 anchored to nothing so the compositor centres it, 600 wide and as tall as its results
-up to `max_results` rows, **exclusive keyboard** while it is up, no exclusive zone).
+up to `max_results` rows, **exclusive keyboard** while it is up, no exclusive zone) and
+`quantum-shell-control-center` (the control centre, `qml/ControlCenter.qml`, likewise a literal; one
+surface on the primary output while `ControlCenterService.open` is true, overlay layer, anchored top and
+right so it sits below the bar, 360 wide and as tall as its three sections, keyboard interactivity
+**on demand** — it takes keys once clicked, and Escape closes it — no exclusive zone).
 Enforced twice:
 schema refuses a configured value outside the prefix; integration refuses the surface
 (no role, record on `quantum.shell.wayland`).
@@ -94,19 +98,20 @@ Request shape: `{"version":1,"verb":"state"}` plus `path` for `config get`.
 Response shape: success `{"version":1,"ok":true,"data":{...}}` (`data` present even when
 empty); refusal `{"version":1,"ok":false,"error":"<reason>"}` (never blank).
 
-### 2.3 IPC verbs (the whole surface: `verb::All`, 5 entries)
+### 2.3 IPC verbs (the whole surface: `verb::All`, 6 entries)
 
 | Verb | Answers with | Source |
 | --- | --- | --- |
 | `version` | `name`, `shell` (both from the build, not retyped), `protocol` | app identity |
 | `state` | `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` — `NiriService` property names verbatim | `ShellCapabilities::state` |
 | `config get <path>` | `path`, `value` | `configValueForPath` on validated values |
+| `control-center toggle` | `open` (post-toggle state) | `ControlCenterService::toggle`, the state the panel itself follows; a shell whose panel did not load answers `false` |
 | `launcher toggle` | `open` (post-toggle state) | `LauncherService::toggle`, the object the launcher's own surface follows: opens it if closed and closes it if open; a shell whose launcher did not load answers `false`. The verb a niri key binding runs (`spawn "qsctl" "launcher" "toggle"`) |
 | `bar toggle` | `visible` (post-toggle state) | every bar's own visibility, moved together: hides them all if any is showing and shows them all if none is; no bars at all answers `false` |
 
 ### 2.4 `qsctl` CLI
 
-`version`, `state`, `config get <key>`, `bar toggle`, `launcher toggle`. `config get` prints the bare
+`version`, `state`, `config get <key>`, `bar toggle`, `launcher toggle`, `control-center toggle`. `config get` prints the bare
 value (for `x=$(qsctl config get bar.height)`); all others print one JSON line.
 Refusals go to stderr, answers to stdout. Exit codes are interface:
 `0` answered · `1` refused · `2` bad command line (nothing sent) · `3` no shell
@@ -165,9 +170,10 @@ coerced). Unusable file (non-TOML, bad `schema_version`) applies nothing.
 | `SysMonService` | `cpuPercent`, `cpuAvailable`, `memoryUsedKb`, `memoryTotalKb`, `memoryAvailableKb`, `memoryAvailable`, `active`, `sampleIntervalMs` | `cpuPercent` 0 while `cpuAvailable` false; read the flags |
 | `PipeWireService` | `available`, `muted`, `volumePercent`, `volumeDecibels`, `stepPercent`, `stepDecibels`; `toggleMute()`, `stepVolume(dir)`, `setVolumePercent(p)` | both numbers 0 while `available` false; read the flag. `volumePercent` = cube root of the linear factor ×100, `volumeDecibels` = 20·log₁₀ of the same factor (both computed from one reading; neither derives the other). `stepVolume` applies whichever of the two steps the unit selects; the unit itself is a C++ setter, deliberately not a property (no binding has a use for it) |
 | `LauncherService` | `open`, `query`, `results`, `selectedIndex`, `maxResults`, `applicationCount`, `scanning`; `toggle()`, `moveSelection(delta)`, `launchSelected()`, `launch(index)` | `open` and `query` are writable (the surface's Escape and its text field write them). `results` is a list of `{id, name, comment}` maps, best match first, at most `maxResults`; `selectedIndex` is 0 whenever the results change and -1 when there are none. `applicationCount` is what the last finished scan offered before the query; `scanning` is true while one runs. The scan reads the XDG `applications/` directories on a worker thread each time the launcher opens (never on a timer), a user's copy shadows the system's and a user's `Hidden=true` deletes an entry; terminal applications and entries whose `TryExec` is not installed are not offered. A launch is the entry's `Exec` split into an argument vector (no shell; field codes removed, `%%` and `%c` resolved) and started with `QProcess::startDetached` from the home directory; one that cannot start is a record on `quantum.shell.launcher` and leaves the launcher open |
+| `ControlCenterService` | `open`; `toggle()` | `open` is writable (the panel's Escape writes it) and is the only fact this service owns: what the panel shows and does belongs to `PipeWireService` (volume, mute), `NotificationService` (Do Not Disturb) and `MediaService` (transport). It is toggled from the IPC (`control-center toggle`) and followed by `ControlCenterHost`, which creates and destroys the surface |
 | `NetworkService` | `available`, `state`, `connectionName`, `interfaceName`, `deviceKind`, `hasStrength`, `strength`, `connectivity` | `state`/`deviceKind`/`connectivity` are tokens (`disconnected\|connecting\|connected`, `wifi\|ethernet\|other`, `none\|portal\|limited\|full`); `connectivity` is empty when the daemon has not said, which is not `full`. `strength` 0 while `hasStrength` false — read the flag. No `Q_INVOKABLE`: the shell has no control centre to open, so there is no gesture to offer |
 | `BatteryService` | `available`, `present`, `onBattery`, `hasPercentage`, `percentage`, `state`, `warning`, `hasTimeRemaining`, `timeRemaining` | all 0/empty/false while `available` false; `percentage`/`timeRemaining` 0/empty while their `has*` flag false; `present` false on desktop (no battery). `state` tokens: `unknown\|charging\|discharging\|fully-charged\|empty\|pending-charge\|pending-discharge`. `warning` tokens: `unknown\|none\|discharging\|low\|critical\|action`. No `Q_INVOKABLE`: the shell has no power panel to open |
-| `MediaService` | `available`, `title`, `artist`, `playerName`, `playbackStatus` | all empty/false while `available` false — the widget draws nothing, not a dash, because "no media" is a complete reading; `playbackStatus` tokens: `playing\|paused\|stopped` (empty = unknown). No player or player with no track = `available` false. No `Q_INVOKABLE`: transport controls are Phase 2 |
+| `MediaService` | `available`, `title`, `artist`, `playerName`, `playbackStatus`; `playPause()`, `next()`, `previous()` | all empty/false while `available` false — the widget draws nothing, not a dash, because "no media" is a complete reading; `playbackStatus` tokens: `playing\|paused\|stopped` (empty = unknown). No player or player with no track = `available` false.. The three methods are requests to the player being followed (the one the reading is published from), sent to its own bus name as the MPRIS2 `org.mpris.MediaPlayer2.Player` methods `PlayPause`, `Next` and `Previous`; each returns whether a request was sent (`false` with no player) and a player that refuses is a record on `quantum.shell.media`. What is drawn afterwards is the property change that comes back, never an assumed state |
 | `NotificationService` | `notificationAvailable`, `notificationSummary`, `notificationBody`, `notificationApplication`, `notificationCount`, `notificationExpireTimeout`, `notificationHistory`, `notificationHistoryCount`, `notificationDoNotDisturb`, `notificationHistoryOpen`; `clearNotificationHistory()`, `removeFromNotificationHistory(id)` | all empty/false while `notificationAvailable` false; `notificationSummary` is the sender's own text, `notificationBody` is the sender's own body, `notificationApplication` is the sender's own application name. `notificationCount` is a running total for the life of the service: it counts what this process has been sent, so it is deliberately **not** withdrawn with the reading when the name is released, and no widget draws it today. `notificationExpireTimeout` is the sender's own `expire_timeout`, published as the spec hands it and **not** resolved here: `-1` is the spec's use-the-default and which default that is, `0` is never-expire, and a positive count is milliseconds — the toast's business, not a daemon's. Every one of them moves together and only on a real change: a repeat registration emits nothing, and the queued handover publishes availability as soon as the bus makes the name the shell's History and mode: `notificationHistory` is a list of `{id, application, summary, body, received}` maps, newest first, capped at `NotificationHistoryLimit` = 50 (a fixed length, not a key); an update that reuses an id replaces its entry and moves it to the front; entries survive a close, an expiry and Do Not Disturb, and are not withdrawn with the reading. `notificationDoNotDisturb` and `notificationHistoryOpen` are **runtime state, never configuration**: both start false every launch and neither is persisted. Do Not Disturb stops a toast being shown — the notification is still received, answered, recorded and drawn by the readout — and tells the sender it is over (`NotificationClosed` reason 4); switching it on takes down a toast that is up, switching it off replays nothing |
 | `LayerShellWindow` | `layer`, `anchors`, `exclusiveZone`, `keyboardInteractivity`, `layerNamespace`, `margins`; `present()` | `present()` is called by `BarHost`, not from QML, and only after the window's screen is assigned: showing the window is what assigns the layer role against an output and the role is assigned once, and the output cannot be chosen from QML because `screen` is not a QML property of a `QQuickWindow`. Set all props first |
 
@@ -212,11 +218,11 @@ journal otherwise (`journalctl --user _COMM=quantum-shell`). Secrets are never l
 
 ### 2.8 Test and environment names (declared once, `tests/public_names.cmake`)
 
-45 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
+46 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
 `slot-order-independence`, `slot-order-randomised-shard-{1..4}`, `niri-live-test`,
 `niri-live-stream-test`, `niri-live-action-test`, `niri-live-layershell-test`,
 `niri-live-restart-test`, `niri-live-shell-restart-test`, `niri-live-scale-test`, `audio-live-test`,
-`network-live-test`, `notification-test`, `osd-test`, `apps-test`, `launcher-test`, `niri-version-test`, `niri-ipc-test`, `niri-event-stream-test`,
+`network-live-test`, `notification-test`, `osd-test`, `apps-test`, `launcher-test`, `control-center-test`, `niri-version-test`, `niri-ipc-test`, `niri-event-stream-test`,
 `niri-state-test`, `niri-actions-test`, `niri-output-test`,
 `niri-keyboard-layouts-test`, `niri-outputs-test`, `niri-service-test`,
 `niri-reconnect-test`, `config-test`, `config-watcher-test`, `sysmon-test`,

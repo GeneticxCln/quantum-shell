@@ -60,6 +60,16 @@ public:
 
     static void registerQmlSingleton(MediaService& service);
 
+    // Transport for the player being followed — the one whose track and status `title` and `playbackStatus`
+    // describe — as the MPRIS2 `org.mpris.MediaPlayer2.Player` methods `PlayPause`, `Next` and `Previous`. Each is
+    // a request: the call is sent to that player's own bus name and what is drawn afterwards is the player's
+    // answer arriving as a property change, never a state this service assumed. Each returns whether a request
+    // was sent, which is false while there is no player (a control with nothing behind it does nothing rather than
+    // pretending); a player that refuses or fails to answer is a record on `quantum.shell.media`.
+    Q_INVOKABLE bool playPause();
+    Q_INVOKABLE bool next();
+    Q_INVOKABLE bool previous();
+
     // Start monitoring MPRIS players on the given bus. Called after the QML engine loads.
     void start(const QDBusConnection& bus);
 
@@ -82,6 +92,8 @@ private:
         bool refreshProperties = false;
         bool refreshIdentity = false;
     };
+    bool sendTransport(const char* method);
+    QMap<QString, Player>::const_iterator followedPlayer() const;
     void detach();
     void adoptPlayer(const QString& name, const QString& owner);
     void fetchProperties(const QString& name, bool identity);

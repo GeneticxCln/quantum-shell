@@ -39,6 +39,7 @@ class LauncherService;
 namespace quantum::app {
 
 class BarHost;
+class ControlCenterService;
 
 class ShellCapabilities : public quantum::ipc::Capabilities
 {
@@ -47,12 +48,14 @@ public:
     // shell whose bar failed to load still has state to report — in which case `toggleBar` answers that
     // there are no bars rather than pretending to have hidden one.
     ShellCapabilities(quantum::niri::NiriService& service, quantum::config::Config& config,
-                      BarHost* bars, quantum::apps::LauncherService* launcher);
+                      BarHost* bars, quantum::apps::LauncherService* launcher,
+                      ControlCenterService* controlCenter);
 
     QJsonObject state() const override;
     std::optional<QJsonValue> configValue(const QString& path) const override;
     bool toggleBar() override;
     bool toggleLauncher() override;
+    bool toggleControlCenter() override;
 
 private:
     quantum::niri::NiriService& service_;
@@ -67,6 +70,9 @@ private:
     // The launcher the QML also has (`LauncherService`), toggled through the same object a keypress in its own
     // surface reaches. Null answers "closed" for a shell whose launcher did not load, as a null `bars_` does.
     quantum::apps::LauncherService* launcher_ = nullptr;
+
+    // The control centre's state, toggled through the object the panel itself follows. Null answers "closed".
+    ControlCenterService* controlCenter_ = nullptr;
 };
 
 }  // namespace quantum::app

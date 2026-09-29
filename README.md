@@ -222,6 +222,7 @@ qsctl state                         # what the bar is drawn from, one line of JS
 qsctl config get bar.height         # a value, as the running shell resolved it
 qsctl bar toggle                    # hides or shows the bar and reports which
 qsctl launcher toggle               # opens or closes the launcher and reports which
+qsctl control-center toggle         # opens or closes the control centre and reports which
 ```
 
 `config get` reads the same values the shell is using, not the file, so it is how a change to a

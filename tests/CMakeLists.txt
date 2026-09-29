@@ -242,6 +242,7 @@ set(QS_ORDER_CHECK_COSTS
     osd-test=2400
     apps-test=390
     launcher-test=210
+    control-center-test=653
     # Reads seven files and compares them with constants compiled into it, plus the meta-objects of the four
     # QML singletons whose classes it links; it does no I/O beyond the read and no work that depends on the
     # machine, which is why it is near the cheapest binary in the table. Measured as the middle of three runs:
