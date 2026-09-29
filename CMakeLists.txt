@@ -156,6 +156,18 @@ target_link_libraries(quantum-shell-system
     PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings
     PRIVATE quantum-shell-logging)
 
+# --- Quantum Shell: launcher ----------------------------------------------------------------------
+# The applications this machine offers and the act of starting one: desktop entries parsed as pure functions
+# (`DesktopEntry`), the scan over the XDG data directories on a worker thread, the ranking, and the detached
+# process a launch starts (`LauncherService`). Core, Concurrent and Qml only; the surface is a host's.
+add_library(quantum-shell-apps STATIC
+    src/apps/DesktopEntry.cpp
+    src/apps/LauncherService.cpp)
+target_include_directories(quantum-shell-apps PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(quantum-shell-apps
+    PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings
+    PRIVATE Qt6::Concurrent quantum-shell-logging)
+
 # --- Quantum Shell: audio -------------------------------------------------------------------------
 # The default sink's volume and mute state, read from the PipeWire daemon and written back to it. The
 # dependency is the one QUANTUM_SHELL.md § Technology Stack states — "Audio | PipeWire >= 1.6 (C API),

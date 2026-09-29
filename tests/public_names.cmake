@@ -53,6 +53,7 @@ set(QS_TEST_NAMES
     media-test
     notification-test
     osd-test
+    apps-test
     ipc-protocol-test
     ipc-server-test
     ipc-capabilities-test

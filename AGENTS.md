@@ -264,7 +264,7 @@ Build system:     CMake 3.31 floor (4.4.3 tested), C++23, Qt 6.11 floor (6.11.2 
                   language for wayland-scanner's output alone; Qt Concurrent is used for the off-thread
                   config parse, and PipeWire's own thread loop is where its callbacks run, so nothing
                   in src/audio/ blocks the GUI thread
-Tests:            ctest, thirty-five tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
+Tests:            ctest, thirty-six tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
                   gate), public-names-test (the test names and environment variables the documents tell
                   people to run, against the declarations in tests/public_names.cmake), then two order
                   checks that read each test binary rather than its source:
@@ -308,7 +308,7 @@ Tests:            ctest, thirty-five tests without a compositor socket or opt-in
                   combination flakier than one in a hundred thousand — six passes with that floor, say
                   — is refused before it runs) —
                   and
-                  twenty-six unit tests that need no compositor or session daemon: niri-version-test, osd-test (the volume display), niri-ipc-test,
+                  twenty-seven unit tests that need no compositor or session daemon: niri-version-test, osd-test (the volume display), apps-test (the launcher's desktop-entry parse, `Exec` split, ranking, scan and a real launch), niri-ipc-test,
                   niri-event-stream-test, niri-state-test, niri-actions-test, niri-output-test,
                   niri-keyboard-layouts-test, niri-outputs-test, niri-reconnect-test and
                   niri-service-test (which loads a QML binding in a real engine, and still needs no
@@ -474,8 +474,8 @@ Tests:            ctest, thirty-five tests without a compositor socket or opt-in
                   its access point with what that prints, so the reader and the code under test are
                   two things; it needs no opt-in because it only reads, and where the machine has no
                   system bus with NetworkManager it skips with the reason rather than passing
-                  quietly. The counts: 37 registered
-                  with a socket, 35 without one; QS_NIRI_SESSION_TESTS adds its two and
+                  quietly. The counts: 38 registered
+                  with a socket, 36 without one; QS_NIRI_SESSION_TESTS adds its two and
                   QS_NIRI_RESTART_TESTS its own two, both needing a socket, while QS_NIRI_SCALE_TESTS
                   adds its one — the scale matrix, which starts a compositor of its own and takes no
                   lock, because the window it maps is on the nested instance and not on the session's
@@ -1342,7 +1342,7 @@ DESTDIR=/tmp/stage cmake --install build/release --prefix /usr
                                                    # is resolved at install time, so an install under
                                                    # a prefix the build was not configured with names
                                                    # the prefix it landed in
-ctest --preset dev                                 # thirty-five tests with no session;
+ctest --preset dev                                 # thirty-six tests with no session;
                                                    # live tests join them only when NIRI_SOCKET is set,
                                                    # and the preset runs four tests at a time
 ctest --preset dev -R audio-test                   # the volume module's pure half: the Props pod parse,
@@ -1386,6 +1386,9 @@ ctest --preset dev -R ipc-server-test              # the IPC server over a real 
 ctest --preset dev -R ipc-protocol-test            # the wire format as pure functions, ~0.02 s
 ctest --preset dev -R ipc-capabilities-test        # what the IPC may reach, against a real service
 ctest --preset dev -R app-logging-test             # the record format and the category names
+ctest --preset dev -R apps-test                    # the launcher's reading of the desktop: entries, `Exec`
+                                                   # lines, ranking, a scan of directories of its own and a
+                                                   # real process started, ~0.4 s
 ctest --preset dev -R osd-test                     # the volume display: the host driven by the audio
                                                    # service's adjustment signal, the surface it creates per
                                                    # output and withdraws by its clock, and the text and bar
