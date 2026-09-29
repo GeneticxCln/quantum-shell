@@ -64,6 +64,11 @@ public:
     // Hides or shows the bar and reports what it is now, so a caller does not have to toggle twice to find
     // out what it did.
     virtual bool toggleBar() = 0;
+
+    // Opens the launcher if it is closed and closes it if it is open, and reports whether it is open now. It is
+    // the verb a compositor key binding runs (`Mod+Space { spawn "qsctl" "launcher" "toggle"; }`): niri binds
+    // keys to commands and a shell has no other way to be told a key was pressed.
+    virtual bool toggleLauncher() = 0;
 };
 
 class IPCServer : public QObject {

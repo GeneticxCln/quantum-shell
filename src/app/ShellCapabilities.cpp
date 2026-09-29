@@ -1,6 +1,7 @@
 #include "app/ShellCapabilities.h"
 
 #include "app/BarHost.h"
+#include "apps/LauncherService.h"
 #include "config/Config.h"
 #include "niri/NiriService.h"
 #include <QWindow>
@@ -9,10 +10,11 @@ namespace quantum::app {
 
 ShellCapabilities::ShellCapabilities(quantum::niri::NiriService& service,
                                      quantum::config::Config& config,
-                                     BarHost* bars)
+                                     BarHost* bars, quantum::apps::LauncherService* launcher)
     : service_(service)
     , config_(config)
     , bars_(bars)
+    , launcher_(launcher)
 {
 }
 
@@ -59,6 +61,15 @@ bool ShellCapabilities::toggleBar()
     // step with it — the compositor's answer is the surface being in or out of its layer list, and a second
     // copy of the state here could disagree with the compositor and be believed.
     return bars_->toggleAll();
+}
+
+bool ShellCapabilities::toggleLauncher()
+{
+    if (launcher_ == nullptr)
+        return false;
+    // The service's own toggle, the one the launcher's surface follows: the answer is the service's state after
+    // the move, not a flag kept here.
+    return launcher_->toggle();
 }
 
 }  // namespace quantum::app

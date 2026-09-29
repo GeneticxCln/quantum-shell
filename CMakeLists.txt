@@ -324,18 +324,19 @@ target_link_libraries(quantum-shell-bars
 # rather than something the bar reads — and because linking it into `quantum-shell-capabilities` would drag
 # the notifications service into the binary that drives the IPC, which has no toast verb. Core, Gui and Qml:
 # it instantiates a QML component per output and reaches the resulting windows, the way the bar host does.
-add_library(quantum-shell-toasts STATIC src/app/ToastHost.cpp src/app/HistoryHost.cpp src/app/OsdHost.cpp)
+add_library(quantum-shell-toasts STATIC src/app/ToastHost.cpp src/app/HistoryHost.cpp src/app/OsdHost.cpp
+    src/app/LauncherHost.cpp)
 target_include_directories(quantum-shell-toasts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-toasts
     PUBLIC Qt6::Core Qt6::Gui Qt6::Qml
     PRIVATE quantum-shell-wayland quantum-shell-logging quantum-shell-notifications
-            quantum-shell-config quantum-shell-audio quantum-shell-warnings)
+            quantum-shell-config quantum-shell-audio quantum-shell-apps quantum-shell-warnings)
 
 add_library(quantum-shell-capabilities STATIC src/app/ShellCapabilities.cpp)
 target_include_directories(quantum-shell-capabilities PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-capabilities
     PUBLIC quantum-shell-ipc quantum-shell-niri quantum-shell-config Qt6::Gui
-    PRIVATE quantum-shell-bars quantum-shell-warnings)
+    PRIVATE quantum-shell-bars quantum-shell-apps quantum-shell-warnings)
 
 # `qsctl`, the command the shell is answered by. Its own binary target (QUANTUM_SHELL.md § Project Layout)
 # and its own version, so a bug report quoting a client quotes the build it came from.
@@ -463,6 +464,7 @@ set(QS_QML_FILES
     qml/Notifications.qml
     qml/Toast.qml
     qml/VolumeOsd.qml
+    qml/Launcher.qml
     qml/NotificationHistory.qml
     qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"
@@ -471,7 +473,8 @@ qt_add_resources(quantum-shell "qml"
 target_link_libraries(quantum-shell
     PRIVATE quantum-shell-capabilities quantum-shell-bars quantum-shell-toasts quantum-shell-ipc quantum-shell-niri quantum-shell-config
             quantum-shell-system quantum-shell-audio quantum-shell-network quantum-shell-battery
-            quantum-shell-media quantum-shell-notifications quantum-shell-wayland quantum-shell-warnings)
+            quantum-shell-media quantum-shell-notifications quantum-shell-apps quantum-shell-wayland
+            quantum-shell-warnings)
 # The build's version, compiled in: `qsctl version`, the startup record and the IPC handshake all report it,
 # and none of them should be quoting a copy of the number written out by hand.
 target_compile_definitions(quantum-shell PRIVATE QS_VERSION="${PROJECT_VERSION}")

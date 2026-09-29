@@ -207,12 +207,23 @@ void ConfigBar::apply(const BarConfig& values) {
     font_.apply(values.font);
 }
 
-Config::Config(QObject* parent) : QObject(parent) {
+ConfigLauncher::ConfigLauncher(LauncherConfig& values, QObject* parent) : QObject(parent), values_(values) {}
+
+void ConfigLauncher::apply(const LauncherConfig& values) {
+    if (values_.maxResults != values.maxResults) {
+        values_.maxResults = values.maxResults;
+        emit maxResultsChanged();
+    }
+}
+
+Config::Config(QObject* parent) : QObject(parent), launcher_(launcherValues_) {
     bar_.setParent(this);
+    launcher_.setParent(this);
 }
 
 void Config::apply(const ConfigValues& values) {
     bar_.apply(values.bar);
+    launcher_.apply(values.launcher);
 }
 
 ConfigValues Config::values() const {
@@ -222,6 +233,7 @@ ConfigValues Config::values() const {
     // and not a walk, and neither table has a second place its values live.
     ConfigValues values;
     values.bar = bar_.values();
+    values.launcher = launcher_.values();
     return values;
 }
 
@@ -230,6 +242,7 @@ void Config::registerQmlSingleton(Config& config) {
     // each to a binding, and QML reaches their properties through their meta-objects. Anonymous registration is
     // what says "known to the engine, not part of the module's interface" — a named registration would add a
     // second public name for a class no QML file has any reason to construct.
+    qmlRegisterAnonymousType<ConfigLauncher>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);
     qmlRegisterAnonymousType<ConfigSystem>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);
     qmlRegisterAnonymousType<ConfigAudio>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);
     qmlRegisterAnonymousType<ConfigNetwork>(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion);

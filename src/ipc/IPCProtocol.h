@@ -60,10 +60,11 @@ inline constexpr auto Version = "version";
 inline constexpr auto State = "state";
 inline constexpr auto ConfigGet = "config get";
 inline constexpr auto BarToggle = "bar toggle";
+inline constexpr auto LauncherToggle = "launcher toggle";
 
 // Every verb this shell implements. A verb exists only when a handler answers it and a test drives it
 // (SYSTEM_PROMPT.md § Anti-Evasion Rules), so this list is the whole public surface rather than a plan.
-inline constexpr std::array<const char*, 4> All{Version, State, ConfigGet, BarToggle};
+inline constexpr std::array<const char*, 5> All{Version, State, ConfigGet, BarToggle, LauncherToggle};
 
 }  // namespace verb
 

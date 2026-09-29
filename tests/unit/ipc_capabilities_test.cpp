@@ -15,6 +15,7 @@
 // for real: `niri-live-layershell-test` toggles the bar of a running shell and watches it leave and return to
 // the compositor's layer list.
 #include "app/ShellCapabilities.h"
+#include "apps/LauncherService.h"
 #include "config/Config.h"
 #include "config/ConfigSchema.h"
 #include "niri/NiriEventStream.h"
@@ -51,7 +52,7 @@ namespace {
 // The key paths the shell offers to `qsctl config get`, written out independently of `ConfigSchema.h` and
 // compared with it at compile time. The duplication is the point: these paths are what a script types, so a
 // rename in the schema must not build until it is acknowledged here and in the document that lists them.
-constexpr std::array<const char*, 28> coveredKeyPaths{"bar.height",
+constexpr std::array<const char*, 29> coveredKeyPaths{"bar.height",
                                                        "bar.layerNamespace",
                                                        "bar.system.sample_interval_ms",
                                                        "bar.system.show_cpu",
@@ -70,6 +71,7 @@ constexpr std::array<const char*, 28> coveredKeyPaths{"bar.height",
                                                        "bar.media.show_media",
                                                        "bar.notifications.show_notifications",
                                                        "bar.notifications.timeout_ms",
+                                                       "launcher.max_results",
                                                        "bar.osd.show_osd",
                                                        "bar.osd.timeout_ms",
                                                        "bar.colors.foreground",
@@ -110,6 +112,7 @@ private slots:
     void everyConfigurationKeyPathResolvesToTheLiveValue();
     void aKeyThisShellDoesNotReadResolvesToNothing();
     void withNoBarThereIsNothingToToggle();
+    void theLauncherToggleIsTheServicesOwn();
 
 private:
     void pushEvent(const QString& name, const QJsonObject& fields = {});
@@ -121,6 +124,9 @@ private:
     std::unique_ptr<NiriOutputs> outputs_;
     NiriService service_{state_, stream_};
     Config config_;
+    // A real launcher over no directories: what is asserted is that the IPC reaches the service the QML also has,
+    // not what the service lists.
+    quantum::apps::LauncherService launcher_{{}, {}, QString()};
     std::unique_ptr<ShellCapabilities> capabilities_;
 };
 
@@ -139,7 +145,7 @@ void IpcCapabilitiesTest::initTestCase() {
     stream_.connectToCompositor(server_.path());
     QTRY_VERIFY_WITH_TIMEOUT(streaming.count() == 1, 5000);
 
-    capabilities_ = std::make_unique<ShellCapabilities>(service_, config_, nullptr);
+    capabilities_ = std::make_unique<ShellCapabilities>(service_, config_, nullptr, &launcher_);
 }
 
 void IpcCapabilitiesTest::pushEvent(const QString& name, const QJsonObject& fields) {
@@ -275,8 +281,27 @@ void IpcCapabilitiesTest::aKeyThisShellDoesNotReadResolvesToNothing() {
 void IpcCapabilitiesTest::withNoBarThereIsNothingToToggle() {
     // A shell whose QML failed to load still has state to report, and the honest answer to `bar toggle` is
     // that there is no bar rather than a visibility for a window that does not exist.
-    ShellCapabilities withoutBar(service_, config_, nullptr);
+    ShellCapabilities withoutBar(service_, config_, nullptr, nullptr);
     QCOMPARE(withoutBar.toggleBar(), false);
+}
+
+void IpcCapabilitiesTest::theLauncherToggleIsTheServicesOwn() {
+    // The verb reaches the same object the launcher's surface follows: toggling through the capabilities is
+    // the service opening, and the answer is the service's state afterwards rather than a flag of the IPC's.
+    QVERIFY(!launcher_.isOpen());
+    QCOMPARE(capabilities_->toggleLauncher(), true);
+    QVERIFY(launcher_.isOpen());
+    QCOMPARE(capabilities_->toggleLauncher(), false);
+    QVERIFY(!launcher_.isOpen());
+
+    // Opened by the service itself, the next toggle from the IPC closes it: one state, two ways in.
+    launcher_.setOpen(true);
+    QCOMPARE(capabilities_->toggleLauncher(), false);
+    QVERIFY(!launcher_.isOpen());
+
+    // A shell whose launcher did not load has nothing to open, and says so.
+    ShellCapabilities withoutLauncher(service_, config_, nullptr, nullptr);
+    QCOMPARE(withoutLauncher.toggleLauncher(), false);
 }
 
 QTEST_GUILESS_MAIN(IpcCapabilitiesTest)

@@ -425,6 +425,28 @@ private:
     ConfigFont font_;
 };
 
+// The `[launcher]` table as QML reads it: `Config.launcher`.
+class ConfigLauncher : public QObject {
+    Q_OBJECT
+
+    Q_PROPERTY(int maxResults READ maxResults NOTIFY maxResultsChanged)
+
+public:
+    explicit ConfigLauncher(LauncherConfig& values, QObject* parent = nullptr);
+
+    int maxResults() const { return values_.maxResults; }
+    const LauncherConfig& values() const { return values_; }
+
+    // Applies validated values, emitting a signal for each property whose value actually changed.
+    void apply(const LauncherConfig& values);
+
+Q_SIGNALS:
+    void maxResultsChanged();
+
+private:
+    LauncherConfig& values_;
+};
+
 // The whole configuration, registered with QML as the `Config` singleton.
 class Config : public QObject {
     Q_OBJECT
@@ -433,11 +455,13 @@ class Config : public QObject {
     // signals. A `barChanged` here as well would re-evaluate every binding under `Config.bar` on any
     // edit, which is the coarse notification this class exists to avoid.
     Q_PROPERTY(quantum::config::ConfigBar* bar READ bar CONSTANT)
+    Q_PROPERTY(quantum::config::ConfigLauncher* launcher READ launcher CONSTANT)
 
 public:
     explicit Config(QObject* parent = nullptr);
 
     ConfigBar* bar() { return &bar_; }
+    ConfigLauncher* launcher() { return &launcher_; }
 
     void apply(const ConfigValues& values);
 
@@ -457,6 +481,8 @@ public:
 
 private:
     ConfigBar bar_;
+    LauncherConfig launcherValues_;
+    ConfigLauncher launcher_;
 };
 
 }  // namespace quantum::config

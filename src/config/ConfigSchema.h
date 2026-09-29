@@ -436,10 +436,28 @@ struct BarConfig {
     bool operator==(const BarConfig&) const = default;
 };
 
+// The `[launcher]` table: the launcher's one setting. It is a top-level table because the launcher is not a
+// part of the bar, and the file's shape is the object tree's (`Config.launcher`).
+struct LauncherConfig {
+    // How many applications the launcher lists at most. What the launcher lists is the machine's — the
+    // desktop entries it scans — and what the query ranks is its own; only the length of the list is a
+    // preference, so it is the one thing here.
+    int maxResults = 8;
+
+    bool operator==(const LauncherConfig&) const = default;
+};
+
+// The bounds a file's `max_results` is held to, and the default above. The launcher service declares the same
+// three numbers and `apps-test` compares the two spellings at compile time, so the file and the service cannot
+// disagree about what a list length may be.
+inline constexpr int MinLauncherMaxResults = 1;
+inline constexpr int MaxLauncherMaxResults = 50;
+
 // The whole validated configuration. Nested objects mirror the file's tables, so `bar` is the `[bar]`
 // table and nothing else is interpolated between the file and this struct.
 struct ConfigValues {
     BarConfig bar;
+    LauncherConfig launcher;
 
     bool operator==(const ConfigValues&) const = default;
 };
@@ -507,6 +525,7 @@ inline constexpr auto KeyBarBatteryShowTime = "bar.battery.show_time";
 inline constexpr auto KeyBarMediaShowMedia = "bar.media.show_media";
 inline constexpr auto KeyBarNotificationsShowNotifications = "bar.notifications.show_notifications";
 inline constexpr auto KeyBarNotificationsTimeoutMs = "bar.notifications.timeout_ms";
+inline constexpr auto KeyLauncherMaxResults = "launcher.max_results";
 inline constexpr auto KeyBarOsdShowOsd = "bar.osd.show_osd";
 inline constexpr auto KeyBarOsdTimeoutMs = "bar.osd.timeout_ms";
 inline constexpr auto KeyBarColorsForeground = "bar.colors.foreground";
@@ -516,7 +535,7 @@ inline constexpr auto KeyBarColorsUrgent = "bar.colors.urgent";
 inline constexpr auto KeyBarFontFamily = "bar.font.family";
 inline constexpr auto KeyBarFontSize = "bar.font.size";
 inline constexpr auto KeyBarFontWeight = "bar.font.weight";
-inline constexpr std::array<const char*, 28> KeyPaths{
+inline constexpr std::array<const char*, 29> KeyPaths{
     KeyBarHeight,
     KeyBarLayerNamespace,
     KeyBarSystemSampleIntervalMs,
@@ -536,6 +555,7 @@ inline constexpr std::array<const char*, 28> KeyPaths{
     KeyBarMediaShowMedia,
     KeyBarNotificationsShowNotifications,
     KeyBarNotificationsTimeoutMs,
+    KeyLauncherMaxResults,
     KeyBarOsdShowOsd,
     KeyBarOsdTimeoutMs,
     KeyBarColorsForeground,

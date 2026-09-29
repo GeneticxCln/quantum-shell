@@ -22,8 +22,18 @@ namespace {
 
 // The known keys, written as the paths a user types. Unknown keys are reported by their full path —
 // `bar.widht`, not `widht` — because that is the line in the file to go and look at.
+// An integer key's value, and nothing else. toml++'s `value<int64_t>()` converts — a boolean answers 0 or 1 and
+// a whole-valued float answers its integer — which breaks this file's rule that a key of the wrong type is
+// reported and not converted: `max_results = true` would have been the number 1, and `height = true` a bar one
+// pixel high. `as_integer()` is the type test the rule needs.
+std::optional<int64_t> integerOf(const toml::node& node) {
+    if (const auto* integer = node.as_integer())
+        return integer->get();
+    return std::nullopt;
+}
+
 bool isKnownTopLevelKey(std::string_view key) {
-    return key == "schema_version" || key == "bar";
+    return key == "schema_version" || key == "bar" || key == "launcher";
 }
 
 bool isKnownBarKey(std::string_view key) {
@@ -263,7 +273,7 @@ void readSystemTable(const toml::table& table, SystemConfig& system, QStringList
             continue;
         }
 
-        const std::optional<int64_t> interval = node.value<int64_t>();
+        const std::optional<int64_t> interval = integerOf(node);
         if (!interval.has_value()) {
             warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
                                 .arg(path, typeName(node))
@@ -388,7 +398,7 @@ void readOsdTable(const toml::table& table, OsdConfig& osd, QStringList& warning
         const QString path = keyPath("bar.osd", name);
 
         if (name == "timeout_ms") {
-            const std::optional<int64_t> number = node.value<int64_t>();
+            const std::optional<int64_t> number = integerOf(node);
             if (!number.has_value()) {
                 warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
                                     .arg(path)
@@ -439,7 +449,7 @@ void readNotificationsTable(const toml::table& table, NotificationsConfig& notif
         if (name == "timeout_ms") {
             // The optional form the font table's sizes use, rather than `as_integer()`: the value's own
             // accessor answers the number, and an absent one is the same refusal a wrong type is.
-            const std::optional<int64_t> number = node.value<int64_t>();
+            const std::optional<int64_t> number = integerOf(node);
             if (!number.has_value()) {
                 warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
                                     .arg(path)
@@ -479,6 +489,40 @@ void readNotificationsTable(const toml::table& table, NotificationsConfig& notif
 // default standing and says so. A key of the wrong type is reported and not coerced: `height = "32"`
 // is a mistake, and reading it as 32 would hide it.
 void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warnings);
+
+// `[launcher]`: one key, `max_results`, an integer inside the bounds the schema header states. Anything else in
+// the table is reported by its own path, and a value outside the bounds is refused rather than clamped, like
+// every other number here.
+void readLauncherTable(const toml::table& table, LauncherConfig& launcher, QStringList& warnings) {
+    for (const auto& [key, node] : table) {
+        const std::string_view name = keyText(key);
+        const QString path = keyPath("launcher", name);
+        if (name != "max_results") {
+            warnings.append(QStringLiteral("%1 is not a key this shell reads; known keys in [launcher]: "
+                                           "max_results")
+                                .arg(path));
+            continue;
+        }
+        const std::optional<int64_t> number = integerOf(node);
+        if (!number.has_value()) {
+            warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
+                                .arg(path)
+                                .arg(typeName(node))
+                                .arg(launcher.maxResults));
+            continue;
+        }
+        if (*number < MinLauncherMaxResults || *number > MaxLauncherMaxResults) {
+            warnings.append(QStringLiteral("%1: %2 is outside %3 to %4; keeping %5")
+                                .arg(path)
+                                .arg(*number)
+                                .arg(MinLauncherMaxResults)
+                                .arg(MaxLauncherMaxResults)
+                                .arg(launcher.maxResults));
+            continue;
+        }
+        launcher.maxResults = static_cast<int>(*number);
+    }
+}
 
 // `[bar.font]`'s keys, in the same shape and for the same reason as every table above: one list, so the names
 // a user is shown and the names this code reads cannot drift apart.
@@ -533,7 +577,7 @@ void readFontTable(const toml::table& table, FontConfig& font, QStringList& warn
             continue;
         }
 
-        const std::optional<int> number = node.value<int64_t>();
+        const std::optional<int> number = integerOf(node);
         if (!number.has_value()) {
             warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
                                 .arg(path, typeName(node))
@@ -766,7 +810,7 @@ void readAudioTable(const toml::table& table, AudioConfig& audio, QStringList& w
         // while the readout is drawn in them. The floor is checked and the ceiling is only the int64-to-int
         // narrowing, because a step larger than the range is a person asking for one notch to reach the end of
         // it: `steppedPercent` clamps, so no large step is a mistake. A step of zero is.
-        const std::optional<int64_t> step = node.value<int64_t>();
+        const std::optional<int64_t> step = integerOf(node);
         if (!step.has_value()) {
             warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
                                 .arg(path, typeName(node))
@@ -914,7 +958,7 @@ void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warning
         }
 
         if (name == "height") {
-            const std::optional<int64_t> height = node.value<int64_t>();
+            const std::optional<int64_t> height = integerOf(node);
             if (!height.has_value()) {
                 warnings.append(QStringLiteral("%1: expected an integer, found %2; keeping %3")
                                     .arg(path, typeName(node))
@@ -1076,7 +1120,7 @@ ParseResult parseConfig(const QByteArray& text) {
     // a value the shell would be inventing, and partly applying it would leave the configuration neither
     // old nor new.
     if (const toml::node* versionNode = table.get("schema_version"); versionNode != nullptr) {
-        const std::optional<int64_t> version = versionNode->value<int64_t>();
+        const std::optional<int64_t> version = integerOf(*versionNode);
         if (!version.has_value()) {
             result.errors.append(QStringLiteral("schema_version: expected an integer, found %1; the file "
                                                 "was not applied")
@@ -1106,14 +1150,17 @@ ParseResult parseConfig(const QByteArray& text) {
         if (name == "schema_version")
             continue;  // read above, before any of this could be applied
 
-        const toml::table* barTable = node.as_table();
-        if (barTable == nullptr) {
+        const toml::table* topTable = node.as_table();
+        if (topTable == nullptr) {
             result.warnings.append(QStringLiteral("%1: expected a table, found %2; keeping the defaults "
                                                   "for it")
                                        .arg(keyPath("", name), typeName(node)));
             continue;
         }
-        readBarTable(*barTable, result.values.bar, result.warnings);
+        if (name == "launcher")
+            readLauncherTable(*topTable, result.values.launcher, result.warnings);
+        else
+            readBarTable(*topTable, result.values.bar, result.warnings);
     }
 
     return result;
@@ -1161,6 +1208,8 @@ std::optional<QVariant> configValueForPath(const ConfigValues& values, QStringVi
         return QVariant(values.bar.notifications.showNotifications);
     if (path == QLatin1StringView(KeyBarNotificationsTimeoutMs))
         return QVariant(values.bar.notifications.timeoutMs);
+    if (path == QLatin1StringView(KeyLauncherMaxResults))
+        return QVariant(values.launcher.maxResults);
     if (path == QLatin1StringView(KeyBarOsdShowOsd))
         return QVariant(values.bar.osd.showOsd);
     if (path == QLatin1StringView(KeyBarOsdTimeoutMs))

@@ -18,8 +18,10 @@
 #include "app/Logging.h"
 #include "app/ShellCapabilities.h"
 #include "app/HistoryHost.h"
+#include "app/LauncherHost.h"
 #include "app/OsdHost.h"
 #include "app/ToastHost.h"
+#include "apps/LauncherService.h"
 #include "audio/PipeWireService.h"
 #include "config/Config.h"
 #include "config/ConfigWatcher.h"
@@ -148,6 +150,21 @@ int main(int argc, char **argv)
     QObject::connect(config.bar()->audio(), &quantum::config::ConfigAudio::volumeScaleChanged, &audio,
                      [&audio, &config] { audio.setWheelStepUnit(config.bar()->audio()->volumeScale()); });
 
+    // The launcher's model, registered before the engine loads so the surface naming `LauncherService` resolves.
+    // It reads the machine's own environment for what to scan and which desktop it is on: the XDG data
+    // directories, `XDG_CURRENT_DESKTOP` (colon-separated, as the Desktop Entry Specification defines it) and
+    // the locale Qt resolved. The first scan is asked for here, off the GUI thread, so the list is ready by the
+    // time the launcher is first opened. `[launcher] max_results` is the file's, followed live.
+    quantum::apps::LauncherService launcher(quantum::apps::LauncherService::defaultDataDirs(),
+                                            qEnvironmentVariable("XDG_CURRENT_DESKTOP")
+                                                .split(QLatin1Char(':'), Qt::SkipEmptyParts),
+                                            QLocale::system().name());
+    quantum::apps::LauncherService::registerQmlSingleton(launcher);
+    launcher.setMaxResults(config.launcher()->maxResults());
+    QObject::connect(config.launcher(), &quantum::config::ConfigLauncher::maxResultsChanged, &launcher,
+                     [&launcher, &config] { launcher.setMaxResults(config.launcher()->maxResults()); });
+    launcher.refresh();
+
     quantum::niri::NiriIPC requests;
     quantum::niri::NiriEventStream stream;
     quantum::niri::NiriState state;
@@ -264,7 +281,13 @@ int main(int argc, char **argv)
     if (!osd.ready())
         return EXIT_FAILURE;
 
-    quantum::app::ShellCapabilities capabilities(service, config, &bars);
+    // The launcher's surface, on the primary output while the service says it is open. It fails the process for the
+    // same reason the toast does: a verb that opens a surface that cannot be drawn is a control that lies.
+    quantum::app::LauncherHost launcherHost(launcher, engine, QUrl(QStringLiteral("qrc:/qml/Launcher.qml")));
+    if (!launcherHost.ready())
+        return EXIT_FAILURE;
+
+    quantum::app::ShellCapabilities capabilities(service, config, &bars, &launcher);
     quantum::ipc::IPCServer ipc(capabilities, QString::fromLatin1(quantum::ipc::SocketName));
     QString ipcError;
     if (ipc.listen(&ipcError)) {

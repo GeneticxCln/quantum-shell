@@ -54,6 +54,7 @@ set(QS_TEST_NAMES
     notification-test
     osd-test
     apps-test
+    launcher-test
     ipc-protocol-test
     ipc-server-test
     ipc-capabilities-test

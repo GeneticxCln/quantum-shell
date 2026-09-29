@@ -101,8 +101,8 @@ Real files in this repository:
                          the file and its directory, parses a change on a worker thread and applies
                          only what changed
   src/ipc/               the local IPC server: the abstract socket `\0quantum-shell`, the line framing
-                         and the protocol version, the four frozen verbs — version, state, config get,
-                         bar toggle — with the refusal each one can produce, and qsctl, the
+                         and the protocol version, the five verbs — version, state, config get,
+                         bar toggle, launcher toggle — with the refusal each one can produce, and qsctl, the
                          command-line client, as its own binary target
   src/system/            the system's own readings: the aggregate CPU counters and the memory fields of
                          /proc, parsed as pure functions of the text so every shape of input is
@@ -264,7 +264,7 @@ Build system:     CMake 3.31 floor (4.4.3 tested), C++23, Qt 6.11 floor (6.11.2 
                   language for wayland-scanner's output alone; Qt Concurrent is used for the off-thread
                   config parse, and PipeWire's own thread loop is where its callbacks run, so nothing
                   in src/audio/ blocks the GUI thread
-Tests:            ctest, thirty-six tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
+Tests:            ctest, thirty-seven tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
                   gate), public-names-test (the test names and environment variables the documents tell
                   people to run, against the declarations in tests/public_names.cmake), then two order
                   checks that read each test binary rather than its source:
@@ -308,7 +308,7 @@ Tests:            ctest, thirty-six tests without a compositor socket or opt-ins
                   combination flakier than one in a hundred thousand — six passes with that floor, say
                   — is refused before it runs) —
                   and
-                  twenty-seven unit tests that need no compositor or session daemon: niri-version-test, osd-test (the volume display), apps-test (the launcher's desktop-entry parse, `Exec` split, ranking, scan and a real launch), niri-ipc-test,
+                  twenty-eight unit tests that need no compositor or session daemon: niri-version-test, osd-test (the volume display), launcher-test (the launcher's surface: keys typed into it, Enter starting a real process), apps-test (the launcher's desktop-entry parse, `Exec` split, ranking, scan and a real launch), niri-ipc-test,
                   niri-event-stream-test, niri-state-test, niri-actions-test, niri-output-test,
                   niri-keyboard-layouts-test, niri-outputs-test, niri-reconnect-test and
                   niri-service-test (which loads a QML binding in a real engine, and still needs no
@@ -474,8 +474,8 @@ Tests:            ctest, thirty-six tests without a compositor socket or opt-ins
                   its access point with what that prints, so the reader and the code under test are
                   two things; it needs no opt-in because it only reads, and where the machine has no
                   system bus with NetworkManager it skips with the reason rather than passing
-                  quietly. The counts: 38 registered
-                  with a socket, 36 without one; QS_NIRI_SESSION_TESTS adds its two and
+                  quietly. The counts: 39 registered
+                  with a socket, 37 without one; QS_NIRI_SESSION_TESTS adds its two and
                   QS_NIRI_RESTART_TESTS its own two, both needing a socket, while QS_NIRI_SCALE_TESTS
                   adds its one — the scale matrix, which starts a compositor of its own and takes no
                   lock, because the window it maps is on the nested instance and not on the session's
@@ -1063,6 +1063,17 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    62%, then MUTE, then gone. Unfixed and stated: the surface's transparent strip takes
                    pointer input.
 
+                   The launcher is the landing after the OSD: `qsctl launcher toggle` opens a centred overlay
+                   (`quantum-shell-launcher`, exclusive keyboard) listing the applications the machine's XDG
+                   `applications/` directories offer, ranked against what is typed; Enter starts the highlighted
+                   entry (its `Exec` split into an argument vector, no shell, `startDetached`), Escape closes.
+                   `src/apps/` is the model, `LauncherHost` the surface's lifetime, `[launcher] max_results` the one
+                   key. Writing its test found two real defects: the keyboard focus sat on the surface's container
+                   rather than its text field, so typing would never have reached it, and toml++'s
+                   `value<int64_t>()` answers 1 for `true`, so every integer key in the schema — `bar.height`
+                   included — accepted a boolean as a number; `integerOf` now type-tests, pinned in
+                   `config-test`. Not done: provider plugins, frecency, icons, click-outside dismissal.
+
                    The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
                    packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,
                    the toast and the battery and media readouts are committed. The audit changes above
@@ -1342,7 +1353,7 @@ DESTDIR=/tmp/stage cmake --install build/release --prefix /usr
                                                    # is resolved at install time, so an install under
                                                    # a prefix the build was not configured with names
                                                    # the prefix it landed in
-ctest --preset dev                                 # thirty-six tests with no session;
+ctest --preset dev                                 # thirty-seven tests with no session;
                                                    # live tests join them only when NIRI_SOCKET is set,
                                                    # and the preset runs four tests at a time
 ctest --preset dev -R audio-test                   # the volume module's pure half: the Props pod parse,
@@ -1386,6 +1397,9 @@ ctest --preset dev -R ipc-server-test              # the IPC server over a real 
 ctest --preset dev -R ipc-protocol-test            # the wire format as pure functions, ~0.02 s
 ctest --preset dev -R ipc-capabilities-test        # what the IPC may reach, against a real service
 ctest --preset dev -R app-logging-test             # the record format and the category names
+ctest --preset dev -R launcher-test                # the launcher's surface offscreen: one overlay surface
+                                                   # per open, keys typed into it reaching the service, Enter
+                                                   # starting a real process, Escape closing, ~0.2 s
 ctest --preset dev -R apps-test                    # the launcher's reading of the desktop: entries, `Exec`
                                                    # lines, ranking, a scan of directories of its own and a
                                                    # real process started, ~0.4 s
