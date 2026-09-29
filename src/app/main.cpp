@@ -283,7 +283,7 @@ int main(int argc, char **argv)
     // same reason a toast does: a readout whose right click opens a panel that cannot be drawn is a control that
     // lies.
     quantum::app::HistoryHost history(notifications, engine,
-                                      QUrl(QStringLiteral("qrc:/qml/NotificationHistory.qml")));
+                                      QUrl(QStringLiteral("qrc:/qml/NotificationHistory.qml")), QUrl(QStringLiteral("qrc:/qml/Backdrop.qml")));
     if (!history.ready())
         return EXIT_FAILURE;
 
@@ -295,14 +295,14 @@ int main(int argc, char **argv)
 
     // The launcher's surface, on the primary output while the service says it is open. It fails the process for the
     // same reason the toast does: a verb that opens a surface that cannot be drawn is a control that lies.
-    quantum::app::LauncherHost launcherHost(launcher, engine, QUrl(QStringLiteral("qrc:/qml/Launcher.qml")));
+    quantum::app::LauncherHost launcherHost(launcher, engine, QUrl(QStringLiteral("qrc:/qml/Launcher.qml")), QUrl(QStringLiteral("qrc:/qml/Backdrop.qml")));
     if (!launcherHost.ready())
         return EXIT_FAILURE;
 
     // The control centre's surface, on the primary output while its state says it is open; fails the process for
     // the same reason the launcher's does.
     quantum::app::ControlCenterHost controlCenterHost(controlCenter, engine,
-                                                      QUrl(QStringLiteral("qrc:/qml/ControlCenter.qml")));
+                                                      QUrl(QStringLiteral("qrc:/qml/ControlCenter.qml")), QUrl(QStringLiteral("qrc:/qml/Backdrop.qml")));
     if (!controlCenterHost.ready())
         return EXIT_FAILURE;
 

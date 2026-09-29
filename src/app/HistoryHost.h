@@ -16,6 +16,8 @@ class NotificationService;
 
 namespace quantum::app {
 
+class Backdrop;
+
 // The notification history panel: one surface, on the primary output, that exists while the service says the
 // panel is open.
 //
@@ -32,7 +34,7 @@ class HistoryHost : public QObject
 public:
     // Both must outlive this object. The panel is created against `engine` from `historyUrl`.
     explicit HistoryHost(quantum::dbus::NotificationService& service, QQmlEngine& engine, const QUrl& historyUrl,
-                         QObject* parent = nullptr);
+                         const QUrl& backdropUrl = {}, QObject* parent = nullptr);
 
     // Whether the component was readable, and the reason when it was not, for the composition root's decision
     // about a shell whose panel cannot be drawn.
@@ -41,6 +43,10 @@ public:
 
     // The panel, or null while it is not open.
     QWindow* window() const;
+
+    // The transparent surface behind the panel that a click outside it lands on, or null while the panel is not
+    // open (or the host was built without a backdrop).
+    QWindow* backdropWindow() const;
 
 private:
     void handleOpenChanged();
@@ -52,6 +58,7 @@ private:
     QQmlComponent* component_ = nullptr;
     QString componentError_;
     QPointer<QWindow> window_;
+    Backdrop* backdrop_ = nullptr;
     QPointer<QScreen> screen_;
 };
 

@@ -9,6 +9,7 @@
 // The directory the service scans is this test's own, so the entries — and the marker a launched `touch`
 // creates — are the answer for files this test wrote.
 #include "app/LauncherHost.h"
+#include "BackdropClick.h"
 #include "apps/LauncherService.h"
 #include "config/Config.h"
 #include "wayland/LayerShellWindow.h"
@@ -76,6 +77,7 @@ private slots:
     void theArrowsMoveTheHighlightAndEnterStartsARealProcess();
     void aSurfaceTheCompositorClosesLeavesTheServiceClosed();
     void theSurfaceGrowsWithItsResultsAndSaysWhenThereAreNone();
+    void aClickOutsideThePanelClosesItAndTheBackdropGoesWithIt();
 
 private:
     QWindow* openLauncher();
@@ -109,7 +111,8 @@ void LauncherTest::initTestCase()
     quantum::config::Config::registerQmlSingleton(config_);
     quantum::apps::LauncherService::registerQmlSingleton(*service_);
     host_ = std::make_unique<quantum::app::LauncherHost>(*service_, *engine_,
-                                                         QUrl::fromLocalFile(QStringLiteral(QS_LAUNCHER_QML)));
+                                                         QUrl::fromLocalFile(QStringLiteral(QS_LAUNCHER_QML)),
+                                                         QUrl::fromLocalFile(QStringLiteral(QS_BACKDROP_QML)));
     QVERIFY2(host_->ready(), qPrintable(host_->componentError()));
 }
 
@@ -255,4 +258,21 @@ int main(int argc, char* argv[])
     previousHandler = qInstallMessageHandler(recordWarnings);
     LauncherTest test;
     return QTest::qExec(&test, argc, argv);
+}
+
+void LauncherTest::aClickOutsideThePanelClosesItAndTheBackdropGoesWithIt()
+{
+    QVERIFY(host_->backdropWindow() == nullptr);
+    QWindow* window = openLauncher();
+    QVERIFY(window != nullptr);
+    QWindow* backdrop = host_->backdropWindow();
+    backdrop::verifyIsABackdrop(backdrop);
+    QVERIFY(backdrop != window);
+
+    // A press on the backdrop is a click outside the panel: it closes the launcher through the service, the way
+    // Escape does, and the backdrop is taken down with the panel.
+    backdrop::click(backdrop);
+    QTRY_VERIFY_WITH_TIMEOUT(!service_->isOpen(), settleMs);
+    QTRY_VERIFY_WITH_TIMEOUT(host_->window() == nullptr, settleMs);
+    QTRY_VERIFY_WITH_TIMEOUT(host_->backdropWindow() == nullptr, settleMs);
 }

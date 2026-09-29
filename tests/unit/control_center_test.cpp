@@ -11,6 +11,7 @@
 // `audio-live-test`, and is not repeated here.
 #include "app/ControlCenterHost.h"
 #include "app/ControlCenterService.h"
+#include "BackdropClick.h"
 #include "audio/PipeWireService.h"
 #include "config/Config.h"
 #include "dbus/MediaService.h"
@@ -63,6 +64,7 @@ private slots:
     void theVolumeSectionIsInertWithoutASink();
     void theTextAndGeometryRulesAnswerForTheReadingsADaemonSends();
     void escapeClosesAndASurfaceTheCompositorClosesLeavesItClosed();
+    void aClickOutsideThePanelClosesItAndTheBackdropGoesWithIt();
 
 private:
     QWindow* openPanel();
@@ -90,7 +92,8 @@ void ControlCenterTest::initTestCase()
     quantum::dbus::MediaService::registerQmlSingleton(media_);
     quantum::app::ControlCenterService::registerQmlSingleton(state_);
     host_ = std::make_unique<quantum::app::ControlCenterHost>(
-        state_, *engine_, QUrl::fromLocalFile(QStringLiteral(QS_CONTROL_CENTER_QML)));
+        state_, *engine_, QUrl::fromLocalFile(QStringLiteral(QS_CONTROL_CENTER_QML)),
+        QUrl::fromLocalFile(QStringLiteral(QS_BACKDROP_QML)));
     QVERIFY2(host_->ready(), qPrintable(host_->componentError()));
 
     // The media service follows the private bus for the life of the binary, so a slot that needs a player creates
@@ -339,6 +342,21 @@ void ControlCenterTest::escapeClosesAndASurfaceTheCompositorClosesLeavesItClosed
 }
 
 #include "control_center_test.moc"
+
+void ControlCenterTest::aClickOutsideThePanelClosesItAndTheBackdropGoesWithIt()
+{
+    QVERIFY(host_->backdropWindow() == nullptr);
+    QWindow* window = openPanel();
+    QVERIFY(window != nullptr);
+    QWindow* backdrop = host_->backdropWindow();
+    backdrop::verifyIsABackdrop(backdrop);
+    QVERIFY(backdrop != window);
+
+    backdrop::click(backdrop);
+    QTRY_VERIFY_WITH_TIMEOUT(!state_.isOpen(), settleMs);
+    QTRY_VERIFY_WITH_TIMEOUT(host_->window() == nullptr, settleMs);
+    QTRY_VERIFY_WITH_TIMEOUT(host_->backdropWindow() == nullptr, settleMs);
+}
 
 int main(int argc, char* argv[])
 {

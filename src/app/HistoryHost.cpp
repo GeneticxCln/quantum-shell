@@ -1,5 +1,6 @@
 #include "app/HistoryHost.h"
 
+#include "app/Backdrop.h"
 #include "app/Logging.h"
 #include "dbus/NotificationService.h"
 #include "wayland/LayerShellWindow.h"
@@ -12,10 +13,14 @@
 namespace quantum::app {
 
 HistoryHost::HistoryHost(quantum::dbus::NotificationService& service, QQmlEngine& engine, const QUrl& historyUrl,
-                         QObject* parent)
+                         const QUrl& backdropUrl, QObject* parent)
     : QObject(parent)
     , service_(&service)
 {
+    backdrop_ = new Backdrop(engine, backdropUrl, this);
+    componentError_ = backdrop_->componentError();
+    connect(backdrop_, &Backdrop::dismissed, this, [this] { service_->setNotificationHistoryOpen(false); });
+
     component_ = new QQmlComponent(&engine, historyUrl, this);
     if (component_->isError()) {
         // Held rather than logged and dropped: whether a shell whose panel cannot be drawn runs at all is the
@@ -33,6 +38,11 @@ HistoryHost::HistoryHost(quantum::dbus::NotificationService& service, QQmlEngine
 QWindow* HistoryHost::window() const
 {
     return window_.data();
+}
+
+QWindow* HistoryHost::backdropWindow() const
+{
+    return backdrop_->window();
 }
 
 void HistoryHost::handleOpenChanged()
@@ -56,12 +66,20 @@ void HistoryHost::open()
         return;
     }
 
+    // The backdrop is on the top layer and the panel on the overlay layer, so the panel is above it whichever is
+    // mapped first; if the panel then cannot be created the backdrop is taken down again below.
+    if (!backdrop_->show(screen)) {
+        service_->setNotificationHistoryOpen(false);
+        return;
+    }
+
     QObject* object = component_->create();
     auto* window = qobject_cast<QuantumShell::LayerShellWindow*>(object);
     if (window == nullptr) {
         qCWarning(quantum::app::waylandLog)
             << "the history component did not create a layer-shell window:" << component_->errorString();
         delete object;
+        backdrop_->hide();
         service_->setNotificationHistoryOpen(false);
         return;
     }
@@ -85,6 +103,7 @@ void HistoryHost::close()
 {
     if (window_ == nullptr)
         return;
+    backdrop_->hide();
     QWindow* window = window_.data();
     window_.clear();
     // Deleted rather than hidden, the way toasts are: deleting the window is what destroys the surface. Later

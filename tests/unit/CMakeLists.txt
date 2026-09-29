@@ -104,6 +104,8 @@ foreach(qs_qml IN LISTS QS_QML_FILES)
         set(QS_TOAST_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "VolumeOsd\\.qml$")
         set(QS_OSD_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
+    elseif(qs_qml MATCHES "Backdrop\\.qml$")
+        set(QS_BACKDROP_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "Launcher\\.qml$")
         set(QS_LAUNCHER_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "ControlCenter\\.qml$")
@@ -112,6 +114,11 @@ foreach(qs_qml IN LISTS QS_QML_FILES)
         set(QS_HISTORY_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     endif()
 endforeach()
+if(NOT DEFINED QS_BACKDROP_QML)
+    message(FATAL_ERROR
+        "no Backdrop.qml is named in QS_QML_FILES, so the panel tests would have no backdrop to load and would "
+        "fail at run time instead of here.")
+endif()
 if(NOT DEFINED QS_HISTORY_QML)
     message(FATAL_ERROR
         "no NotificationHistory.qml is named in QS_QML_FILES, so notification-test would have no history panel "
@@ -201,7 +208,8 @@ target_link_libraries(notification-test PRIVATE quantum-shell-toasts quantum-she
 target_compile_definitions(notification-test PRIVATE FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
 # The component itself, from the source tree rather than a resource of this binary: the packed copy loading in
 # a real shell is what the layer-shell live tests assert, on the built binary.
-target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QML}" QS_HISTORY_QML="${QS_HISTORY_QML}")
+target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QML}" QS_HISTORY_QML="${QS_HISTORY_QML}"
+    QS_BACKDROP_QML="${QS_BACKDROP_QML}")
 
 # The launcher's two halves: every shape a desktop entry, an `Exec` line and a query can take as pure functions,
 # and the service against directories of its own with a real process started at the end. No display, no bus.
@@ -219,12 +227,14 @@ qs_unit_test(control-center-test control_center_test.cpp)
 target_link_libraries(control-center-test PRIVATE quantum-shell-toasts quantum-shell-bars quantum-shell-audio
                       quantum-shell-notifications quantum-shell-media quantum-shell-config
                       Qt6::Gui Qt6::Quick qs-test-support)
-target_compile_definitions(control-center-test PRIVATE QS_CONTROL_CENTER_QML="${QS_CONTROL_CENTER_QML}")
+target_compile_definitions(control-center-test PRIVATE QS_CONTROL_CENTER_QML="${QS_CONTROL_CENTER_QML}"
+    QS_BACKDROP_QML="${QS_BACKDROP_QML}")
 
 # The launcher's surface: the host, the QML it creates, and keys typed into it reaching the service. Offscreen.
 qs_unit_test(launcher-test launcher_test.cpp)
-target_link_libraries(launcher-test PRIVATE quantum-shell-toasts quantum-shell-apps quantum-shell-config Qt6::Gui Qt6::Quick)
-target_compile_definitions(launcher-test PRIVATE QS_LAUNCHER_QML="${QS_LAUNCHER_QML}")
+target_link_libraries(launcher-test PRIVATE quantum-shell-toasts quantum-shell-apps quantum-shell-config Qt6::Gui Qt6::Quick qs-test-support)
+target_compile_definitions(launcher-test PRIVATE QS_LAUNCHER_QML="${QS_LAUNCHER_QML}"
+    QS_BACKDROP_QML="${QS_BACKDROP_QML}")
 
 # The volume's on-screen display: the host driven by the audio service's `volumeAdjusted`, the surface it
 # creates per output, and the surface's rule for turning a reading into text. Offscreen, and against a service

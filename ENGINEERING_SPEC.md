@@ -68,7 +68,12 @@ up to `max_results` rows, **exclusive keyboard** while it is up, no exclusive zo
 `quantum-shell-control-center` (the control centre, `qml/ControlCenter.qml`, likewise a literal; one
 surface on the primary output while `ControlCenterService.open` is true, overlay layer, anchored top and
 right so it sits below the bar, 360 wide and as tall as its three sections, keyboard interactivity
-**on demand** — it takes keys once clicked, and Escape closes it — no exclusive zone).
+**on demand** — it takes keys once clicked, and Escape closes it — no exclusive zone) and
+`quantum-shell-backdrop` (`qml/Backdrop.qml`, likewise a literal; the transparent surface behind the launcher,
+the control centre and the notification history, one on the primary output while any of them is open, **top
+layer** so the panels' overlay layer is above it by the protocol's own order, anchored to all four edges with an
+exclusive zone of −1 so it covers the whole output, keyboard interactivity none; a press on it closes the panel
+through that panel's service, which is how a click outside the panel dismisses it).
 Enforced twice:
 schema refuses a configured value outside the prefix; integration refuses the surface
 (no role, record on `quantum.shell.wayland`).
