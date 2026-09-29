@@ -121,6 +121,9 @@ Item {
         spacing: 5
 
         Text {
+            // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+            // markup, which would let a sender restyle the bar or reference an image from a track title.
+            textFormat: Text.PlainText
             text: "NET"
             color: root.muted
             font.family: root.face
@@ -129,6 +132,9 @@ Item {
         }
 
         Text {
+            // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+            // markup, which would let a sender restyle the bar or reference an image from a track title.
+            textFormat: Text.PlainText
             objectName: "networkValue"
             text: root.reading()
             // The colour repeats what the text says rather than saying something on its own: a connection the

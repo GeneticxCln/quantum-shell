@@ -897,7 +897,6 @@ ParseResult parseConfig(const QByteArray& text) {
     // newer shell is refused as a whole rather than partly understood: a key that has changed meaning is
     // a value the shell would be inventing, and partly applying it would leave the configuration neither
     // old nor new.
-    int declaredVersion = SchemaVersion;
     if (const toml::node* versionNode = table.get("schema_version"); versionNode != nullptr) {
         const std::optional<int64_t> version = versionNode->value<int64_t>();
         if (!version.has_value()) {
@@ -913,12 +912,11 @@ ParseResult parseConfig(const QByteArray& text) {
                                      .arg(SchemaVersion));
             return result;
         }
-        declaredVersion = static_cast<int>(*version);
     } else {
         // Missing keys fall back to defaults, and this one has a default like any other — but it is
         // worth a warning of its own, because a file that omits it is a file written before the field
         // existed, and that is the case a migration will have to be written for.
-        result.warnings.append(QStringLiteral("no schema_version; assuming %1").arg(declaredVersion));
+        result.warnings.append(QStringLiteral("no schema_version; assuming %1").arg(SchemaVersion));
     }
 
     for (const auto& [key, node] : table) {

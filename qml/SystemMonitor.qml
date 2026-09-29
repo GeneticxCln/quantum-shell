@@ -89,6 +89,9 @@ Item {
             visible: Config.bar.system.showCpu
 
             Text {
+                // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+                // markup, which would let a sender restyle the bar or reference an image from a track title.
+                textFormat: Text.PlainText
                 text: "CPU"
                 color: root.muted
                 font.family: root.face
@@ -97,6 +100,9 @@ Item {
             }
 
             Text {
+                // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+                // markup, which would let a sender restyle the bar or reference an image from a track title.
+                textFormat: Text.PlainText
                 objectName: "cpuValue"
                 text: SysMonService.cpuAvailable ? Math.round(SysMonService.cpuPercent) + "%" : "—"
                 color: root.foreground
@@ -115,6 +121,9 @@ Item {
             visible: Config.bar.system.showMemory
 
             Text {
+                // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+                // markup, which would let a sender restyle the bar or reference an image from a track title.
+                textFormat: Text.PlainText
                 text: "MEM"
                 color: root.muted
                 font.family: root.face
@@ -123,6 +132,9 @@ Item {
             }
 
             Text {
+                // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+                // markup, which would let a sender restyle the bar or reference an image from a track title.
+                textFormat: Text.PlainText
                 objectName: "memoryValue"
                 text: root.memoryText()
                 color: root.foreground

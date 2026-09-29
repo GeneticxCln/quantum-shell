@@ -47,6 +47,9 @@ Item {
         // Named the way the other readouts' texts are, so `bar-interaction-test` can read what this widget
         // draws without knowing which child it is — the same reason `volumeValue` and `networkValue` are named.
         Text {
+            // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+            // markup, which would let a sender restyle the bar or reference an image from a track title.
+            textFormat: Text.PlainText
             id: applicationText
             objectName: "notificationApplication"
             text: NotificationService.notificationApplication
@@ -63,6 +66,9 @@ Item {
         // other empty state — the shell not being the daemon — draws nothing at all, so this text is
         // never the one making that claim.
         Text {
+            // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+            // markup, which would let a sender restyle the bar or reference an image from a track title.
+            textFormat: Text.PlainText
             id: summaryText
             objectName: "notificationSummary"
             text: NotificationService.notificationSummary.length > 0 ? NotificationService.notificationSummary : "—"

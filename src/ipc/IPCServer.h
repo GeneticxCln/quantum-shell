@@ -11,6 +11,13 @@
 // response is one line, and no handler waits on anything. A local client that stalls affects only its own
 // connection.
 //
+// Who may connect: the shell's own user and nobody else. An abstract socket has no filesystem entry and so no
+// permission bits — any local process of any user can connect to `\0quantum-shell` — and two of the verbs
+// read or change the person's session (`state` carries their workspaces and windows, `bar toggle` hides their
+// bar). The kernel reports the connecting process's credentials for a unix socket (`SO_PEERCRED`), so every
+// accepted connection is checked against the effective uid of the process the server runs in, and one from any
+// other uid is closed before a byte is read from it.
+//
 // What is refused, and how:
 //
 //   * a line that is not a JSON object, or that has no version — answered and the connection closed,
@@ -33,6 +40,8 @@
 #include <QString>
 
 #include <optional>
+
+#include <sys/types.h>
 
 class QLocalSocket;
 
@@ -80,6 +89,12 @@ public:
     // The name handed to Qt, which is the abstract address without its leading NUL.
     QString socketName() const;
 
+    // The one uid whose connections are served. It is the effective uid of this process from construction,
+    // and a setter exists so that the refusal can be shown in a test without a second user on the machine:
+    // naming any other uid makes this process's own connections the foreign ones.
+    uid_t permittedUid() const { return permittedUid_; }
+    void setPermittedUid(uid_t uid) { permittedUid_ = uid; }
+
 private:
     // Defined in the .cpp: per-connection buffering and framing, which is state the header does not need
     // to describe. A nested class is a member and can reach the private members below.
@@ -91,6 +106,7 @@ private:
     QLocalServer server_;
     Capabilities& capabilities_;
     QString socketName_;
+    uid_t permittedUid_;
 };
 
 }  // namespace quantum::ipc

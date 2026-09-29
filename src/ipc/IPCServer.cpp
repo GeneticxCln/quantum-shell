@@ -7,6 +7,11 @@
 #include <QLocalSocket>
 #include <QStringList>
 
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <optional>
+
 namespace quantum::ipc {
 namespace {
 
@@ -24,6 +29,20 @@ QString implementedVerbs()
     for (const char* name : verb::All)
         names.append(QString::fromLatin1(name));
     return names.join(QStringLiteral(", "));
+}
+
+// The uid of the process on the other end of an accepted unix socket, as the kernel recorded it when the
+// connection was made. No value means the kernel would not say, which is treated as not permitted: a
+// connection whose owner cannot be established is not one to serve.
+std::optional<uid_t> peerUid(QLocalSocket* socket)
+{
+    struct ucred credentials {};
+    socklen_t length = sizeof(credentials);
+    if (::getsockopt(static_cast<int>(socket->socketDescriptor()), SOL_SOCKET, SO_PEERCRED, &credentials,
+                     &length) != 0
+        || length != sizeof(credentials))
+        return std::nullopt;
+    return credentials.uid;
 }
 
 }  // namespace
@@ -119,6 +138,7 @@ IPCServer::IPCServer(Capabilities& capabilities, const QString& socketName, QObj
     : QObject(parent)
     , capabilities_(capabilities)
     , socketName_(socketName)
+    , permittedUid_(::geteuid())
 {
     // Drained in a loop: `newConnection` is emitted once per connection Qt made pending, and a client that
     // connects while a previous one is being answered leaves more than one waiting.
@@ -192,6 +212,19 @@ Response IPCServer::dispatch(const Request& request)
 
 void IPCServer::handleConnection(QLocalSocket* socket)
 {
+    // Before anything is read from it: the socket is closed and never given a `Connection`, so a foreign
+    // client gets no answer, not even a refusal that would confirm what is listening.
+    const std::optional<uid_t> uid = peerUid(socket);
+    if (!uid.has_value() || *uid != permittedUid_) {
+        qCWarning(quantum::app::ipcLog)
+            << "refused a connection from"
+            << (uid.has_value() ? QStringLiteral("uid %1").arg(*uid) : QStringLiteral("an unknown uid"))
+            << "- only uid" << permittedUid_ << "is served";
+        socket->abort();
+        socket->deleteLater();
+        return;
+    }
+
     // The connection parents itself to the socket, so dropping the returned pointer is not a leak.
     new Connection(socket, *this);
     qCDebug(quantum::app::ipcLog) << "a client connected";

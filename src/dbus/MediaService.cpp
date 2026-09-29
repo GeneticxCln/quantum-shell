@@ -38,7 +38,7 @@ MediaService::~MediaService() { detach(); }
 
 void MediaService::registerQmlSingleton(MediaService& service) {
     qmlRegisterSingletonInstance(quantum::qml::ModuleUri, quantum::qml::ModuleMajorVersion,
-                                quantum::qml::ModuleMinorVersion, "MediaService", &service);
+                                quantum::qml::ModuleMinorVersion, QmlTypeName, &service);
 }
 
 void MediaService::detach() {

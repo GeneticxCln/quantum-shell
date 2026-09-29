@@ -21,6 +21,8 @@ namespace {
 // a rename in src/dbus/ does not build until this file agrees, and qml/Media.qml is the other place the name
 // is written.
 constexpr auto coveredServiceTypeName = "MediaService";
+static_assert(std::string_view(quantum::dbus::MediaService::QmlTypeName) == std::string_view(coveredServiceTypeName),
+              "the QML type name changed: update the mirror above, and every QML file that binds to it");
 
 // The MPRIS D-Bus names this module speaks, mirrored here for the reason the QML type name is above: they are
 // declared once in MediaStatus.h and checked here at compile time, so a wrong name fails a build rather than

@@ -273,7 +273,7 @@ void BatteryService::getAll(const QString& path, const QString& interface,
 
     auto* pending = new QDBusPendingCallWatcher(connection_.asyncCall(call), this);
     QObject::connect(pending, &QDBusPendingCallWatcher::finished, this,
-                     [this, pending, path, interface, applied = std::move(applied),
+                     [pending, path, interface, applied = std::move(applied),
                       failed = std::move(failed)] {
                          pending->deleteLater();
                          const QDBusPendingReply<QVariantMap> reply = *pending;

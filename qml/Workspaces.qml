@@ -97,6 +97,9 @@ Item {
                 border.color: urgent ? root.urgent : root.muted
 
                 Text {
+                    // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+                    // markup, which would let a sender restyle the bar or reference an image from a track title.
+                    textFormat: Text.PlainText
                     id: caption
                     anchors.centerIn: parent
                     // A named workspace shows its name; an unnamed one shows the index niri reports for
@@ -143,6 +146,9 @@ Item {
         }
 
         Text {
+            // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
+            // markup, which would let a sender restyle the bar or reference an image from a track title.
+            textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
             text: "niri"
             color: root.muted

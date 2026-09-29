@@ -224,8 +224,14 @@ set(QS_ORDER_CHECK_COSTS
     # this binary, whose three slots each carry a component creation and a configure round trip and wait for an
     # expiry of the configuration's own floor: 2700 ms, the middle of five passes at 2586, 2587, 2733, 2799 and
     # 2817 — the expiry is a length of time the suite waits for rather than a flag it checks, which is why the
-    # cost is what it is and not a wider spread.
-    notification-test=2700
+    # cost is what it is and not a wider spread. Re-measured once more when the daemon began telling a sender
+    # what became of its notification and the toast became clickable: nine more slots, most of them a round
+    # trip on the test's own bus and two that wait for a length of time (the expiry, which also carries the
+    # reason-1 check, and a never-expiring toast outliving a clock an earlier one armed): 3523 ms, the middle
+    # of five passes at 3499, 3508, 3523, 3549 and 3593. Slots that assert that nothing arrived do not wait for
+    # nothing — they send a call that does answer afterwards and check the order, which is what kept this from
+    # being roughly 2 s longer.
+    notification-test=3500
     # Reads seven files and compares them with constants compiled into it, plus the meta-objects of the four
     # QML singletons whose classes it links; it does no I/O beyond the read and no work that depends on the
     # machine, which is why it is near the cheapest binary in the table. Measured as the middle of three runs:
