@@ -264,7 +264,7 @@ void ControlCenterTest::aClickOnTransportReachesTheFollowedPlayer()
     QVERIFY(window != nullptr);
     auto* text = itemNamed(window, "controlMediaText");
     QVERIFY(text != nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(text->property("text").toString(), QStringLiteral("▶ A song — An artist"), settleMs);
+    QTRY_COMPARE_WITH_TIMEOUT(text->property("text").toString(), QStringLiteral("Playing: A song — An artist"), settleMs);
     QCOMPARE(itemNamed(window, "controlTransport")->opacity(), 1.0);
 
     QVERIFY(click(window, "controlPlayPause"));
@@ -317,7 +317,7 @@ void ControlCenterTest::theTextAndGeometryRulesAnswerForTheReadingsADaemonSends(
     QCOMPARE(call(window, "mediaText", {false, QString(), QString(), QString()}).toString(),
              QStringLiteral("Nothing playing"));
     QCOMPARE(call(window, "mediaText", {true, QStringLiteral("T"), QString(), QStringLiteral("paused")}).toString(),
-             QStringLiteral("⏸ T"));
+             QStringLiteral("Paused: T"));
 }
 
 void ControlCenterTest::escapeClosesAndASurfaceTheCompositorClosesLeavesItClosed()

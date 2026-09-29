@@ -16,6 +16,10 @@ import QuantumShell 1.0
 //   * the player is `MediaService`, and the three buttons are its `previous`, `playPause` and `next`, which
 //     ask the player and let the property change that comes back redraw the state.
 //
+// The transport buttons are worded (Previous, Play / Pause, Next) rather than drawn with media-symbol glyphs: no
+// bundled font has them, so a symbol is a fallback-font lookup at best and a missing-glyph box at worst, and the
+// words are what every font can draw.
+//
 // Nothing is drawn that the shell cannot do: there is no brightness or Bluetooth control because there is no
 // service behind either, and a slider that moved nothing would be a dead control. A section with nothing to act
 // on says so — the volume reads a dash until there is a sink, the player buttons are dimmed and inert while no
@@ -68,7 +72,7 @@ LayerShellWindow {
     function mediaText(available, title, artist, status) {
         if (!available)
             return "Nothing playing"
-        return (status === "playing" ? "▶ " : status === "paused" ? "⏸ " : "") + title
+        return (status === "playing" ? "Playing: " : status === "paused" ? "Paused: " : "") + title
             + (artist !== "" ? " — " + artist : "")
     }
 
@@ -245,14 +249,14 @@ LayerShellWindow {
 
                 Repeater {
                     model: [
-                        { name: "controlPrevious", label: "⏮", act: 0 },
-                        { name: "controlPlayPause", label: "⏯", act: 1 },
-                        { name: "controlNext", label: "⏭", act: 2 }
+                        { name: "controlPrevious", label: "Previous", act: 0, wide: 84 },
+                        { name: "controlPlayPause", label: "Play / Pause", act: 1, wide: 104 },
+                        { name: "controlNext", label: "Next", act: 2, wide: 64 }
                     ]
                     delegate: Rectangle {
                         required property var modelData
                         objectName: modelData.name
-                        width: 56
+                        width: modelData.wide
                         height: 32
                         radius: 4
                         color: "transparent"
@@ -264,7 +268,8 @@ LayerShellWindow {
                             text: modelData.label
                             color: panel.foreground
                             font.family: panel.face
-                            font.pixelSize: panel.fontSize + 2
+                            font.pixelSize: panel.fontSize
+                            font.weight: panel.fontWeight
                         }
                         MouseArea {
                             anchors.fill: parent
