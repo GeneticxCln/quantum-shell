@@ -1006,6 +1006,36 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    colours are literals because `[bar.colors]` has no background key and a config key is
                    public interface.
 
+                   A second audit, from a fresh clone of the merged tree, went at the input-facing code by
+                   fuzzing it rather than reading it (mutation fuzzers over the IPC decoder, the niri reply
+                   and event decoders, the configuration parser, the PipeWire Props pod reader, the D-Bus
+                   property and metadata interpreters, the `/proc` parsers and `qsctl`'s argument parser,
+                   about two million inputs under ASan and UBSan with recovery off) and at the running shell
+                   by soaking it on a headless sway. What it found: **the IPC server leaked a socket per
+                   client** — the connection helper deleted itself on `disconnected` but the socket it was
+                   parented to belongs to the `QLocalServer` and was never deleted, 8.5 KiB per `qsctl` call
+                   without bound, found because a hundred bar toggles grew the heap by 22 KiB each while a
+                   plain `QQuickWindow` and our own `LayerShellWindow` with trivial content did not; it is
+                   0 KiB per call now (`aClosedConnectionIsLetGoOf`, and the server exposes
+                   `openConnections()` for it). **toml++ 3.4.0 has two defects a config file can reach**:
+                   `[` followed by a newline trips an internal `assert` that aborts every build that keeps
+                   assertions, and a non-ASCII character in U+00A1..U+0499 outside a string or comment
+                   reaches `__builtin_unreachable()`; the schema turns the first assertion off
+                   (`TOML_ASSERT`) and refuses the second by line before toml++ sees it, both pinned in
+                   `config-test`. **Fast wheel notches lost steps**: the volume write computed the next
+                   value from the daemon's last *echo*, so two notches in one event-loop turn wrote the same
+                   target (30 → 40 instead of 50, measured against a real PipeWire daemon in
+                   `audio-live-test`); a successful write is now recorded as the base for the next, all
+                   under one turn of the loop lock, which also removes unlocked reads of `sink` and
+                   `haveReading`. **A touchpad swipe stepped once per event**: both wheel handlers now take
+                   one step per 120 units of accumulated distance (twelve deltas of ten are one step),
+                   pinned in `bar-interaction-test` and failing with a step per event (16 requests where
+                   one was expected). Not fixed, and recorded rather than hidden: the clock's minute timer
+                   runs on the monotonic clock, so after a suspend or a manual clock or timezone change it
+                   can be stale for up to a minute, and the fix is a logind or `timerfd` subscription this
+                   environment cannot verify; and 0.5 KiB per bar hide/show pair is still unaccounted for,
+                   with no owner identified.
+
                    The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
                    packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,
                    the toast and the battery and media readouts are committed. The audit changes above

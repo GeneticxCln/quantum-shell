@@ -214,6 +214,8 @@ private slots:
     void refusesAFileFromASchemaVersionItDoesNotKnow();
     void warnsWhenTheSchemaVersionIsMissingButStillUsesTheFile();
     void refusesAFileThatIsNotToml();
+    void aHalfTypedTableHeaderIsRefusedAndDoesNotAbort();
+    void aNonAsciiCharacterOutsideAStringIsRefusedByLineAndOneInsideIsKept();
     void onlyThePropertyThatChangedEmits();
     void everyPropertyIsOneABindingNeeds();
     void qmlReadsTheSameValuesAndFollowsAChange();
@@ -884,6 +886,62 @@ void ConfigTest::refusesAFileThatIsNotToml() {
     QCOMPARE(result.errors.size(), 1);
     QVERIFY(mentions(result.errors, QStringLiteral("TOML")));
     QCOMPARE(result.values.bar.height, coveredDefaultHeight);
+}
+
+void ConfigTest::aHalfTypedTableHeaderIsRefusedAndDoesNotAbort() {
+    // A table header followed by a line break is what the file looks like while someone is typing one, and the
+    // watcher parses whatever is on disk each time it changes. toml++ 3.4.0 asserts on it, which aborts every
+    // build that keeps assertions; the schema turns that assertion off, so the answer is one refusal. A failure
+    // here is the process ending, not a comparison.
+    const QList<QByteArray> inputs = {
+        QByteArray("[\nbar]\n"),
+        QByteArray("[[\nbar]]\n"),
+        QByteArray("schema_version = 1\n[bar]\nheight = 40\n[\n"),
+        QByteArray("["),
+    };
+    for (const QByteArray& input : inputs) {
+        const ParseResult result = parseConfig(input);
+        QVERIFY2(result.errors.size() == 1, input.constData());
+        QCOMPARE(result.values.bar.height, coveredDefaultHeight);
+    }
+}
+
+void ConfigTest::aNonAsciiCharacterOutsideAStringIsRefusedByLineAndOneInsideIsKept() {
+    // Outside a string or a comment a non-ASCII byte is a syntax error in TOML 1.0, and toml++ 3.4.0 reaches
+    // `__builtin_unreachable()` deciding that for U+00A1..U+0499. The schema answers it first, with the line.
+    const QList<QPair<QByteArray, QString>> refused = {
+        {QByteArray("vé = 1\n"), QStringLiteral("line 1")},
+        {QByteArray("schema_version = 1\n[bar]\nheight = 32 ±\n"), QStringLiteral("line 3")},
+        {QByteArray("a = é\n"), QStringLiteral("line 1")},
+        // A quote inside a token is not a string, so what follows it is not protected: this is the shape the
+        // fuzzer found, and toml++ reads the byte after the quote as part of the number.
+        {QByteArray("height = 9'é99\n"), QStringLiteral("line 1")},
+        {QByteArray("height = 9\"é99\n"), QStringLiteral("line 1")},
+        {QByteArray("s = \"\"\"x\n\"\"\"\nz = я\n"), QStringLiteral("line 3")},  // after a two-line multi-line string
+    };
+    for (const auto& [input, where] : refused) {
+        const ParseResult result = parseConfig(input);
+        QVERIFY2(result.errors.size() == 1, input.constData());
+        QVERIFY2(mentions(result.errors, where), input.constData());
+        QVERIFY2(mentions(result.errors, QStringLiteral("non-ASCII")), input.constData());
+    }
+
+    // The same characters inside a string, a literal string, either multi-line form, or a comment are ordinary
+    // content: a font family is exactly where they belong.
+    const QByteArray accepted =
+        "schema_version = 1\n"
+        "# é ± я in a comment\n"
+        "[bar]\n"
+        "height = 40 # é\n"
+        "[bar.font]\n"
+        "family = \"Nötö Sans é\"\n"
+        "[bar.colors]\n"
+        "foreground = '#ffffff'\n"
+        "muted = \"\"\"#aaaaaa\"\"\"\n";
+    const ParseResult result = parseConfig(accepted);
+    QVERIFY2(result.errors.isEmpty(), qPrintable(result.errors.join(QStringLiteral("; "))));
+    QCOMPARE(result.values.bar.height, 40);
+    QCOMPARE(result.values.bar.font.family, QString::fromUtf8("Nötö Sans é"));
 }
 
 void ConfigTest::onlyThePropertyThatChangedEmits() {

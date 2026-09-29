@@ -1,5 +1,13 @@
 #include "config/ConfigSchema.h"
 
+// toml++ 3.4.0 states a precondition of its key parser with `assert`, and a table header followed by a line
+// break — `[` and Enter, which is what a file looks like while someone is typing one — breaks it. With
+// assertions on (every Debug and sanitizer build) that aborts the process; with them off, the same input is an
+// ordinary syntax error, which is the answer this file has to give. The parser reads whatever is on disk each
+// time the file changes, so the abort would be a shell killed by a half-saved edit. `TOML_ASSERT` is the
+// library's own override point, and turning it off here gives every build the Release behaviour, which
+// `config-test` pins as a refusal rather than a crash.
+#define TOML_ASSERT(expr) (void)0
 #include <toml++/toml.hpp>
 
 #include <algorithm>
@@ -873,10 +881,106 @@ void readBarTable(const toml::table& table, BarConfig& bar, QStringList& warning
     }
 }
 
+// The line of the first non-ASCII byte that is neither inside a string nor inside a comment, or zero when there
+// is none. TOML 1.0 has no such byte in a valid file — bare keys and everything structural are ASCII — so it is
+// always a syntax error, and it is answered here because toml++ 3.4.0 does not answer it: its test for
+// non-ASCII whitespace falls through to `__builtin_unreachable()` for U+00A1..U+0499 (Latin accents, Greek,
+// most Cyrillic), so `vé = 1` or `height = 32 é` is undefined behaviour inside the library — reported by
+// UBSan, and only luckily an ordinary error in an optimised build. A byte in a string or a comment never
+// reaches that test, so those are left alone (a font family may be "Noto Sans Thai"), and an ambiguous case is
+// resolved towards "inside a string", which can only let toml++ decide as it did before.
+int firstStrayNonAsciiLine(const QByteArray& text) {
+    enum class State { Normal, Basic, Literal, MultilineBasic, MultilineLiteral, Comment };
+    State state = State::Normal;
+    int line = 1;
+    // The last byte of structure seen outside a string or comment (a newline counts), which is what says
+    // whether a quote opens a string: it does only where a token can start — a key or a value — and a quote in
+    // the middle of a number or a word is not one, which toml++ knows and the byte after it then meets its
+    // whitespace test. Zero is the start of the file.
+    char last = 0;
+    const auto opensString = [&] {
+        return last == 0 || last == '\n' || last == '=' || last == '[' || last == ',' || last == '{' || last == '.';
+    };
+    const qsizetype size = text.size();
+    // How many of `quote` start at `i`, so a run of three or more is one delimiter and the quotes that may
+    // trail a multi-line string's content are consumed with it.
+    const auto run = [&](qsizetype i, char quote) {
+        qsizetype n = 0;
+        while (i + n < size && text.at(i + n) == quote)
+            ++n;
+        return n;
+    };
+    for (qsizetype i = 0; i < size; ++i) {
+        const char c = text.at(i);
+        if (c == '\n')
+            ++line;
+        switch (state) {
+        case State::Normal:
+            if (c == '#') {
+                state = State::Comment;
+            } else if ((c == '"' || c == '\'') && opensString()) {
+                const qsizetype n = run(i, c);
+                const bool multiline = n >= 3;
+                state = c == '"' ? (multiline ? State::MultilineBasic : State::Basic)
+                                 : (multiline ? State::MultilineLiteral : State::Literal);
+                i += multiline ? n - 1 : 0;
+                last = c;
+            } else if (static_cast<unsigned char>(c) >= 0x80) {
+                return line;
+            } else if (c != ' ' && c != '\t' && c != '\r') {
+                last = c;
+            }
+            break;
+        case State::Basic:
+            if (c == '\\')
+                ++i;
+            else if (c == '"' || c == '\n')
+                state = State::Normal;
+            break;
+        case State::Literal:
+            if (c == '\'' || c == '\n')
+                state = State::Normal;
+            break;
+        case State::MultilineBasic:
+            if (c == '\\') {
+                if (i + 1 < size && text.at(i + 1) == '\n')
+                    ++line;
+                ++i;
+            } else if (c == '"' && run(i, '"') >= 3) {
+                i += run(i, '"') - 1;
+                state = State::Normal;
+            }
+            break;
+        case State::MultilineLiteral:
+            if (c == '\'' && run(i, '\'') >= 3) {
+                i += run(i, '\'') - 1;
+                state = State::Normal;
+            }
+            break;
+        case State::Comment:
+            if (c == '\n') {
+                state = State::Normal;
+                last = '\n';
+            }
+            break;
+        }
+        if (c == '\n' && state == State::Normal)
+            last = '\n';
+    }
+    return 0;
+}
+
 }  // namespace
 
 ParseResult parseConfig(const QByteArray& text) {
     ParseResult result;
+
+    if (const int stray = firstStrayNonAsciiLine(text); stray != 0) {
+        result.errors.append(QStringLiteral("not valid TOML: line %1: a non-ASCII character outside a string or "
+                                            "a comment")
+                                 .arg(stray));
+        return result;
+    }
 
     toml::table table;
     try {

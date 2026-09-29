@@ -172,7 +172,11 @@ set_tests_properties(slot-order-independence PROPERTIES TIMEOUT 900)
 #
 # Re-measure one with:  time <binary> $(<binary> -functions | tr -d '()')
 set(QS_ORDER_CHECK_COSTS
-    ipc-server-test=308
+    # Re-measured when the server began refusing a connection from another uid and letting go of a closed one,
+    # each a slot that opens real sockets (the second opens eight): 599 ms, the middle of five passes at 598, 599,
+    # 599, 600 and 604 — the two slots are about 130 and 170 ms of it, which is connect, one round trip and the
+    # disconnect the check waits on rather than a silence it waits out.
+    ipc-server-test=600
     ipc-capabilities-test=81
     ipc-protocol-test=22
     app-logging-test=20
@@ -191,7 +195,7 @@ set(QS_ORDER_CHECK_COSTS
     niri-live-test=213
     niri-live-stream-test=114
     sysmon-test=788
-    config-test=17
+    config-test=22
     audio-test=11
     # Pure functions of D-Bus payloads and no I/O at all, which is why it sits beside `audio-test` rather than
     # beside the binaries that open something. Measured as the median of five passes on this machine: 9, 9, 8,

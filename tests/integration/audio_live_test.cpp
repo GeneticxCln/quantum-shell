@@ -123,6 +123,7 @@ private slots:
     void anExternalMuteArrivesTheSameWay();
     void theShellsOwnWriteReachesTheDaemon();
     void theWheelStepIsTheConfiguredStepAndClampsAtFullScale();
+    void notchesInOneTurnOfTheEventLoopAllCount();
     void aNotchInDecibelsMovesTheDaemonByThatGain();
     void aStepWhileMutedChangesTheVolumeAndLeavesItMuted();
     void switchingTheDefaultSinkMovesTheReading();
@@ -509,6 +510,34 @@ void AudioLiveTest::theWheelStepIsTheConfiguredStepAndClampsAtFullScale()
     // would otherwise silently become a step of one.
     service.setStepPercent(0);
     QCOMPARE(service.stepPercent(), 10);
+
+    service.stop();
+}
+
+void AudioLiveTest::notchesInOneTurnOfTheEventLoopAllCount()
+{
+    // A wheel or a touchpad delivers several notches faster than the daemon echoes a write, so the second
+    // notch is computed while the reading is still the one from before the first. Each has to step from the
+    // volume the previous one wrote, or a fast scroll loses every notch but the last of a burst. Two and then
+    // four in one turn, each measured on the daemon's own factor rather than on the shell's reading.
+    PipeWireService service;
+    service.start(remote_);
+    QTRY_VERIFY_WITH_TIMEOUT(service.available(), eventTimeoutMs);
+    QVERIFY2(writeSink(QLatin1String(firstSink), linearFromPercent(30), false), "could not seed a volume");
+    QTRY_VERIFY_WITH_TIMEOUT(service.volumePercent() == 30, eventTimeoutMs);
+    service.setStepPercent(10);
+
+    service.stepVolume(1);
+    service.stepVolume(1);
+    QTRY_VERIFY_WITH_TIMEOUT(service.volumePercent() == 50, eventTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(sinkFactorIs(QLatin1String(firstSink), 50), eventTimeoutMs);
+
+    service.stepVolume(1);
+    service.stepVolume(1);
+    service.stepVolume(-1);
+    service.stepVolume(1);
+    QTRY_VERIFY_WITH_TIMEOUT(service.volumePercent() == 70, eventTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(sinkFactorIs(QLatin1String(firstSink), 70), eventTimeoutMs);
 
     service.stop();
 }

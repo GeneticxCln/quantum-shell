@@ -25,6 +25,7 @@
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -180,6 +181,7 @@ private slots:
     void aConnectionAnswersMoreThanOneRequest();
     void aFrameWrittenBeforeTheAcceptIsStillRead();
     void aConnectionFromAnotherUserIsClosedUnanswered();
+    void aClosedConnectionIsLetGoOf();
 
 private:
     QString socketName_;
@@ -498,6 +500,27 @@ void IpcServerTest::aConnectionFromAnotherUserIsClosedUnanswered() {
     ShellClient own(restricted.socketName());
     QVERIFY(own.connected());
     QVERIFY(own.request(requestFor(quantum::ipc::verb::Version)).has_value());
+}
+
+void IpcServerTest::aClosedConnectionIsLetGoOf() {
+    // Every `qsctl` call is a connection that opens, asks and closes. The server used to delete only its helper
+    // for the connection and keep the socket for its own life, so a script that polled the shell grew it without
+    // bound (8.5 KiB a call, measured on a running shell). Held open, the clients are counted; closed, they are
+    // not — and a call that was answered and then closed is one of them, which is the shape of a real caller.
+    // From an idle server: earlier slots' clients are closed, and the server lets go of a closed one on the event
+    // loop, so a baseline taken now could still include connections that are on their way out.
+    QTRY_COMPARE_WITH_TIMEOUT(server_->openConnections(), 0, 3000);
+    const int baseline = 0;
+    {
+        std::vector<std::unique_ptr<ShellClient>> clients;
+        for (int i = 0; i < 8; ++i) {
+            clients.push_back(std::make_unique<ShellClient>(socketName_));
+            QVERIFY(clients.back()->connected());
+            QVERIFY(clients.back()->request(requestFor(quantum::ipc::verb::Version)).has_value());
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(server_->openConnections(), baseline + 8, 3000);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(server_->openConnections(), baseline, 3000);
 }
 
 #include "ipc_server_test.moc"

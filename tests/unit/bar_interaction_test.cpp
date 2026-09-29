@@ -314,6 +314,7 @@ private slots:
     void clickingACapsuleFocusesTheWorkspaceItNames();
     void clickingTheFocusedCapsuleAsksTheCompositorForNothing();
     void theWheelMovesThroughNirisOwnWorkspaces();
+    void aSwipeOfSmallDeltasStepsOncePerNotchOfDistance();
     void theStripDrawsOnlyTheWorkspacesOfItsOwnOutput();
     void thePaletteIsTheOneTheFileSets();
 
@@ -341,6 +342,7 @@ private slots:
     void theBatteryReadoutDrawsWhatTheDaemonReportsAndTheConfigurationNames();
 
     void aClickAndAWheelOnTheVolumeReadoutReachTheService();
+    void aSwipeOfSmallDeltasOverTheVolumeReadoutIsOneStep();
 
 private:
     // The delegate the strip built for `index`, in the order the model reports: the item a pointer would
@@ -739,6 +741,32 @@ void BarInteractionTest::theWheelMovesThroughNirisOwnWorkspaces() {
     const int beforeUp = requestsSent();
     QTest::wheelEvent(window_.get(), overStrip, QPoint(0, 120));
     QTRY_VERIFY_WITH_TIMEOUT(requestsSent() > beforeUp, 5000);
+    QCOMPARE(lastRequest(), QStringLiteral(R"({"Action":{"FocusWorkspaceUp":{}}})"));
+}
+
+void BarInteractionTest::aSwipeOfSmallDeltasStepsOncePerNotchOfDistance() {
+    // A touchpad (or a high-resolution wheel) sends one notch of distance, 120 units, as many small deltas, and a
+    // step per event walked the whole strip for one swipe. Twelve deltas of ten are one notch, so a burst of
+    // twelve asks the compositor for one step where a step per event asks for twelve. That nothing more arrives
+    // is proved by order rather than by waiting for it: the socket keeps requests in the order they were sent, so
+    // a whole notch sent after the burst is the last request to arrive, and the total when it does is the burst's
+    // steps plus one. The events go in without a wait between them because the handler ends a gesture, and drops
+    // what it has travelled, after 100 ms without one.
+    QQuickItem* capsule = capsuleAt(1);
+    QVERIFY2(capsule != nullptr, "the strip built no capsule to turn the wheel over");
+    const QPointF overStrip = centreOf(capsule);
+
+    const int before = requestsSent();
+    for (int i = 0; i < 12; ++i)
+        QTest::wheelEvent(window_.get(), overStrip, QPoint(0, -10));
+    QTest::wheelEvent(window_.get(), overStrip, QPoint(0, -120));  // the probe
+    QTRY_COMPARE_WITH_TIMEOUT(requestsSent(), before + 2, 5000);
+    QCOMPARE(lastRequest(), QStringLiteral(R"({"Action":{"FocusWorkspaceDown":{}}})"));
+
+    for (int i = 0; i < 12; ++i)
+        QTest::wheelEvent(window_.get(), overStrip, QPoint(0, 10));
+    QTest::wheelEvent(window_.get(), overStrip, QPoint(0, 120));  // the probe
+    QTRY_COMPARE_WITH_TIMEOUT(requestsSent(), before + 4, 5000);
     QCOMPARE(lastRequest(), QStringLiteral(R"({"Action":{"FocusWorkspaceUp":{}}})"));
 }
 
@@ -1945,6 +1973,37 @@ void BarInteractionTest::aClickAndAWheelOnTheVolumeReadoutReachTheService() {
     // Nothing was asked of the compositor by any of it, which is the same claim from the other side: the bar's
     // two gestures are different gestures.
     QCOMPARE(requestsSent(), requestsBefore);
+}
+
+void BarInteractionTest::aSwipeOfSmallDeltasOverTheVolumeReadoutIsOneStep() {
+    // The volume readout's wheel is accumulated the way the strip's is: twelve deltas of ten are one notch of
+    // distance and so one step, where a step per event would be twelve. With no daemon behind the service each
+    // step is a record saying there was no reading to step from, written synchronously by the step itself, so
+    // there is nothing to wait for: exactly one after a burst, and one more for a whole notch after it.
+    QQuickItem* widget = itemNamed(QStringLiteral("volume"));
+    QVERIFY2(widget != nullptr, "the bar has no volume readout");
+    const QPointF overReadout = centreOf(widget);
+
+    for (const int delta : {-10, 10}) {
+        const QtMessageHandler handler = qInstallMessageHandler(&captureRecords);
+        records.clear();
+        for (int i = 0; i < 12; ++i)
+            QTest::wheelEvent(window_.get(), overReadout, QPoint(0, delta));
+        const auto steps = [] {
+            int n = 0;
+            for (const auto& record : records) {
+                if (record.message.contains(QStringLiteral("no reading to step from")))
+                    ++n;
+            }
+            return n;
+        };
+        const int afterBurst = steps();
+        QTest::wheelEvent(window_.get(), overReadout, QPoint(0, delta * 12));  // a whole notch
+        const int afterNotch = steps();
+        qInstallMessageHandler(handler);
+        QCOMPARE(afterBurst, 1);
+        QCOMPARE(afterNotch, 2);
+    }
 }
 
 void BarInteractionTest::aGroupGivesEveryWidgetOfItTheSameHeightAndOrder() {

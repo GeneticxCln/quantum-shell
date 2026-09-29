@@ -61,17 +61,27 @@ Item {
         // window. `TouchPad` is named explicitly because it is not the default, and a touchpad that sends
         // scroll phases rather than wheel ticks would otherwise be ignored.
         //
-        // One gap, stated rather than hidden: niri's own bind carries `cooldown-ms=150`, and this handler
-        // acts on every wheel event it is given. A mouse wheel sends one event per notch, so the two agree
-        // there; a continuous touchpad scroll can send several, and this is where a cooldown belongs when
-        // the bar has one.
+        // One step per notch of *distance*, not per event. A mouse wheel sends 120 units a notch, so it steps once
+        // a notch; a touchpad or a high-resolution wheel sends the same distance as many small deltas, and acting
+        // on each of them made one swipe over the bar walk through every workspace (niri's own bind carries
+        // `cooldown-ms=150` for the same reason). The distance is accumulated and a step is taken for every whole
+        // 120 of it, the remainder kept for the next event and dropped when the gesture ends, so it needs no
+        // timer and a swipe that covers two notches of distance steps twice.
         WheelHandler {
+            id: wheel
+            property real travelled: 0
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            onActiveChanged: if (!active) travelled = 0
             onWheel: (event) => {
-                if (event.angleDelta.y < 0)
-                    NiriActions.focusWorkspaceDown()
-                else if (event.angleDelta.y > 0)
+                travelled += event.angleDelta.y
+                while (travelled >= 120) {
                     NiriActions.focusWorkspaceUp()
+                    travelled -= 120
+                }
+                while (travelled <= -120) {
+                    NiriActions.focusWorkspaceDown()
+                    travelled += 120
+                }
             }
         }
 
@@ -97,10 +107,10 @@ Item {
                 border.color: urgent ? root.urgent : root.muted
 
                 Text {
+                    id: caption
                     // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
                     // markup, which would let a sender restyle the bar or reference an image from a track title.
                     textFormat: Text.PlainText
-                    id: caption
                     anchors.centerIn: parent
                     // A named workspace shows its name; an unnamed one shows the index niri reports for
                     // it, which is what niri itself calls it.
