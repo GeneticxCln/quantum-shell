@@ -257,6 +257,33 @@ private:
     NotificationsConfig& values_;
 };
 
+// The `[bar.osd]` table as QML reads it: `Config.bar.osd`.
+class ConfigOsd : public QObject {
+    Q_OBJECT
+
+    Q_PROPERTY(bool showOsd READ showOsd NOTIFY showOsdChanged)
+    Q_PROPERTY(int timeoutMs READ timeoutMs NOTIFY timeoutMsChanged)
+
+public:
+    explicit ConfigOsd(OsdConfig& values, QObject* parent = nullptr);
+
+    // Whether the display appears, and how long it stays. Both are read by the host that shows it and not by
+    // the audio service: what the service reads and publishes does not depend on whether anything is drawn.
+    bool showOsd() const { return values_.showOsd; }
+    int timeoutMs() const { return values_.timeoutMs; }
+
+    const OsdConfig& values() const { return values_; }
+
+    // Applies validated values, emitting a signal for each property whose value actually changed.
+    void apply(const OsdConfig& values);
+
+Q_SIGNALS:
+    void showOsdChanged();
+    void timeoutMsChanged();
+
+private:
+    OsdConfig& values_;
+};
 
 // The `[bar.colors]` table as QML reads it: `Config.bar.colors`.
 //
@@ -347,6 +374,7 @@ class ConfigBar : public QObject {
     Q_PROPERTY(quantum::config::ConfigNetwork* network READ network CONSTANT)
     Q_PROPERTY(quantum::config::ConfigBattery* battery READ battery CONSTANT)
     Q_PROPERTY(quantum::config::ConfigMedia* media READ media CONSTANT)
+    Q_PROPERTY(quantum::config::ConfigOsd* osd READ osd CONSTANT)
     Q_PROPERTY(quantum::config::ConfigColors* colors READ colors CONSTANT)
     Q_PROPERTY(quantum::config::ConfigFont* font READ font CONSTANT)
 
@@ -362,6 +390,7 @@ public:
     ConfigBattery* battery() { return &battery_; }
     ConfigMedia* media() { return &media_; }
     ConfigNotifications* notifications() { return &notifications_; }
+    ConfigOsd* osd() { return &osd_; }
     ConfigColors* colors() { return &colors_; }
     ConfigFont* font() { return &font_; }
 
@@ -388,6 +417,7 @@ private:
     ConfigBattery battery_;
     ConfigMedia media_;
     ConfigNotifications notifications_;
+    ConfigOsd osd_;
     // The palette, declared after the readouts because it came after them, and the typeface after the
     // palette because it came after that. All eight point into the same struct the six readouts' objects do,
     // so `Config.bar.font.size` and `qsctl config get bar.font.size` answer from one place.

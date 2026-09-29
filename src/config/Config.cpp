@@ -162,10 +162,23 @@ void ConfigNotifications::apply(const NotificationsConfig& values) {
     }
 }
 
+ConfigOsd::ConfigOsd(OsdConfig& values, QObject* parent) : QObject(parent), values_(values) {}
+
+void ConfigOsd::apply(const OsdConfig& values) {
+    if (values_.showOsd != values.showOsd) {
+        values_.showOsd = values.showOsd;
+        emit showOsdChanged();
+    }
+    if (values_.timeoutMs != values.timeoutMs) {
+        values_.timeoutMs = values.timeoutMs;
+        emit timeoutMsChanged();
+    }
+}
+
 ConfigBar::ConfigBar(QObject* parent)
     : QObject(parent), system_(values_.system, this), audio_(values_.audio, this),
       network_(values_.network, this), battery_(values_.battery, this), media_(values_.media, this),
-      notifications_(values_.notifications, this), colors_(values_.colors, this),
+      notifications_(values_.notifications, this), osd_(values_.osd, this), colors_(values_.colors, this),
       font_(values_.font, this) {}
 
 void ConfigBar::apply(const BarConfig& values) {
@@ -188,6 +201,7 @@ void ConfigBar::apply(const BarConfig& values) {
     network_.apply(values.network);
     battery_.apply(values.battery);
     notifications_.apply(values.notifications);
+    osd_.apply(values.osd);
     media_.apply(values.media);
     colors_.apply(values.colors);
     font_.apply(values.font);

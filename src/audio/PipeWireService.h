@@ -197,6 +197,14 @@ public:
 
 signals:
     void readingChanged();
+
+    // Emitted, after `readingChanged`, when the level or the mute of the sink already being followed moved.
+    // It is not emitted for the first reading of a connection, for a reading that comes back after the
+    // daemon went away, or for a switch of the default sink: those change what the readout shows but nobody
+    // asked for them, and an on-screen display announcing a volume the person did not touch is a display
+    // that lies about what happened. It is what the display is driven by — the bar's readout binds to
+    // `readingChanged` and shows every state, the display appears only for a change.
+    void volumeAdjusted();
     void stepPercentChanged();
     void stepDecibelsChanged();
     void wheelStepUnitChanged();
@@ -216,6 +224,9 @@ private:
 
     bool available_ = false;
     bool muted_ = false;
+    // The sink the published reading belongs to, so a reading of another sink is told apart from a change of
+    // this one. Empty while nothing is published.
+    QString readingSink_;
     int volumePercent_ = 0;
     // Negative infinity for a reading of silence, which is what the factor of a muted-to-zero sink is worth
     // in decibels: the widget draws that as the mathematical symbol rather than as a number, and

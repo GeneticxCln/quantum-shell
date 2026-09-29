@@ -272,6 +272,25 @@ struct NotificationsConfig {
     bool operator==(const NotificationsConfig&) const = default;
 };
 
+// `[bar.osd]`: the on-screen display shown when the volume or the mute changes. Two keys, and both are the
+// person's preference about a surface rather than a fact a daemon owns: whether it appears, and how long it
+// stays. What it *says* is the audio service's — the level and the mute are read from PipeWire, and the unit
+// it is drawn in is `[bar.audio] volume_scale`, the same key the bar's readout uses, so one number names
+// one unit everywhere. The table sits under `[bar]` because that is where every table in this schema lives;
+// the display is not the bar, and a later reorganisation of the file is a `schema_version` question, not
+// something one table can settle by itself.
+struct OsdConfig {
+    // Whether the display is shown at all. The audio service reads the daemon either way: hiding the display
+    // does not stop the readout on the bar, and it does not change what a wheel notch does.
+    bool showOsd = true;
+
+    // How long the display stays after the last change, in milliseconds. A second change while it is up
+    // starts the time again rather than adding a second display.
+    int timeoutMs = 1500;
+
+    bool operator==(const OsdConfig&) const = default;
+};
+
 // The `[bar.colors]` table: the palette the bar's widgets are drawn from, and the rule a value in it has to
 // satisfy.
 //
@@ -317,6 +336,11 @@ bool isColorLiteral(QStringView text);
 // person could not have read, and the spec's own meaning for a shorter count is a sender that wants it gone
 // at once — which is what zero is for, and what `CloseNotification` is for.
 inline constexpr int MinToastTimeoutMs = 500;
+
+// The shortest the on-screen display may stay: a display gone before it can be read is a display that did not
+// happen, and there is no "never" for it as there is for a notification — it would be a volume bar stuck on
+// screen. Refused, not clamped.
+inline constexpr int MinOsdTimeoutMs = 500;
 
 // The `[bar.font]` table: the typeface, size and weight the bar's text is drawn in.
 //
@@ -400,6 +424,10 @@ struct BarConfig {
     // here whose subject is how the bar looks rather than what it reads.
     ColorsConfig colors;
 
+    // The `[bar.osd]` table, the ninth: the on-screen display's two settings. Written after the two tables about
+    // how the bar looks because it is neither a readout's settings nor a look — it is a surface of its own.
+    OsdConfig osd;
+
     // The `[bar.font]` table, the eighth: the typeface, size and weight the bar's text is drawn in. It is a
     // table of its own rather than more keys in `[bar.colors]` because a font family is not a colour, and a
     // table named for colours that also held typography would be misnamed from the first key.
@@ -479,6 +507,8 @@ inline constexpr auto KeyBarBatteryShowTime = "bar.battery.show_time";
 inline constexpr auto KeyBarMediaShowMedia = "bar.media.show_media";
 inline constexpr auto KeyBarNotificationsShowNotifications = "bar.notifications.show_notifications";
 inline constexpr auto KeyBarNotificationsTimeoutMs = "bar.notifications.timeout_ms";
+inline constexpr auto KeyBarOsdShowOsd = "bar.osd.show_osd";
+inline constexpr auto KeyBarOsdTimeoutMs = "bar.osd.timeout_ms";
 inline constexpr auto KeyBarColorsForeground = "bar.colors.foreground";
 inline constexpr auto KeyBarColorsMuted = "bar.colors.muted";
 inline constexpr auto KeyBarColorsAccent = "bar.colors.accent";
@@ -486,7 +516,7 @@ inline constexpr auto KeyBarColorsUrgent = "bar.colors.urgent";
 inline constexpr auto KeyBarFontFamily = "bar.font.family";
 inline constexpr auto KeyBarFontSize = "bar.font.size";
 inline constexpr auto KeyBarFontWeight = "bar.font.weight";
-inline constexpr std::array<const char*, 26> KeyPaths{
+inline constexpr std::array<const char*, 28> KeyPaths{
     KeyBarHeight,
     KeyBarLayerNamespace,
     KeyBarSystemSampleIntervalMs,
@@ -506,6 +536,8 @@ inline constexpr std::array<const char*, 26> KeyPaths{
     KeyBarMediaShowMedia,
     KeyBarNotificationsShowNotifications,
     KeyBarNotificationsTimeoutMs,
+    KeyBarOsdShowOsd,
+    KeyBarOsdTimeoutMs,
     KeyBarColorsForeground,
     KeyBarColorsMuted,
     KeyBarColorsAccent,

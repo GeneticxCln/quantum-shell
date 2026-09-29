@@ -52,6 +52,7 @@ set(QS_TEST_NAMES
     battery-test
     media-test
     notification-test
+    osd-test
     ipc-protocol-test
     ipc-server-test
     ipc-capabilities-test

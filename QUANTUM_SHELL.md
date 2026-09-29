@@ -543,7 +543,7 @@ Typical surfaces:
 | Wallpaper | background | none | `quantum-shell-wallpaper` |
 | Notifications | overlay | on-demand | `quantum-shell-notification` |
 | Notification history (landed) | top | none | `quantum-shell-notification-history` |
-| OSD | overlay | none | `quantum-shell-osd` |
+| OSD (volume, landed) | overlay | none | `quantum-shell-osd` |
 | Control Center | overlay | on-demand | `quantum-shell-control-center` |
 | Launcher | overlay | exclusive | `quantum-shell-launcher` |
 | Lock surface | session-lock (not layer-shell) | exclusive | `quantum-shell-lock` |
@@ -2695,7 +2695,7 @@ statistics for the exception and the waiver it needs.
 Launcher, notifications (with history and D-Bus service), OSD, control center, panels, media
 controls, system controls. Of the notification surface, the D-Bus service, the bar readout and the
 **toast overlay** have landed (above), and so have the **history and Do Not Disturb**, described
-after the toast paragraph; nothing else in this list has started. The toast
+after the toast paragraph, and the **volume OSD** (below); nothing else in this list has started. The toast
 overlay is `qml/Toast.qml` and `src/app/ToastHost.*`: one surface per output, created when a
 notification arrives and withdrawn when its expiry runs out, the expiry resolved as the daemon
 publishes the sender's own `expire_timeout` and `[bar.notifications] timeout_ms` says what a `-1`
@@ -2739,6 +2739,23 @@ skips, naming the exit code and the message, on a machine where the desktop's `n
 at all, because that program is libnotify's rather than this project's and an unloadable library is not
 a defect of the daemon. What the daemon answers is asserted by the rest of that binary, and what the
 bar draws from a real sender is `bar-interaction-test`'s.
+
+
+**Volume OSD (landed).** A change of the volume or the mute of the sink the shell follows shows a small
+panel: `qml/VolumeOsd.qml` on the overlay layer (`quantum-shell-osd`, keyboard none, no exclusive zone),
+one per output, bottom-centre, created and withdrawn by `src/app/OsdHost.*`. It is driven by
+`PipeWireService::volumeAdjusted`, which is emitted only for a change of the sink already being followed
+— not for the first reading of a connection, a returning daemon or a switch of default sink, so nothing
+is announced that nobody did — and the surface binds to the service, so a further change while it is up
+redraws it and only restarts the host's clock. Two keys, `[bar.osd] show_osd` (default `true`) and
+`timeout_ms` (default 1500, floor 500 — there is no "never" for a volume bar); the unit it draws is the
+existing `[bar.audio] volume_scale`, so one key names the unit of the readout, the wheel's step and the
+panel. The fill is the percentage in both units (a position in the range); a mute draws `MUTE` and an
+empty fill, and no reading draws a dash. Verified by `osd-test` (offscreen), `audio-live-test` (the
+signal, against a private PipeWire daemon) and by eye on a headless sway with `wpctl` changing a real
+sink. Not done: brightness, keyboard-layout and media OSDs (no service behind them that this shell
+owns yet), and the panel is not click-through — its transparent 132×60 px margin and the panel take
+pointer input like any surface.
 
 ### Phase 3 — Quantum 3D Layer
 

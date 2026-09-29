@@ -167,6 +167,10 @@ show_media = true
 show_notifications = true
 timeout_ms = 5000
 
+[bar.osd]
+show_osd = true
+timeout_ms = 1500
+
 [bar.colors]
 foreground = "#c8cad8"
 muted = "#5a5d70"

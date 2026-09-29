@@ -18,6 +18,7 @@
 #include "app/Logging.h"
 #include "app/ShellCapabilities.h"
 #include "app/HistoryHost.h"
+#include "app/OsdHost.h"
 #include "app/ToastHost.h"
 #include "audio/PipeWireService.h"
 #include "config/Config.h"
@@ -255,6 +256,12 @@ int main(int argc, char **argv)
     quantum::app::HistoryHost history(notifications, engine,
                                       QUrl(QStringLiteral("qrc:/qml/NotificationHistory.qml")));
     if (!history.ready())
+        return EXIT_FAILURE;
+
+    // The volume's on-screen display, shown for an adjustment of the sink the audio service follows. It fails the
+    // process for the same reason the toast does.
+    quantum::app::OsdHost osd(audio, config, engine, QUrl(QStringLiteral("qrc:/qml/VolumeOsd.qml")));
+    if (!osd.ready())
         return EXIT_FAILURE;
 
     quantum::app::ShellCapabilities capabilities(service, config, &bars);
