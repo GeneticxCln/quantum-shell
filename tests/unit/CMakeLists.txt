@@ -189,6 +189,11 @@ target_compile_definitions(notification-test PRIVATE FIXTURES="${CMAKE_CURRENT_S
 # a real shell is what the layer-shell live tests assert, on the built binary.
 target_compile_definitions(notification-test PRIVATE QS_TOAST_QML="${QS_TOAST_QML}" QS_HISTORY_QML="${QS_HISTORY_QML}")
 
+# The launcher's two halves: every shape a desktop entry, an `Exec` line and a query can take as pure functions,
+# and the service against directories of its own with a real process started at the end. No display, no bus.
+qs_unit_test(apps-test apps_test.cpp)
+target_link_libraries(apps-test PRIVATE quantum-shell-apps Qt6::Qml)
+
 # The volume's on-screen display: the host driven by the audio service's `volumeAdjusted`, the surface it
 # creates per output, and the surface's rule for turning a reading into text. Offscreen, and against a service
 # that is never started, so no daemon and no compositor is involved.

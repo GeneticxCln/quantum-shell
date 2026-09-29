@@ -33,10 +33,11 @@ using CategoryAccessor = const QLoggingCategory& (*)();
 // duplicate or outside the shell's namespace. What it cannot do is notice a category that *exists* and is not
 // listed; the guard for that is that a category is added in the same change as its reader, and the diff that
 // adds one is where this line gets its next entry.
-constexpr std::array<CategoryAccessor, 8> categories{&quantum::app::shellLog, &quantum::app::niriLog,
+constexpr std::array<CategoryAccessor, 9> categories{&quantum::app::shellLog, &quantum::app::niriLog,
                                                     &quantum::app::configLog, &quantum::app::ipcLog,
                                                     &quantum::app::waylandLog, &quantum::app::systemLog,
-                                                    &quantum::app::audioLog, &quantum::app::networkLog};
+                                                    &quantum::app::audioLog, &quantum::app::networkLog,
+                                                    &quantum::app::launcherLog};
 
 }  // namespace
 

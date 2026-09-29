@@ -78,6 +78,11 @@ Q_DECLARE_LOGGING_CATEGORY(batteryLog)
 // players exist, or the active player has no track loaded.
 Q_DECLARE_LOGGING_CATEGORY(mediaLog)
 
+// The launcher: how many applications a scan found and from where, every desktop entry it refused and why, and
+// every program a launch started or could not start. A launcher that offers an application which then does
+// nothing is otherwise indistinguishable from one that did nothing wrong; the record names the program.
+Q_DECLARE_LOGGING_CATEGORY(launcherLog)
+
 // The notification daemon: the bus name it took or could not take, each `Notify` call it received and the
 // id it answered with, and each notification it closed. A shell that is the notifications daemon has one
 // question no other readout has — whether it is the daemon at all, since the name may be held by another
