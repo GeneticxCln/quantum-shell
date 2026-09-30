@@ -204,7 +204,11 @@ target_include_directories(quantum-shell-audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 # `SYSTEM` is a keyword of its own and cannot share a call with a scope keyword, which is why this is a
 # second call rather than a second line in the one above.
 target_include_directories(quantum-shell-audio SYSTEM PRIVATE ${PIPEWIRE_INCLUDE_DIRS})
-target_link_directories(quantum-shell-audio PRIVATE ${PIPEWIRE_LIBRARY_DIRS})
+# PUBLIC because this is a static library: its private link line is handed to whatever links it, but
+# the `-L` directories that resolve `-lpipewire-0.3` are not, so an executable linking it could not
+# find PipeWire wherever it is not in a default path (which is where a build against a PipeWire at the
+# floor puts it; hosted CI found this).
+target_link_directories(quantum-shell-audio PUBLIC ${PIPEWIRE_LIBRARY_DIRS})
 target_link_libraries(quantum-shell-audio
     PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings
     PRIVATE quantum-shell-logging ${PIPEWIRE_LIBRARIES})
