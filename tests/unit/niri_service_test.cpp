@@ -427,6 +427,13 @@ void NiriServiceTest::theWindowListFollowsTheCompositorsWindows() {
     pushEvent(QStringLiteral("WindowFocusChanged"), QJsonObject{{QStringLiteral("id"), 14}});
     QTest::qWait(50);
     QCOMPARE(changed.count(), 3);
+
+    // Left as found: no windows and nothing focused. `anEventThatChangesNothingDoesNotWakeABinding` waits for a
+    // focused window on workspace 7 before it starts its spies, and a window left focused there satisfies that
+    // wait before its own event has been read — which the shuffled order check found, as a count of two.
+    pushEvent(QStringLiteral("WindowsChanged"), QJsonObject{{QStringLiteral("windows"), QJsonArray{}}});
+    QTRY_VERIFY(service_.windows().isEmpty());
+    QTRY_VERIFY(service_.focusedWindow().isEmpty());
 }
 
 void NiriServiceTest::outputsAndKeyboardLayoutFollowTheCompositor() {
