@@ -1220,6 +1220,7 @@ Text { text: NiriService.keyboardLayout.currentName }
 | Property | The binding it exists for |
 | --- | --- |
 | `workspaces` | the workspace strip — `id` (text), `idx`, `name`, `output`, `isActive`, `isFocused`, `isUrgent`, `activeWindowId` |
+| `windows` | the window list — every window niri reported, ordered by id, each with `focusedWindow`'s keys |
 | `focusedWindow` | a title widget — `id` (text), `title`, `appId`, `isFocused`, `isFloating`, `isUrgent`, `workspaceId` |
 | `outputs` | per-monitor widgets — `name`, `make`/`model`, `isEnabled`, `x`/`y`/`width`/`height`, the fractional `scale`, `transform`, and the current mode with `refreshRate` in millihertz |
 | `keyboardLayout` | the layout indicator — `names`, `currentIndex`, `currentName` |
@@ -1345,7 +1346,7 @@ Two things the group owns, and they are the reason it is a component rather than
   Qt's own tree, so anything outside the component can address the group a widget landed in without
   counting the bar's children to work out which one it has hold of.
 
-Three groups, and no fourth: a left one holding the workspace strip, a centre one holding the system
+Three groups, and no fourth: a left one holding the workspace strip and the window list (`qml/Windows.qml`: one entry per window on the bar's own output's workspaces, the focused one marked, a click asking niri to `FocusWindow` it — no config key, so it cannot be switched off — and nothing drawn when there are none), a centre one holding the system
 status and a right one holding the trailing readouts — network, battery, media, notifications — and the
 volume and the clock. The centre group arrived the same way the other two did, with the widget that
 belongs in it, and so did each readout since: a group still arrives that way, so a widget the roadmap

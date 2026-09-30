@@ -77,6 +77,17 @@ Item {
             fontSize: bar.fontSize
             fontWeight: bar.fontWeight
         }
+
+        Windows {
+            outputName: bar.outputName
+            foreground: bar.foreground
+            muted: bar.muted
+            accent: bar.accent
+            urgent: bar.urgent
+            face: bar.face
+            fontSize: bar.fontSize
+            fontWeight: bar.fontWeight
+        }
     }
 
     // The centre: the system's own readings, and whatever else belongs in the middle. Centred on the bar

@@ -300,6 +300,20 @@ void NiriActions::focusWorkspaceById(const QString& idText) {
     focusWorkspace(WorkspaceReference::withId(*id));
 }
 
+void NiriActions::focusWindowById(const QString& idText) {
+    const std::optional<quint64> id = idFromText(idText);
+    if (!id.has_value() || !isAddressableId(*id)) {
+        refuse(QStringLiteral("FocusWindow"),
+               QStringLiteral("\"%1\" is not a niri window id this build can address: an id is decimal digits "
+                              "and nothing else, at most %2")
+                   .arg(idText)
+                   .arg(maximumId),
+               {});
+        return;
+    }
+    dispatch(QStringLiteral("FocusWindow"), QJsonObject{{QStringLiteral("id"), idValue(*id)}}, {});
+}
+
 void NiriActions::focusWorkspaceUp() {
     dispatch(QStringLiteral("FocusWorkspaceUp"), QJsonObject{}, {});
 }

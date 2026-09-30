@@ -110,6 +110,15 @@ QVariantList workspaceList(const QList<NiriWorkspace>& workspaces) {
     return list;
 }
 
+QVariantList windowList(const QList<NiriWindow>& windows) {
+    QVariantList list;
+    list.reserve(windows.size());
+    for (const NiriWindow& window : windows) {
+        list.append(windowMap(window));
+    }
+    return list;
+}
+
 QVariantList outputList(const QList<NiriOutput>& outputs) {
     QVariantList list;
     list.reserve(outputs.size());
@@ -127,6 +136,7 @@ NiriService::NiriService(NiriState& state, NiriEventStream& stream, QObject* par
     // reported its state must not look like one created before it did.
     workspaces_ = workspaceList(state_.workspaces());
     focusedWindow_ = windowMap(state_.focusedWindow());
+    windows_ = windowList(state_.windows());
     outputs_ = outputList(state_.outputs());
     keyboardLayout_ = keyboardLayoutMap(state_.keyboardLayouts());
     overviewOpen_ = state_.isOverviewOpen();
@@ -134,6 +144,8 @@ NiriService::NiriService(NiriState& state, NiriEventStream& stream, QObject* par
 
     connect(&state_, &NiriState::workspacesChanged, this, &NiriService::refreshWorkspaces);
     connect(&state_, &NiriState::windowsChanged, this, &NiriService::refreshFocusedWindow);
+    connect(&state_, &NiriState::windowsChanged, this, &NiriService::refreshWindows);
+    connect(&state_, &NiriState::focusedWindowChanged, this, &NiriService::refreshWindows);
     connect(&state_, &NiriState::focusedWindowChanged, this, &NiriService::refreshFocusedWindow);
     connect(&state_, &NiriState::outputsChanged, this, &NiriService::refreshOutputs);
     connect(&state_, &NiriState::keyboardLayoutsChanged, this, &NiriService::refreshKeyboardLayout);
@@ -151,6 +163,10 @@ QVariantList NiriService::workspaces() const {
 
 QVariantMap NiriService::focusedWindow() const {
     return focusedWindow_;
+}
+
+QVariantList NiriService::windows() const {
+    return windows_;
 }
 
 QVariantList NiriService::outputs() const {
@@ -193,6 +209,15 @@ void NiriService::refreshFocusedWindow() {
     }
     focusedWindow_ = std::move(map);
     emit focusedWindowChanged();
+}
+
+void NiriService::refreshWindows() {
+    QVariantList list = windowList(state_.windows());
+    if (list == windows_) {
+        return;
+    }
+    windows_ = std::move(list);
+    emit windowsChanged();
 }
 
 void NiriService::refreshOutputs() {

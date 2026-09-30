@@ -55,6 +55,10 @@ public:
 
     Q_PROPERTY(QVariantList workspaces READ workspaces NOTIFY workspacesChanged)
     Q_PROPERTY(QVariantMap focusedWindow READ focusedWindow NOTIFY focusedWindowChanged)
+    // Every window niri has told the shell about, ordered by id, each in the shape `focusedWindow` has. The
+    // window list draws it; which of them belong on which output is the workspace they name, and is the
+    // widget's to decide from `workspaces`.
+    Q_PROPERTY(QVariantList windows READ windows NOTIFY windowsChanged)
     Q_PROPERTY(QVariantList outputs READ outputs NOTIFY outputsChanged)
     Q_PROPERTY(QVariantMap keyboardLayout READ keyboardLayout NOTIFY keyboardLayoutChanged)
     Q_PROPERTY(bool overviewOpen READ overviewOpen NOTIFY overviewOpenChanged)
@@ -62,6 +66,7 @@ public:
 
     QVariantList workspaces() const;
     QVariantMap focusedWindow() const;
+    QVariantList windows() const;
     QVariantList outputs() const;
     QVariantMap keyboardLayout() const;
     bool overviewOpen() const;
@@ -79,6 +84,7 @@ public:
 signals:
     void workspacesChanged();
     void focusedWindowChanged();
+    void windowsChanged();
     void outputsChanged();
     void keyboardLayoutChanged();
     void overviewOpenChanged();
@@ -87,6 +93,7 @@ signals:
 private:
     void refreshWorkspaces();
     void refreshFocusedWindow();
+    void refreshWindows();
     void refreshOutputs();
     void refreshKeyboardLayout();
     void refreshOverview();
@@ -98,6 +105,7 @@ private:
     // The last value each property reported, so an event that changes nothing emits nothing.
     QVariantList workspaces_;
     QVariantMap focusedWindow_;
+    QVariantList windows_;
     QVariantList outputs_;
     QVariantMap keyboardLayout_;
     bool overviewOpen_ = false;

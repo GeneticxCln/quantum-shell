@@ -155,6 +155,9 @@ public:
     // pair niri's default config binds to the wheel (`Mod+WheelScrollDown { focus-workspace-down; }`).
     // Which workspace is "below" is the compositor's answer, not one computed from the strip's own
     // order here.
+    // `FocusWindow` by id, the same way: the id is the text `NiriService.windows[i].id` carries, refused
+    // before anything is sent when it is not decimal digits or is too large to be written exactly.
+    Q_INVOKABLE void focusWindowById(const QString& idText);
     Q_INVOKABLE void focusWorkspaceUp();
     Q_INVOKABLE void focusWorkspaceDown();
 

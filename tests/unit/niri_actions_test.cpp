@@ -89,6 +89,7 @@ private slots:
     void focusesTheWorkspaceAnIdNamesExactly();
     void refusesAnIdTextThatIsNotOneWithoutSendingAnything();
     void writesThatAFailedActionHappenedRatherThanOnlySignallingIt();
+    void focusesTheWindowAnIdNamesExactlyAndRefusesWhatIsNotOne();
 };
 
 void NiriActionsTest::sendsEachActionInTheShapeNiriParses() {
@@ -524,6 +525,46 @@ void NiriActionsTest::refusesAnIdTextThatIsNotOneWithoutSendingAnything() {
     QVERIFY2(moveResult.detail.contains(QStringLiteral("9223372036854775808")),
              qPrintable(moveResult.detail));
     QCOMPARE(server.receivedRequests().size(), 0);
+}
+
+void NiriActionsTest::focusesTheWindowAnIdNamesExactlyAndRefusesWhatIsNotOne() {
+    FakeNiriServer server;
+    QVERIFY2(server.listen(), qPrintable(server.serverError()));
+    server.setReply(QStringLiteral("Action"), QByteArray(R"json({"Ok":"Handled"})json"));
+
+    NiriIPC client;
+    NiriActions actions(client);
+    QVERIFY2(connectTo(client, server), "the request connection never came up");
+
+    QStringList refused;
+    connect(&actions, &NiriActions::actionFailed, this,
+            [&refused](const QString& action, const NiriActions::Result&) { refused.append(action); });
+
+    // `Action::FocusWindow { id: u64 }` in niri-ipc: the id as the digits it names, above 2^53 included and
+    // at the ceiling this build writes, where a double would name another window.
+    actions.focusWindowById(QStringLiteral("42"));
+    QTRY_VERIFY_WITH_TIMEOUT(server.receivedRequests().size() == 1, 5000);
+    QCOMPARE(server.receivedRequests().last(), QStringLiteral(R"({"Action":{"FocusWindow":{"id":42}}})"));
+    actions.focusWindowById(QStringLiteral("123456789012345"));
+    QTRY_VERIFY_WITH_TIMEOUT(server.receivedRequests().size() == 2, 5000);
+    QCOMPARE(server.receivedRequests().last(),
+             QStringLiteral(R"({"Action":{"FocusWindow":{"id":123456789012345}}})"));
+    actions.focusWindowById(QString::number(NiriActions::maximumId));
+    QTRY_VERIFY_WITH_TIMEOUT(server.receivedRequests().size() == 3, 5000);
+    QCOMPARE(server.receivedRequests().last(),
+             QStringLiteral(R"({"Action":{"FocusWindow":{"id":9223372036854775807}}})"));
+    QVERIFY(refused.isEmpty());
+
+    // What is not an id is refused by name and nothing is sent.
+    const QStringList notIds{QString(), QStringLiteral("7x"), QStringLiteral(" 7"), QStringLiteral("-1"),
+                             QStringLiteral("1e3"), QStringLiteral("18446744073709551616"),
+                             QStringLiteral("9223372036854775808")};
+    for (const QString& text : notIds)
+        actions.focusWindowById(text);
+    QTRY_COMPARE_WITH_TIMEOUT(refused.size(), notIds.size(), 5000);
+    for (const QString& action : refused)
+        QCOMPARE(action, QStringLiteral("FocusWindow"));
+    QCOMPARE(server.receivedRequests().size(), 3);
 }
 
 void NiriActionsTest::writesThatAFailedActionHappenedRatherThanOnlySignallingIt() {
