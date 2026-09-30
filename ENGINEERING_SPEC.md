@@ -601,9 +601,16 @@ config path, socket bind result) on `quantum.shell`.
   monotonic clock, which does not advance during suspend. After a resume, or a manual clock or timezone
   change, the time shown can be stale for up to a minute. The fix needs an event source (logind's
   `PrepareForSleep`, or a `CLOCK_REALTIME` timerfd with cancel-on-set) that has not been built.
-- Bar hide/show: 0.5 KiB of heap per hide/show pair is unaccounted for (measured: +96 KiB over 400
-  pairs). The much larger leak that used to sit here was the IPC server keeping every closed client's
-  socket (fixed; `IPCServer::openConnections()`).
+- Bar hide/show: **not a leak.** A short run does show growth (+96 KiB over 400 pairs, about 0.5 KiB a pair),
+  which is why it was recorded as unaccounted for, but over 2000 pairs the release shell's RSS climbs
+  49,800 → 50,284 KiB in the first 250 pairs and then oscillates between 50,356 and 50,608 KiB with drops
+  (1500 → 1750 pairs: −236 KiB) — the shape of the QML engine's JS heap being collected, not of a leak. What
+  grows in the short run is JS string garbage from the readouts' bindings (valgrind, 100 pairs against 0 on
+  the debug build: `QLocale::toString`, `QV4::Heap::String::simplifyString` and `numberToString` under
+  `SysMonService::readingChanged`), which is freed when the collector runs. Measured on a headless sway,
+  default configuration, 4-core Xeon 2.8 GHz, `qsctl bar toggle` twice per pair; not measured on niri. The much
+  larger leak that used to sit here was the IPC server keeping every closed client's socket (fixed;
+  `IPCServer::openConnections()`).
 - toml++ 3.4.0 defects the schema works around rather than fixes, because the dependency is pinned:
   `TOML_ASSERT` is disabled for `ConfigSchema.cpp` (a `[` followed by a newline asserts in the key parser
   and aborts assertion-enabled builds), and `parseConfig` refuses a non-ASCII byte outside a string or
@@ -688,6 +695,16 @@ mappings, not an allocation breakdown). A Vulkan probe measured 254520 KiB and a
 GTK-theme-cleared probe 150536 KiB; both were diagnostics, not adopted changes.
 The software default closes the memory budget by stepping off the GPU for the 2D bar;
 per-feature idle-cost measurement (§ 3D) applies when the hardware path returns for 3D.
+
+A second idle measurement, on 2026-09-30, and a weaker one: Release shell, default configuration, bar visible on a
+**headless sway** (pixman renderer) on a 4-core Xeon 2.8 GHz, no niri and no PipeWire daemon, so both the niri and
+the audio services sat in their reconnect backoff. Over 60.0 s, user + system time was **0.067% of one core**, and
+VmRSS was 50952 → 51048 KiB (about 50 MB). It is a lower bound for a shell whose niri and audio connections are up,
+not a replacement for the niri figure above, which stays the one the budgets are judged on.
+
+Heap growth: 2000 hide/show pairs (`qsctl bar toggle` twice each) on the same setup climbed RSS 49800 → 50284 KiB in
+the first 250 pairs and then held between 50356 and 50608 KiB with periodic drops — the pattern of a collected heap,
+not a leak (§6, "Bar hide/show").
 
 Idle wake-ups: hidden bar = zero wake-ups from sampling; visible bar wakes once per accepted
 cadence plus the clock's once-per-minute single-shot. Shard wall clock ≈ slowest

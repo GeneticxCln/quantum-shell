@@ -1035,8 +1035,10 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    one was expected). Not fixed, and recorded rather than hidden: the clock's minute timer
                    runs on the monotonic clock, so after a suspend or a manual clock or timezone change it
                    can be stale for up to a minute, and the fix is a logind or `timerfd` subscription this
-                   environment cannot verify; and 0.5 KiB per bar hide/show pair is still unaccounted for,
-                   with no owner identified.
+                   environment cannot verify. The 0.5 KiB per bar hide/show pair that had been recorded as
+                   unaccounted for was later measured over 2000 pairs and is not a leak: RSS rises about 0.5 MiB in
+                   the first 250 pairs and then oscillates with drops, which is the JS heap being collected
+                   (`ENGINEERING_SPEC.md` §6).
 
                    The roadmap's next item landed after the audits: **notification history and Do Not
                    Disturb**. `NotificationService` keeps the last 50 notifications (newest first, an
@@ -1121,8 +1123,10 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    itself that die of each signal and reads the report and the manner of death back, and removing the
                    alternate stack or the re-raise each fails it), a `dist` target that builds a reproducible release
                    tarball with a `sha256sum -c` checksum from the committed tree and refuses a dirty one
-                   (`dist-test`), and `UPGRADING.md`. Not done: a versioned package, the release itself, the two
-                   profilers' measurements, the Nix flake.
+                   (`dist-test`), and `UPGRADING.md`. The heap-growth soak is done (2000 hide/show pairs on a headless sway:
+                   RSS plateaus, no leak) and a degraded-mode idle figure was taken there (0.067% CPU, about
+                   50 MB, no niri or PipeWire). Not done: a versioned package, the release itself, the idle
+                   measurement on niri, the Nix flake.
 
                    The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
                    packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,
