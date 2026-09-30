@@ -1270,10 +1270,12 @@ void BarInteractionTest::theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved
         return QTime::currentTime().addSecs(offsetMinutes * 60).toString(QStringLiteral("HH:mm"));
     };
 
-    // The clock's own timer fires on the minute boundary and rewrites the text, so "its own timer will not correct
-    // it" below is only a claim about a window that contains no boundary. It used to be assumed; hosted CI's
-    // shuffled check met the boundary inside the 50 ms wait (the text read 09:19 where the marker was 00:00). A
-    // boundary that is near is waited out first, so the marker is set with most of a minute in front of it.
+    // The clock's own timer fires on the minute boundary and rewrites the text, so "only the service's signal can
+    // correct it" is a claim about a window that contains no boundary. It used to be asserted after a 50 ms wait,
+    // and the shuffled check met the boundary inside that wait twice — on a hosted runner, and again here with four
+    // shards running at once, where 50 ms of waiting is seconds of wall clock. The negative is now read in the same
+    // turn of the event loop the marker is set in, where no timer can fire, and a boundary that is near is still
+    // waited out first so the marker has most of a minute in front of it while the signal is answered.
     const auto msToNextMinute = [] {
         const QTime now = QTime::currentTime();
         return 60000 - (now.second() * 1000 + now.msec());
@@ -1288,7 +1290,6 @@ void BarInteractionTest::theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved
     QVERIFY2(minute(0) != QStringLiteral("00:00") && minute(1) != QStringLiteral("00:00")
                  && minute(-1) != QStringLiteral("00:00"),
              "the run fell within a minute of midnight, where the stale marker is a valid time");
-    QTest::qWait(50);
     QCOMPARE(clock->property("text").toString(), QStringLiteral("00:00"));
 
     emit clockService_->clockChanged();
