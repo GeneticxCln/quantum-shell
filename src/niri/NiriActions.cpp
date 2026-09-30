@@ -314,6 +314,10 @@ void NiriActions::focusWindowById(const QString& idText) {
     dispatch(QStringLiteral("FocusWindow"), QJsonObject{{QStringLiteral("id"), idValue(*id)}}, {});
 }
 
+void NiriActions::switchLayoutNext() {
+    switchLayout(LayoutTarget::next());
+}
+
 void NiriActions::focusWorkspaceUp() {
     dispatch(QStringLiteral("FocusWorkspaceUp"), QJsonObject{}, {});
 }

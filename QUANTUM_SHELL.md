@@ -1347,7 +1347,7 @@ Two things the group owns, and they are the reason it is a component rather than
   counting the bar's children to work out which one it has hold of.
 
 Three groups, and no fourth: a left one holding the workspace strip and the window list (`qml/Windows.qml`: one entry per window on the bar's own output's workspaces, the focused one marked, a click asking niri to `FocusWindow` it — no config key, so it cannot be switched off — and nothing drawn when there are none), a centre one holding the system
-status and a right one holding the trailing readouts — network, battery, media, notifications — and the
+status and a right one holding the keyboard layout indicator (`qml/KeyboardLayout.qml`: the layout niri reports, drawn only when there is more than one, a click asking niri for the next — no config key) and the trailing readouts — network, battery, media, notifications — and the
 volume and the clock. The centre group arrived the same way the other two did, with the widget that
 belongs in it, and so did each readout since: a group still arrives that way, so a widget the roadmap
 lists without a home — the toast stack notifications still owes this document — will bring its own group

@@ -324,6 +324,7 @@ private slots:
     void aSwipeOfSmallDeltasStepsOncePerNotchOfDistance();
     void theStripDrawsOnlyTheWorkspacesOfItsOwnOutput();
     void theWindowListDrawsOneOutputsWindowsAndFocusesTheOneClicked();
+    void theKeyboardLayoutIndicatorDrawsTheCurrentLayoutAndSwitchesOnAClick();
     void thePaletteIsTheOneTheFileSets();
 
     void theBarPlacesItsWidgetsInNamedGroups();
@@ -953,6 +954,64 @@ void BarInteractionTest::theWindowListDrawsOneOutputsWindowsAndFocusesTheOneClic
                              5000);
 }
 
+void BarInteractionTest::theKeyboardLayoutIndicatorDrawsTheCurrentLayoutAndSwitchesOnAClick() {
+    QQuickItem* widget = itemNamed(QStringLiteral("keyboardLayout"));
+    QVERIFY2(widget != nullptr, "the bar has no keyboard layout indicator");
+    const auto pushLayouts = [this](const QStringList& names, int current) {
+        server_.writeRawTo(1, qstest::eventLine(
+                                  QStringLiteral("KeyboardLayoutsChanged"),
+                                  QJsonObject{{QStringLiteral("keyboard_layouts"),
+                                               qstest::keyboardLayoutsObject(names, current)}}));
+    };
+
+    // Put back whatever happens: a slot that returns early on a failed wait must not leave two layouts in the
+    // service the slots after it read, or the widget is drawn in their arrangement.
+    const auto restore = qScopeGuard([&pushLayouts] { pushLayouts({QStringLiteral("English (US)")}, 0); });
+
+    // One layout is nothing to switch between: nothing drawn, no room taken.
+    pushLayouts({QStringLiteral("English (US)")}, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(service_->keyboardLayout().value(QStringLiteral("names")).toStringList().size(), 1, 5000);
+    QVERIFY(!widget->isVisible());
+    QCOMPARE(widget->width(), 0.0);
+
+    // Two: the current one is drawn, and it is niri's own name for it.
+    pushLayouts({QStringLiteral("English (US)"), QStringLiteral("Norwegian")}, 1);
+    QTRY_COMPARE_WITH_TIMEOUT(service_->keyboardLayout().value(QStringLiteral("currentName")).toString(),
+                              QStringLiteral("Norwegian"), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(widget->isVisible() && widget->width() > 0, 5000);
+    QQuickItem* caption = nullptr;
+    const std::function<void(QQuickItem*)> find = [&](QQuickItem* item) {
+        for (QQuickItem* child : item->childItems()) {
+            if (child->property("text").isValid() && child->property("text").toString() == QStringLiteral("Norwegian"))
+                caption = child;
+            find(child);
+        }
+    };
+    find(widget);
+    QVERIFY2(caption != nullptr, "the indicator does not draw the current layout's name");
+
+    // A click asks niri for the next layout and nothing else; the name that is drawn changes when niri says so.
+    // The group lays the widget out on a later pass than the one that made it visible, and until then the widget
+    // after it is still where it was — on top of this one, which is where a click lands. So the click is aimed only
+    // once the next widget has been moved past this one: waiting for this widget's own position would be waiting for
+    // something that is already true, since it is the first of the group either way.
+    QQuickItem* next = itemNamed(QStringLiteral("network"));
+    QVERIFY(next != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(next->x() >= widget->x() + widget->width(), 5000);
+    const int before = requestsSent();
+    QTest::mouseClick(window_.get(), Qt::LeftButton, Qt::NoModifier, centreOf(widget).toPoint());
+    QTRY_VERIFY_WITH_TIMEOUT(requestsSent() > before, 5000);
+    QCOMPARE(lastRequest(), QStringLiteral(R"({"Action":{"SwitchLayout":{"layout":"Next"}}})"));
+    QCOMPARE(caption->property("text").toString(), QStringLiteral("Norwegian"));
+    server_.writeRawTo(1, qstest::eventLine(QStringLiteral("KeyboardLayoutSwitched"),
+                                            QJsonObject{{QStringLiteral("idx"), 0}}));
+    QTRY_COMPARE_WITH_TIMEOUT(caption->property("text").toString(), QStringLiteral("English (US)"), 5000);
+
+    // Put back for the slots around this one: one layout, so nothing is drawn.
+    pushLayouts({QStringLiteral("English (US)")}, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget->isVisible(), 5000);
+}
+
 void BarInteractionTest::thePaletteIsTheOneTheFileSets() {
     // The bar's colours come from `[bar.colors]` rather than from literals in the QML, and this is the check
     // that tells those two apart: a hard-coded colour would pass every other slot in this binary while
@@ -1009,7 +1068,7 @@ void BarInteractionTest::theBarPlacesItsWidgetsInNamedGroups() {
     const QList<QQuickItem*> leftWidgets = left->childItems();
     const QList<QQuickItem*> rightWidgets = right->childItems();
     QCOMPARE(leftWidgets.size(), 2);
-    QCOMPARE(rightWidgets.size(), 6);
+    QCOMPARE(rightWidgets.size(), 7);
     QCOMPARE(leftWidgets.first()->objectName(), QStringLiteral("workspaces"));
     QCOMPARE(leftWidgets.at(1)->objectName(), QStringLiteral("windows"));
     // The trailing group holds the network, the battery, the media player, the notification, the volume and then
@@ -1017,12 +1076,14 @@ void BarInteractionTest::theBarPlacesItsWidgetsInNamedGroups() {
     // own condition is read together at the outside of it — the connection it is on, then the power it has left
     // — then what the desktop is doing — what is playing, and what was just said — then the one control a person
     // changes by hand, and the time keeps the corner.
-    QCOMPARE(rightWidgets.at(0)->objectName(), QStringLiteral("network"));
-    QCOMPARE(rightWidgets.at(1)->objectName(), QStringLiteral("battery"));
-    QCOMPARE(rightWidgets.at(2)->objectName(), QStringLiteral("media"));
-    QCOMPARE(rightWidgets.at(3)->objectName(), QStringLiteral("notifications"));
-    QCOMPARE(rightWidgets.at(4)->objectName(), QStringLiteral("volume"));
-    QCOMPARE(rightWidgets.at(5)->objectName(), QStringLiteral("clock"));
+    // The keyboard layout indicator leads the group: it is the person's input, not the machine's condition.
+    QCOMPARE(rightWidgets.at(0)->objectName(), QStringLiteral("keyboardLayout"));
+    QCOMPARE(rightWidgets.at(1)->objectName(), QStringLiteral("network"));
+    QCOMPARE(rightWidgets.at(2)->objectName(), QStringLiteral("battery"));
+    QCOMPARE(rightWidgets.at(3)->objectName(), QStringLiteral("media"));
+    QCOMPARE(rightWidgets.at(4)->objectName(), QStringLiteral("notifications"));
+    QCOMPARE(rightWidgets.at(5)->objectName(), QStringLiteral("volume"));
+    QCOMPARE(rightWidgets.at(6)->objectName(), QStringLiteral("clock"));
     // The height convention as it lands on the real widgets: each is its group's height, whatever the widget
     // would have been on its own, and each sits at the group's leading edge — which together mean no part of
     // either position was written down by the widget.
@@ -1051,24 +1112,26 @@ void BarInteractionTest::theBarPlacesItsWidgetsInNamedGroups() {
     // name and hand it back at the end of each, and this is the state they leave. A positioner lays out nothing
     // for an invisible child, so the four that are drawn are the four that are compared, in declaration order:
     // network, battery, volume, clock.
-    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(1)->x() > rightWidgets.at(0)->x(), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(4)->x() > rightWidgets.at(1)->x(), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(5)->x() > rightWidgets.at(4)->x(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(2)->x() > rightWidgets.at(1)->x(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(5)->x() > rightWidgets.at(2)->x(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(rightWidgets.at(6)->x() > rightWidgets.at(5)->x(), 5000);
 
     // And a widget that is not drawn holds no room rather than a width with nothing in it — the other half of
     // what being hidden has to mean, which is what stops it being an empty gap in the bar. Asserted for both of
     // this group's dark widgets here, not only for the one whose own readout has a slot of its own, so that a
     // group that stopped skipping an invisible child fails in the slot about arrangement.
-    QVERIFY2(!rightWidgets.at(2)->isVisible(), "the media readout is drawn with no player");
-    QCOMPARE(rightWidgets.at(2)->width(), 0.0);
-    QVERIFY2(!rightWidgets.at(3)->isVisible(), "the notification readout is drawn while the shell is not the daemon");
+    QVERIFY2(!rightWidgets.at(3)->isVisible(), "the media readout is drawn with no player");
     QCOMPARE(rightWidgets.at(3)->width(), 0.0);
+    QVERIFY2(!rightWidgets.at(4)->isVisible(), "the notification readout is drawn while the shell is not the daemon");
+    QCOMPARE(rightWidgets.at(4)->width(), 0.0);
+    QVERIFY2(!rightWidgets.at(0)->isVisible(), "the keyboard layout indicator is drawn with no layouts to switch between");
+    QCOMPARE(rightWidgets.at(0)->width(), 0.0);
 
     // The clock is a Text that has been given more height than its glyphs, so being on the same line as the
     // capsules is a matter of its own alignment rather than of the bar anchoring it. That alignment is what
     // is read here, and it is the declaration rather than a measured pixel: nothing in this test renders.
     // Qt reports the same number the QML `Text.AlignVCenter` names, so the two forms can be compared.
-    QCOMPARE(rightWidgets.at(5)->property("verticalAlignment").toInt(), int(Qt::AlignVCenter));
+    QCOMPARE(rightWidgets.at(6)->property("verticalAlignment").toInt(), int(Qt::AlignVCenter));
 }
 
 void BarInteractionTest::theVolumeReadoutSitsInTheTrailingGroupAndShowsNoValue() {
@@ -1207,10 +1270,12 @@ void BarInteractionTest::theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved
         return QTime::currentTime().addSecs(offsetMinutes * 60).toString(QStringLiteral("HH:mm"));
     };
 
-    // The clock's own timer fires on the minute boundary and rewrites the text, so "its own timer will not correct
-    // it" below is only a claim about a window that contains no boundary. It used to be assumed; hosted CI's
-    // shuffled check met the boundary inside the 50 ms wait (the text read 09:19 where the marker was 00:00). A
-    // boundary that is near is waited out first, so the marker is set with most of a minute in front of it.
+    // The clock's own timer fires on the minute boundary and rewrites the text, so "only the service's signal can
+    // correct it" is a claim about a window that contains no boundary. It used to be asserted after a 50 ms wait,
+    // and the shuffled check met the boundary inside that wait twice — on a hosted runner, and again here with four
+    // shards running at once, where 50 ms of waiting is seconds of wall clock. The negative is now read in the same
+    // turn of the event loop the marker is set in, where no timer can fire, and a boundary that is near is still
+    // waited out first so the marker has most of a minute in front of it while the signal is answered.
     const auto msToNextMinute = [] {
         const QTime now = QTime::currentTime();
         return 60000 - (now.second() * 1000 + now.msec());
@@ -1225,7 +1290,6 @@ void BarInteractionTest::theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved
     QVERIFY2(minute(0) != QStringLiteral("00:00") && minute(1) != QStringLiteral("00:00")
                  && minute(-1) != QStringLiteral("00:00"),
              "the run fell within a minute of midnight, where the stale marker is a valid time");
-    QTest::qWait(50);
     QCOMPARE(clock->property("text").toString(), QStringLiteral("00:00"));
 
     emit clockService_->clockChanged();

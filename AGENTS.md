@@ -1160,6 +1160,14 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    niri-ipc's action by its documented shape but this environment has no niri to send it to, so a live case in
                    `niri-live-action-test` is still owed.
 
+                   The keyboard layout indicator followed it: `qml/KeyboardLayout.qml` draws `NiriService.keyboardLayout`'s current name at
+                   the head of the trailing group only when niri reports more than one layout (one layout is nothing to switch
+                   between, so nothing is drawn and no room is taken), and a click calls `NiriActions.switchLayoutNext` —
+                   `SwitchLayout { layout: Next }`, a shape `niri-actions-test` already pins for `switchLayout` — while the name that
+                   is drawn changes when niri's `KeyboardLayoutSwitched` event comes back. No config key. One `niri-actions-test` slot and
+                   one `bar-interaction-test` slot; dropping the more-than-one condition and emptying the click handler each fail the
+                   latter. Not verified on niri.
+
                    The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
                    packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,
                    the toast and the battery and media readouts are committed. The audit changes above

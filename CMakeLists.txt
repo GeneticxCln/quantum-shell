@@ -493,6 +493,7 @@ set(QS_QML_FILES
     qml/ControlCenter.qml
     qml/Calendar.qml
     qml/NotificationHistory.qml
+    qml/KeyboardLayout.qml
     qml/Windows.qml
     qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"

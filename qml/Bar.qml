@@ -125,6 +125,14 @@ Item {
         // two read together and the media follows them as what is happening, and the volume follows that as
         // the one widget here a person changes by hand; the notification readout sits between the media
         // player and the volume as the other thing a person only reads. The time keeps the corner.
+        KeyboardLayout {
+            foreground: bar.foreground
+            muted: bar.muted
+            face: bar.face
+            fontSize: bar.fontSize
+            fontWeight: bar.fontWeight
+        }
+
         Network {
             foreground: bar.foreground
             muted: bar.muted

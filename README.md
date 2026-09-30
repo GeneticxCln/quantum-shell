@@ -20,10 +20,17 @@ treats as the worst.
 
 - The bar itself: a layer-shell surface pinned to the top of an output, with a reserved exclusive
   zone, arranged as a leading group, a centre group and a trailing group.
-- Eight readouts driven by live data: the workspace strip, clock, system status, volume, network,
-  battery, media and notifications.
+- Nine readouts driven by live data: the workspace strip, window list, clock, system status, volume,
+  network, battery, media and notifications.
 - Clicking a workspace capsule focuses that workspace in niri; the wheel over the strip moves to the
-  workspace below or above.
+  workspace below or above. The window list beside it shows the windows on the bar's own output's
+  workspaces, marks the focused one, and a click focuses the one named. A keyboard layout indicator
+  appears when niri reports more than one layout and a click switches to the next.
+- A launcher (`qsctl launcher toggle`) over the applications the machine offers, ordered by what you type and
+  then by what you started lately; a control centre (`qsctl control-center toggle`) with volume, Do Not
+  Disturb and media transport; a volume on-screen display; and a calendar opened by clicking the clock. Only
+  one of the launcher, control centre, notification history and calendar is open at a time, and a click
+  outside it closes it.
 - A notification daemon that takes the bus name, answers `Notify`, `CloseNotification`,
   `GetCapabilities` and `GetServerInformation`, publishes the sender's own text, and tells a sender when
   its notification is closed, expired or replaced (`NotificationClosed`).
@@ -36,8 +43,7 @@ treats as the worst.
 - Configuration in TOML, read at startup and followed while the shell runs without a restart.
 - A local IPC socket with `qsctl`, its command-line client.
 
-**Absent at this point:** the launcher, the on-screen display, the control centre, panels, media
-controls, the lock screen, session actions, idle handling, desktop widgets, animation presets, the plugin system, the dock, clipboard history, Bluetooth and power profiles. The palette
+**Absent at this point:** brightness control, the lock screen, session actions, idle handling, desktop widgets, animation presets, the plugin system, the dock, clipboard history, Bluetooth and power profiles. The palette
 and the typeface **are** configurable (`[bar.colors]` and `[bar.font]`) and can be kept in a theme file
 (`theme = "name"`, below); what remains of theming is animation, spacing and assets, which are the things a
 theme does not carry yet because nothing in the shell draws from them. Each of
