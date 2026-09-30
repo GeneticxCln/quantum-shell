@@ -88,16 +88,16 @@ jobs:
             -Dalsa=disabled -Djack=disabled -Dpipewire-jack=disabled -Dsdl2=disabled -Dlibusb=disabled
           ninja -C /tmp/pipewire-build install
 
-      - name: Point the build at PipeWire 1.6.0
-        run: |
-          echo "PKG_CONFIG_PATH=/opt/pipewire/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/opt/pipewire/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
-
       - name: Install Qt 6.11.2
         uses: jurplel/install-qt-action@v4
         with:
           version: 6.11.2
           cache: true
+
+      - name: Point the build at PipeWire 1.6.0
+        run: |
+          echo "PKG_CONFIG_PATH=/opt/pipewire/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/pipewire/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Show toolchain
         run: |
@@ -177,16 +177,16 @@ jobs:
             -Dalsa=disabled -Djack=disabled -Dpipewire-jack=disabled -Dsdl2=disabled -Dlibusb=disabled
           ninja -C /tmp/pipewire-build install
 
-      - name: Point the build at PipeWire 1.6.0
-        run: |
-          echo "PKG_CONFIG_PATH=/opt/pipewire/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/opt/pipewire/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
-
       - name: Install Qt 6.11.2
         uses: jurplel/install-qt-action@v4
         with:
           version: 6.11.2
           cache: true
+
+      - name: Point the build at PipeWire 1.6.0
+        run: |
+          echo "PKG_CONFIG_PATH=/opt/pipewire/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/pipewire/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Configure
         run: cmake --preset asan
