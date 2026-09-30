@@ -1128,6 +1128,16 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    sway: a +5 minute step changed the bar's time within 1.5 s and stepping back restored it. Not
                    verified: a real suspend and resume, and niri.
 
+                   The calendar landed: a click on the bar's clock opens `qml/Calendar.qml`
+                   (`quantum-shell-calendar`), a six-week month grid of the system's own date with today marked
+                   and month buttons, state in `CalendarService.open`. The four panel hosts became one
+                   `PanelHost` (the launcher's, the control centre's, the history's and the calendar's differ only in
+                   which service holds the state) and `PanelGroup` makes the four panels one at a time — every
+                   ordered pair pinned by `control-center-test`, six mutations each caught. `bar-interaction-test`
+                   pins the clock's click and `control-center-test` the grid, the title, the month buttons and
+                   the backdrop; seen on a headless sway (click the clock, the calendar opens; opening the control
+                   centre replaces it; a click outside closes it). Not verified: niri.
+
                    Phase 8 has begun with the parts that can be verified here: crash handling
                    (`CrashHandler` installs handlers for SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT that write the
                    version, the signal and the call stack to standard error from an alternate stack — so a stack

@@ -47,6 +47,7 @@
 #include "dbus/BatteryService.h"
 #include "dbus/NetworkService.h"
 #include "dbus/MediaService.h"
+#include "app/CalendarService.h"
 #include "system/ClockService.h"
 #include "system/SysMonService.h"
 
@@ -337,6 +338,7 @@ private slots:
     void theVolumeReadoutDrawsTheUnitTheConfigurationNames();
     void theVolumeReadoutFollowsItsConfiguration();
     void theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved();
+    void aClickOnTheClockTogglesTheCalendar();
 
     void theNetworkReadoutSitsInTheTrailingGroupAndShowsNoValue();
     void theNetworkReadoutDrawsWhatTheDaemonReportsAndTheConfigurationNames();
@@ -418,6 +420,7 @@ private:
     QTemporaryDir procRoot_;
     std::unique_ptr<SysMonService> sysMon_;
     std::unique_ptr<ClockService> clockService_;
+    std::unique_ptr<quantum::app::CalendarService> calendar_;
     // The fixture's busy time, cumulative as the file's aggregate line is and never reset: every sample in
     // this file therefore sees a line that has moved since the last one.
     qulonglong fixtureBusyJiffies_ = 0;
@@ -498,6 +501,8 @@ void BarInteractionTest::initTestCase() {
     }
     clockService_ = std::make_unique<ClockService>(procRoot_.filePath(QStringLiteral("localtime")));
     ClockService::registerQmlSingleton(*clockService_);
+    calendar_ = std::make_unique<quantum::app::CalendarService>();
+    quantum::app::CalendarService::registerQmlSingleton(*calendar_);
     audio_ = std::make_unique<PipeWireService>();
     PipeWireService::registerQmlSingleton(*audio_);
     network_ = std::make_unique<NetworkService>();
@@ -1090,6 +1095,19 @@ void BarInteractionTest::theVolumeReadoutDrawsTheUnitTheConfigurationNames() {
     // Back to what the shell ships, so a slot running after this one reads the default unit.
     config_.apply(ConfigValues{});
     QCOMPARE(widget->property("scale").toString(), QStringLiteral("percent"));
+}
+
+void BarInteractionTest::aClickOnTheClockTogglesTheCalendar()
+{
+    QQuickItem* clock = itemNamed(QStringLiteral("clock"));
+    QVERIFY(clock != nullptr);
+    calendar_->setOpen(false);
+    const QPoint point = centreOf(clock).toPoint();
+
+    QTest::mouseClick(window_.get(), Qt::LeftButton, Qt::NoModifier, point);
+    QVERIFY2(calendar_->isOpen(), "a click on the clock did not open the calendar");
+    QTest::mouseClick(window_.get(), Qt::LeftButton, Qt::NoModifier, point);
+    QVERIFY2(!calendar_->isOpen(), "a second click on the clock did not close the calendar");
 }
 
 void BarInteractionTest::theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved()

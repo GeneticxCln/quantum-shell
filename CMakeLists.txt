@@ -161,7 +161,7 @@ target_link_libraries(quantum-shell-system
 # The one fact the control centre owns — whether the panel is open — as a QML singleton the surface, the panel's
 # Escape key and the IPC verb all share. Core and Qml only, its own target so the IPC's capabilities and the
 # spec-values test can link it without dragging in a window.
-add_library(quantum-shell-control-center STATIC src/app/ControlCenterService.cpp)
+add_library(quantum-shell-control-center STATIC src/app/ControlCenterService.cpp src/app/CalendarService.cpp)
 target_include_directories(quantum-shell-control-center PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-control-center PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings)
 
@@ -333,8 +333,8 @@ target_link_libraries(quantum-shell-bars
 # rather than something the bar reads — and because linking it into `quantum-shell-capabilities` would drag
 # the notifications service into the binary that drives the IPC, which has no toast verb. Core, Gui and Qml:
 # it instantiates a QML component per output and reaches the resulting windows, the way the bar host does.
-add_library(quantum-shell-toasts STATIC src/app/Backdrop.cpp src/app/ToastHost.cpp src/app/HistoryHost.cpp src/app/OsdHost.cpp
-    src/app/LauncherHost.cpp src/app/ControlCenterHost.cpp)
+add_library(quantum-shell-toasts STATIC src/app/Backdrop.cpp src/app/PanelHost.cpp src/app/PanelGroup.cpp src/app/ToastHost.cpp src/app/HistoryHost.cpp src/app/OsdHost.cpp
+    src/app/LauncherHost.cpp src/app/ControlCenterHost.cpp src/app/CalendarHost.cpp)
 target_include_directories(quantum-shell-toasts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-toasts
     PUBLIC Qt6::Core Qt6::Gui Qt6::Qml
@@ -486,6 +486,7 @@ set(QS_QML_FILES
     qml/Backdrop.qml
     qml/Launcher.qml
     qml/ControlCenter.qml
+    qml/Calendar.qml
     qml/NotificationHistory.qml
     qml/Workspaces.qml)
 qt_add_resources(quantum-shell "qml"
