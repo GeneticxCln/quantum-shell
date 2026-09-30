@@ -38,8 +38,9 @@ treats as the worst.
 
 **Absent at this point:** the launcher, the on-screen display, the control centre, panels, media
 controls, the lock screen, session actions, idle handling, desktop widgets, animation presets, the plugin system, the dock, clipboard history, Bluetooth and power profiles. The palette
-and the typeface **are** configurable (`[bar.colors]` and `[bar.font]`); what remains of theming is
-animation, which is the last thing a theme carries and the one nothing in the bar does yet. Each of
+and the typeface **are** configurable (`[bar.colors]` and `[bar.font]`) and can be kept in a theme file
+(`theme = "name"`, below); what remains of theming is animation, spacing and assets, which are the things a
+theme does not carry yet because nothing in the shell draws from them. Each of
 these is a phase in `QUANTUM_SHELL.md` § Development Roadmap, and each phase records whether it has
 started.
 
@@ -203,6 +204,7 @@ change to it. The rules each key is held to:
 
 | Key | Accepted values |
 |---|---|
+| `theme` | a theme's name (letters, digits, `-` and `_`), read from `themes/<name>.toml` beside `config.toml`, or an absolute path to a theme file. Empty, the default, is no theme. Anything else is refused by name |
 | `bar.height` | an integer from 1 up, and also the exclusive zone reserved from the tiling area |
 | `bar.namespace` | a string beginning `quantum-shell-`, the name `niri msg layers` reports |
 | `bar.system.sample_interval_ms` | an integer of at least 10, one kernel tick |
@@ -215,6 +217,31 @@ change to it. The rules each key is held to:
 | `bar.font.size` | an integer from 1 up: the body size, and the readouts that draw larger derive from it (the clock by one, media and notifications by two), so one number reflows the whole bar |
 | `bar.font.weight` | an integer from 100 to 900, Qt's own weight scale |
 | `bar.notifications.timeout_ms` | an integer of at least 500 ms, or the spec's `0` (never expire). It is the default a sender's `-1` resolves to; a sender that names its own length is honoured rather than clamped |
+
+### Themes
+
+A theme is one TOML file holding the two tables that say how the bar looks, spelled exactly as they are in
+`config.toml`:
+
+```toml
+# ~/.config/quantum-shell/themes/nord.toml
+schema_version = 1
+
+[bar.colors]
+foreground = "#d8dee9"
+accent = "#88c0d0"
+
+[bar.font]
+family = "Noto Sans"
+```
+
+Name it with `theme = "nord"` at the top level of `config.toml`. The theme is the base: a value that
+`config.toml` writes in its own `[bar.colors]` or `[bar.font]` wins over the theme's, and a value neither
+writes is the default. Editing the key, or the theme file it names, is picked up while the shell runs — the
+colours and the font change on screen with no restart. A theme that does not exist, is not TOML, or was
+written for another `schema_version` is reported by name and path and applies nothing; a theme cannot set
+anything but those two tables (a `bar.height` in one is reported and ignored). `qsctl config get theme`
+prints the name in use.
 
 A key that is unknown, or a value of the wrong type, or a value outside the rules, is reported as a
 warning naming the file position and the value kept instead. A value is never quietly coerced:

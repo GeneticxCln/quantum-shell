@@ -33,7 +33,7 @@ std::optional<int64_t> integerOf(const toml::node& node) {
 }
 
 bool isKnownTopLevelKey(std::string_view key) {
-    return key == "schema_version" || key == "bar" || key == "launcher";
+    return key == "schema_version" || key == "theme" || key == "bar" || key == "launcher";
 }
 
 bool isKnownBarKey(std::string_view key) {
@@ -1088,32 +1088,177 @@ int firstStrayNonAsciiLine(const QByteArray& text) {
     return 0;
 }
 
+
+// Text to a TOML table, or the reason it is not one, in the words both a config file and a theme file are
+// refused with. The non-ASCII check comes first for the reason `firstStrayNonAsciiLine` gives, and the
+// exceptions are the two toml++ throws.
+std::optional<toml::table> parseTomlText(const QByteArray& text, QString& error) {
+    if (const int stray = firstStrayNonAsciiLine(text); stray != 0) {
+        error = QStringLiteral("not valid TOML: line %1: a non-ASCII character outside a string or a comment")
+                    .arg(stray);
+        return std::nullopt;
+    }
+    try {
+        return toml::parse(std::string_view(text.constData(), static_cast<size_t>(text.size())));
+    } catch (const toml::parse_error& parseError) {
+        // The message carries the line and column, which is the whole of what a user needs to fix it.
+        error = QStringLiteral("not valid TOML: %1")
+                    .arg(QString::fromUtf8(parseError.description().data(),
+                                           static_cast<int>(parseError.description().size())));
+    } catch (const std::exception& exception) {
+        error = QStringLiteral("could not be read: %1").arg(QString::fromUtf8(exception.what()));
+    }
+    return std::nullopt;
+}
+
+// Whether `reference` is one of the two spellings `theme` takes: a name, which the reader turns into a file in
+// the configuration directory's `themes/`, or an absolute path. A name is deliberately narrow — letters, digits,
+// `-` and `_`, not starting with a separator — so it can only ever name a file directly inside that directory:
+// `..` and a `/` are not in it, which is what stops a name from reaching outside the directory it is a name in.
+bool isThemeReference(const QString& reference) {
+    if (reference.startsWith(QLatin1Char('/')))
+        return true;
+    if (reference.isEmpty())
+        return false;
+    for (const QChar c : reference) {
+        const bool word = (c >= QLatin1Char('a') && c <= QLatin1Char('z')) ||
+                          (c >= QLatin1Char('A') && c <= QLatin1Char('Z')) ||
+                          (c >= QLatin1Char('0') && c <= QLatin1Char('9')) || c == QLatin1Char('-') ||
+                          c == QLatin1Char('_');
+        if (!word)
+            return false;
+    }
+    return true;
+}
+
+// Reads a theme file's text over `colors` and `font`, which arrive holding the defaults and leave holding the
+// theme. A theme carries the two tables that say how the bar looks, spelled as they are in `config.toml`
+// (`[bar.colors]`, `[bar.font]`) so that a set of values moves between the two files by cut and paste, and it
+// carries `schema_version` for the reason every file here does. Everything it says is reported with `label`
+// in front of it, because a warning about a theme file that read like a warning about `config.toml` would send
+// a person to the wrong file.
+//
+// A theme that cannot be used at all — not TOML, or from a schema this build does not know — leaves both
+// tables as they were: the two are read into copies and assigned only once the file has been accepted, so
+// a refused theme never applies a half.
+void readThemeFile(const QByteArray& text, const QString& label, ColorsConfig& colors, FontConfig& font,
+                   QStringList& warnings) {
+    QString error;
+    const std::optional<toml::table> parsed = parseTomlText(text, error);
+    if (!parsed.has_value()) {
+        warnings.append(QStringLiteral("%1 %2; no theme applied").arg(label, error));
+        return;
+    }
+    const toml::table& table = *parsed;
+
+    if (const toml::node* versionNode = table.get("schema_version"); versionNode != nullptr) {
+        const std::optional<int64_t> version = integerOf(*versionNode);
+        if (!version.has_value()) {
+            warnings.append(QStringLiteral("%1 schema_version: expected an integer, found %2; no theme applied")
+                                .arg(label, typeName(*versionNode)));
+            return;
+        }
+        if (*version != SchemaVersion) {
+            warnings.append(QStringLiteral("%1 schema_version %2 is not a version this shell knows (%3 is "
+                                           "current); no theme applied")
+                                .arg(label)
+                                .arg(*version)
+                                .arg(SchemaVersion));
+            return;
+        }
+    } else {
+        warnings.append(QStringLiteral("%1 has no schema_version; assuming %2").arg(label).arg(SchemaVersion));
+    }
+
+    ColorsConfig themedColors = colors;
+    FontConfig themedFont = font;
+    QStringList found;
+    for (const auto& [key, node] : table) {
+        const std::string_view name = keyText(key);
+        if (name == "schema_version")
+            continue;
+        if (name != "bar") {
+            found.append(QStringLiteral("%1 is not a key a theme reads; a theme holds [bar.colors] and [bar.font]")
+                             .arg(keyPath("", name)));
+            continue;
+        }
+        const toml::table* barTable = node.as_table();
+        if (barTable == nullptr) {
+            found.append(QStringLiteral("bar: expected a table, found %1; keeping the defaults for it")
+                             .arg(typeName(node)));
+            continue;
+        }
+        for (const auto& [barKey, barNode] : *barTable) {
+            const std::string_view barName = keyText(barKey);
+            const toml::table* inner = barNode.as_table();
+            if (barName != "colors" && barName != "font") {
+                found.append(QStringLiteral("%1 is not a key a theme reads; a theme holds [bar.colors] and "
+                                            "[bar.font]")
+                                 .arg(keyPath("bar", barName)));
+            } else if (inner == nullptr) {
+                found.append(QStringLiteral("%1: expected a table, found %2; keeping the defaults for it")
+                                 .arg(keyPath("bar", barName), typeName(barNode)));
+            } else if (barName == "colors") {
+                readColorsTable(*inner, themedColors, found);
+            } else {
+                readFontTable(*inner, themedFont, found);
+            }
+        }
+    }
+    for (const QString& message : found)
+        warnings.append(QStringLiteral("%1 %2").arg(label, message));
+    colors = themedColors;
+    font = themedFont;
+}
+
+// The top-level `theme` key: validates the reference, asks `readTheme` for the file and lays what it says over
+// the defaults in `result`, so the tables `config.toml` writes itself are read afterwards and win.
+void applyTheme(const toml::node& node, const ThemeReader& readTheme, ParseResult& result) {
+    const auto* text = node.as_string();
+    if (text == nullptr) {
+        result.warnings.append(QStringLiteral("theme: expected a string, found %1; no theme applied")
+                                   .arg(typeName(node)));
+        return;
+    }
+    const QString reference = QString::fromUtf8(text->get().data(), static_cast<int>(text->get().size()));
+    // An empty string is the way to say "no theme" and is the default, so it is not a problem to report.
+    if (reference.isEmpty())
+        return;
+    if (!isThemeReference(reference)) {
+        result.warnings.append(QStringLiteral("theme: \"%1\" is neither a theme name (letters, digits, - and "
+                                              "_) nor an absolute path; no theme applied")
+                                   .arg(reference));
+        return;
+    }
+    result.values.theme = reference;
+    if (!readTheme) {
+        result.warnings.append(QStringLiteral("theme: \"%1\" names a theme file, and this parse was given no "
+                                              "way to read one; no theme applied")
+                                   .arg(reference));
+        return;
+    }
+    const ThemeFile file = readTheme(reference);
+    result.themePath = file.path;
+    const QString label = QStringLiteral("theme \"%1\" (%2):").arg(reference, file.path);
+    if (!file.error.isEmpty()) {
+        result.warnings.append(QStringLiteral("%1 %2; no theme applied").arg(label, file.error));
+        return;
+    }
+    readThemeFile(file.text, label, result.values.bar.colors, result.values.bar.font, result.warnings);
+}
+
 }  // namespace
 
-ParseResult parseConfig(const QByteArray& text) {
+ParseResult parseConfig(const QByteArray& text, const ThemeReader& readTheme) {
     ParseResult result;
 
-    if (const int stray = firstStrayNonAsciiLine(text); stray != 0) {
-        result.errors.append(QStringLiteral("not valid TOML: line %1: a non-ASCII character outside a string or "
-                                            "a comment")
-                                 .arg(stray));
+    QString parseError;
+    const std::optional<toml::table> parsed = parseTomlText(text, parseError);
+    if (!parsed.has_value()) {
+        result.errors.append(parseError);
         return result;
     }
-
-    toml::table table;
-    try {
-        table = toml::parse(std::string_view(text.constData(), static_cast<size_t>(text.size())));
-    } catch (const toml::parse_error& error) {
-        // The message carries the line and column, which is the whole of what a user needs to fix it.
-        result.errors.append(QStringLiteral("not valid TOML: %1")
-                                 .arg(QString::fromUtf8(error.description().data(),
-                                                        static_cast<int>(error.description().size()))));
-        return result;
-    } catch (const std::exception& error) {
-        result.errors.append(
-            QStringLiteral("could not be read: %1").arg(QString::fromUtf8(error.what())));
-        return result;
-    }
+    const toml::table& table = *parsed;
 
     // The version decides whether anything below is even the right thing to be reading. A file from a
     // newer shell is refused as a whole rather than partly understood: a key that has changed meaning is
@@ -1141,13 +1286,19 @@ ParseResult parseConfig(const QByteArray& text) {
         result.warnings.append(QStringLiteral("no schema_version; assuming %1").arg(SchemaVersion));
     }
 
+    // The theme is the base the file's own tables are laid over, so it is read before any of them: a value
+    // `config.toml` writes for itself wins over the theme's, and a theme only ever supplies what the file leaves
+    // out. Tables are visited in key order, which puts `bar` ahead of `theme`, so this cannot wait for the loop.
+    if (const toml::node* themeNode = table.get("theme"); themeNode != nullptr)
+        applyTheme(*themeNode, readTheme, result);
+
     for (const auto& [key, node] : table) {
         const std::string_view name = keyText(key);
         if (!isKnownTopLevelKey(name)) {
             result.warnings.append(QStringLiteral("%1 is not a key this shell reads").arg(keyPath("", name)));
             continue;
         }
-        if (name == "schema_version")
+        if (name == "schema_version" || name == "theme")
             continue;  // read above, before any of this could be applied
 
         const toml::table* topTable = node.as_table();
@@ -1170,6 +1321,8 @@ std::optional<QVariant> configValueForPath(const ConfigValues& values, QStringVi
     // Compared against the constants above rather than against literals, so the list a caller is offered
     // and the paths that resolve are the same list: a key that resolves but is not offered, or the
     // reverse, is what the guard in config-test exists to catch.
+    if (path == QLatin1StringView(KeyTheme))
+        return QVariant(values.theme);
     if (path == QLatin1StringView(KeyBarHeight))
         return QVariant(values.bar.height);
     if (path == QLatin1StringView(KeyBarLayerNamespace))

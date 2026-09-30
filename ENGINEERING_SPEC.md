@@ -132,6 +132,7 @@ File: `$XDG_CONFIG_HOME/quantum-shell/config.toml` (`~/.config/...` fallback).
 | File spelling | Key path (`qsctl config get`) | Default | Bounds / rule | Live? |
 | --- | --- | --- | --- | --- |
 | `schema_version` | — | 1 | missing → warn, assume current; mismatch / non-int → whole file rejected, previous config stands | — |
+| `theme` | `theme` | `""` (no theme) | a string: a bare name (letters, digits, `-`, `_`) read from `themes/<name>.toml` beside `config.toml`, or an absolute path; anything else is refused by name and no theme applies. The theme's `[bar.colors]` and `[bar.font]` are the base the file's own tables are laid over — a value `config.toml` writes itself wins. A theme that is missing, not TOML or from another `schema_version` is a warning and applies nothing | yes — editing the key, or the theme file it names, re-applies the colours and font with no restart |
 | `[bar] height` | `bar.height` | `32` | int `1..INT_MAX`; also the exclusive zone | yes, resizes on screen |
 | `[bar] namespace` | `bar.layerNamespace` | `"quantum-shell-bar"` | must start `quantum-shell-` | no — role assigned once; change warns, takes effect next start |
 | `[bar.system] sample_interval_ms` | `bar.system.sample_interval_ms` | `2000` | int `10..INT_MAX` (floor = one `USER_HZ` tick; service refuses the same floor) | yes, re-arms now |
@@ -169,7 +170,7 @@ coerced). Unusable file (non-TOML, bad `schema_version`) applies nothing.
 ### 2.6 QML singletons (module `QuantumShell 1.0`, one place: `QmlModule.h`)
 
 | Name | Properties / calls | Notes |
-| `Config` | `launcher.maxResults` (1), `bar.height`, `bar.layerNamespace`, `bar.system.*` (4), `bar.audio.*` (4), `bar.network.*` (3), `bar.battery.*` (3), `bar.media.*` (1), `bar.notifications.*` (2), `bar.osd.*` (2), `bar.colors.*` (4), `bar.font.*` (3); per-leaf NOTIFY; `bar`/`launcher`/`system`/`audio`/`network`/`battery`/`media`/`notifications`/`osd`/`colors`/`font` objects CONSTANT | no engine reload, ever |
+| `Config` | `theme`, `launcher.maxResults` (1), `bar.height`, `bar.layerNamespace`, `bar.system.*` (4), `bar.audio.*` (4), `bar.network.*` (3), `bar.battery.*` (3), `bar.media.*` (1), `bar.notifications.*` (2), `bar.osd.*` (2), `bar.colors.*` (4), `bar.font.*` (3); per-leaf NOTIFY; `bar`/`launcher`/`system`/`audio`/`network`/`battery`/`media`/`notifications`/`osd`/`colors`/`font` objects CONSTANT | no engine reload, ever |
 | `NiriService` | `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` — each with NOTIFY, emitted only on real change | absent = empty map/list, never plausible zero; ids as text |
 | `NiriActions` | `focusWorkspaceById(idText)`, `focusWorkspaceUp()`, `focusWorkspaceDown()`; signal `actionFailed` | every non-`handled` outcome also logged |
 | `SysMonService` | `cpuPercent`, `cpuAvailable`, `memoryUsedKb`, `memoryTotalKb`, `memoryAvailableKb`, `memoryAvailable`, `active`, `sampleIntervalMs` | `cpuPercent` 0 while `cpuAvailable` false; read the flags |

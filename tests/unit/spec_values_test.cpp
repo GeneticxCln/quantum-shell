@@ -539,7 +539,8 @@ void SpecValuesTest::theConfigTableNamesEveryConfigPathTheSchemaResolves()
             continue;
         // The key-path cell of a row: either `—` for a key with no path, or one backticked path.
         for (const QString& token : backtickedTokens(pieces.at(2).trimmed())) {
-            if (token.startsWith(QStringLiteral("bar.")) || token.startsWith(QStringLiteral("launcher.")))
+            if (token == QStringLiteral("theme") || token.startsWith(QStringLiteral("bar.")) ||
+                token.startsWith(QStringLiteral("launcher.")))
                 stated.append(token);
         }
     }
