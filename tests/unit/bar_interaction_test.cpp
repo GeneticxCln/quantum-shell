@@ -1207,6 +1207,17 @@ void BarInteractionTest::theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved
         return QTime::currentTime().addSecs(offsetMinutes * 60).toString(QStringLiteral("HH:mm"));
     };
 
+    // The clock's own timer fires on the minute boundary and rewrites the text, so "its own timer will not correct
+    // it" below is only a claim about a window that contains no boundary. It used to be assumed; hosted CI's
+    // shuffled check met the boundary inside the 50 ms wait (the text read 09:19 where the marker was 00:00). A
+    // boundary that is near is waited out first, so the marker is set with most of a minute in front of it.
+    const auto msToNextMinute = [] {
+        const QTime now = QTime::currentTime();
+        return 60000 - (now.second() * 1000 + now.msec());
+    };
+    if (msToNextMinute() < 2000)
+        QTest::qWait(msToNextMinute() + 250);
+
     // Left showing a time that is nowhere near the present: what a clock that slept through a resume shows. Its
     // own timer will not correct it for up to a minute, so only the service's signal can.
     clock->setProperty("text", QStringLiteral("00:00"));
