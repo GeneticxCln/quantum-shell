@@ -35,6 +35,7 @@ QJsonObject ShellCapabilities::state() const
     QJsonObject state;
     state.insert(QStringLiteral("workspaces"), QJsonValue::fromVariant(service_.workspaces()));
     state.insert(QStringLiteral("focusedWindow"), QJsonValue::fromVariant(service_.focusedWindow()));
+    state.insert(QStringLiteral("windows"), QJsonValue::fromVariant(service_.windows()));
     state.insert(QStringLiteral("outputs"), QJsonValue::fromVariant(service_.outputs()));
     state.insert(QStringLiteral("keyboardLayout"), QJsonValue::fromVariant(service_.keyboardLayout()));
     state.insert(QStringLiteral("overviewOpen"), service_.overviewOpen());

@@ -112,7 +112,7 @@ empty); refusal `{"version":1,"ok":false,"error":"<reason>"}` (never blank).
 | Verb | Answers with | Source |
 | --- | --- | --- |
 | `version` | `name`, `shell` (both from the build, not retyped), `protocol` | app identity |
-| `state` | `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` — `NiriService` property names verbatim | `ShellCapabilities::state` |
+| `state` | `workspaces`, `focusedWindow`, `windows`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` — `NiriService` property names verbatim | `ShellCapabilities::state` |
 | `config get <path>` | `path`, `value` | `configValueForPath` on validated values |
 | `control-center toggle` | `open` (post-toggle state) | `ControlCenterService::toggle`, the state the panel itself follows; a shell whose panel did not load answers `false` |
 | `launcher toggle` | `open` (post-toggle state) | `LauncherService::toggle`, the object the launcher's own surface follows: opens it if closed and closes it if open; a shell whose launcher did not load answers `false`. The verb a niri key binding runs (`spawn "qsctl" "launcher" "toggle"`) |
