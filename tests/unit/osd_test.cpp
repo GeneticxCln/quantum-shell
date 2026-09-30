@@ -198,6 +198,9 @@ void OsdTest::theSurfaceIsTheOverlayNamedInThePublicInterface()
         // whole output.
         QCOMPARE(window->property("exclusiveZone").toInt(), 0);
         QCOMPARE(window->width(), 300);
+        // Only the panel takes the pointer; the transparent strip below it is left to whatever is beneath.
+        QCOMPARE(window->property("inputRect").toRect(), QRect(0, 0, 300, 72));
+        QCOMPARE(window->mask(), QRegion(QRect(0, 0, 300, 72)));
         QCOMPARE(window->height(), 132);
     }
 }

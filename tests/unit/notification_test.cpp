@@ -16,6 +16,7 @@
 #include "NotificationBus.h"
 
 #include "app/HistoryHost.h"
+#include "BackdropClick.h"
 #include "app/ToastHost.h"
 #include "config/Config.h"
 #include "wayland/LayerShellWindow.h"
@@ -117,6 +118,7 @@ private slots:
     void doNotDisturbShowsNoToastAndStillRecordsAndTellsTheSender();
     void switchingDoNotDisturbOnTakesDownTheToastThatIsUp();
     void theHistoryPanelExistsWhileTheServiceSaysItIsOpen();
+    void aClickOutsideTheHistoryPanelClosesItAndTheBackdropGoesWithIt();
 
 private:
     void closeOverTheWire(quint32 id);
@@ -205,7 +207,8 @@ void NotificationTest::initTestCase() {
                                                         QUrl::fromLocalFile(QStringLiteral(QS_TOAST_QML)));
     QVERIFY2(toasts_->ready(), qPrintable(toasts_->componentError()));
     history_ = std::make_unique<quantum::app::HistoryHost>(*service_, *engine_,
-                                                           QUrl::fromLocalFile(QStringLiteral(QS_HISTORY_QML)));
+                                                           QUrl::fromLocalFile(QStringLiteral(QS_HISTORY_QML)),
+                                                           QUrl::fromLocalFile(QStringLiteral(QS_BACKDROP_QML)));
     QVERIFY2(history_->ready(), qPrintable(history_->componentError()));
 
     // The toast's default expiry, made short here for the same reason every wait in this suite is short: a
@@ -1135,6 +1138,22 @@ void NotificationTest::theHistoryPanelExistsWhileTheServiceSaysItIsOpen() {
 // Qt's own screen list, and a window mapped on the session's own compositor would be one on the developer's
 // desktop. Offscreen is what makes every claim below a claim about the toast rather than about whatever is on
 // screen — one screen, so one toast per notification.
+void NotificationTest::aClickOutsideTheHistoryPanelClosesItAndTheBackdropGoesWithIt() {
+    QVERIFY2(settle(), "the daemon could not be brought to a state with nothing showing");
+    QVERIFY(history_->backdropWindow() == nullptr);
+    service_->setNotificationHistoryOpen(true);
+    QWindow* panel = history_->window();
+    QVERIFY(panel != nullptr);
+    QWindow* backdrop = history_->backdropWindow();
+    backdrop::verifyIsABackdrop(backdrop);
+    QVERIFY(backdrop != panel);
+
+    backdrop::click(backdrop);
+    QTRY_VERIFY_WITH_TIMEOUT(!service_->notificationHistoryOpen(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(history_->window() == nullptr, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(history_->backdropWindow() == nullptr, 5000);
+}
+
 int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);

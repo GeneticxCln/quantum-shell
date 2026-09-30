@@ -16,6 +16,8 @@ class LauncherService;
 
 namespace quantum::app {
 
+class Backdrop;
+
 // The launcher's surface: one window, on the primary output, that exists while the service says the launcher is
 // open.
 //
@@ -31,13 +33,17 @@ class LauncherHost : public QObject
 public:
     // Both must outlive this object. The surface is created against `engine` from `launcherUrl`.
     explicit LauncherHost(quantum::apps::LauncherService& service, QQmlEngine& engine, const QUrl& launcherUrl,
-                          QObject* parent = nullptr);
+                          const QUrl& backdropUrl = {}, QObject* parent = nullptr);
 
     bool ready() const { return componentError_.isEmpty(); }
     QString componentError() const { return componentError_; }
 
     // The surface, or null while the launcher is not open.
     QWindow* window() const;
+
+    // The transparent surface behind the panel that a click outside it lands on, or null while the panel is not
+    // open (or the host was built without a backdrop).
+    QWindow* backdropWindow() const;
 
 private:
     void handleOpenChanged();
@@ -49,6 +55,7 @@ private:
     QQmlComponent* component_ = nullptr;
     QString componentError_;
     QPointer<QWindow> window_;
+    Backdrop* backdrop_ = nullptr;
     QPointer<QScreen> screen_;
 };
 

@@ -59,6 +59,17 @@ void LayerShellWindow::setMargins(const QMargins &margins)
     Q_EMIT configurationChanged();
 }
 
+void LayerShellWindow::setInputRect(const QRect &rect)
+{
+    if (m_inputRect == rect)
+        return;
+    m_inputRect = rect;
+    // QWindow::setMask is the call Qt's Wayland backend turns into set_input_region; an empty region is the
+    // whole surface, which is what an empty rectangle here means too.
+    setMask(rect.isEmpty() ? QRegion() : QRegion(rect));
+    Q_EMIT inputRectChanged();
+}
+
 void LayerShellWindow::present()
 {
     setSurfaceVisible(true);

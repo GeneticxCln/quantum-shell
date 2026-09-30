@@ -1050,7 +1050,7 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    new `notification-test` slots (cap, replace-in-place, removal, clear, mode, the toast
                    taken down, the panel's namespace, size, list and lifetime) and a click slot in
                    `bar-interaction-test`, each mutation-checked, and verified on a headless sway with a
-                   virtual pointer. Not verified: niri; and the panel is not dismissed by a click elsewhere.
+                   virtual pointer. Not verified: niri. A click elsewhere dismisses it through the backdrop described below.
 
                    The volume on-screen display is the next landing: `PipeWireService` emits `volumeAdjusted` for a change of
                    the sink it already follows (not for a first reading, a returning daemon or a sink switch —
@@ -1062,8 +1062,9 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    warning, which is how a `Qt.margins` call that does not exist was found (the display still
                    appeared without it); two host mutations are caught (ignoring `show_osd`, not restarting
                    the clock). Seen on a headless sway with `wpctl` moving a private PipeWire daemon's sink:
-                   62%, then MUTE, then gone. Unfixed and stated: the surface's transparent strip takes
-                   pointer input.
+                   62%, then MUTE, then gone. The surface's transparent strip used to take pointer input; the
+                   window type gained `inputRect` (sent as `wl_surface.set_input_region`, seen on the wire as
+                   `add(0, 0, 300, 72)`) and the display sets it to the panel alone, pinned by `osd-test`.
 
                    The launcher is the landing after the OSD: `qsctl launcher toggle` opens a centred overlay
                    (`quantum-shell-launcher`, exclusive keyboard) listing the applications the machine's XDG
@@ -1074,7 +1075,7 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    rather than its text field, so typing would never have reached it, and toml++'s
                    `value<int64_t>()` answers 1 for `true`, so every integer key in the schema — `bar.height`
                    included — accepted a boolean as a number; `integerOf` now type-tests, pinned in
-                   `config-test`. Not done: provider plugins, frecency, icons, click-outside dismissal.
+                   `config-test`. Not done: provider plugins, frecency, icons.
 
                    The control centre is the landing after the launcher, and it is partial on purpose:
                    `qsctl control-center toggle` opens a top-right overlay (`quantum-shell-control-center`, keyboard
@@ -1086,6 +1087,17 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    `control-center-test`, whose transport clicks arrive at a real MPRIS player double; the dimming of
                    the buttons with no player is asserted, and is redundant with the service's own refusal, which is
                    stated rather than claimed as a second guard.
+
+                   Click-outside dismissal landed with `qml/Backdrop.qml` (`quantum-shell-backdrop`): a transparent
+                   all-edges surface on the top layer, one below the panels' overlay layer, created by
+                   `src/app/Backdrop.*` for the launcher, the control centre and the notification history and taken
+                   down with the panel; a press on it closes the panel through its service. It is on the top layer
+                   because a first version on the overlay layer took the clicks meant for the panel on sway — the
+                   protocol orders layers, not surfaces within one. Seen on a headless sway with a virtual pointer
+                   (a click in the launcher's field leaves it open, one outside closes it, the same for the control
+                   centre) and pinned by a slot in each of `launcher-test`, `control-center-test` and
+                   `notification-test`, which fail with the QML handler or the host's teardown removed. Not
+                   verified: niri.
 
                    Phase 8 has begun with the parts that can be verified here: crash handling
                    (`CrashHandler` installs handlers for SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT that write the

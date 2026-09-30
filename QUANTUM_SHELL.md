@@ -546,6 +546,7 @@ Typical surfaces:
 | OSD (volume, landed) | overlay | none | `quantum-shell-osd` |
 | Control Center (landed, partial) | overlay | on-demand | `quantum-shell-control-center` |
 | Launcher (landed) | overlay | exclusive | `quantum-shell-launcher` |
+| Backdrop (landed) | top | none | `quantum-shell-backdrop` |
 | Lock surface | session-lock (not layer-shell) | exclusive | `quantum-shell-lock` |
 
 One of those rows is partly real. The bar exists, and the notification daemon that landed draws on it —
@@ -2738,8 +2739,8 @@ a click on an entry removing it; empty, it says so from the count rather than fr
 always there. Verified on a headless sway with a virtual pointer: a right click opens the panel, a left
 click on the readout draws "DND", a notification sent under the mode shows no toast, the sender is sent
 `NotificationClosed(id, 4)` and the entry is in the history. What is **not** verified: niri, and that
-the panel is dismissed by anything but its own switch — it takes no keyboard and grabs no pointer, so a
-click elsewhere leaves it open.
+the panel is dismissed by anything but its own switch on niri: on a headless sway the backdrop (below) closes
+it on a click elsewhere, and `notification-test` pins that path.
 
 **Exit criteria:** replaces the major pieces normally provided by a standalone desktop shell;
 notification daemon passes `notify-send`-based smoke tests. The smoke test is
@@ -2776,9 +2777,22 @@ and starts the chosen entry with `QProcess::startDetached`. The surface is `qml/
 and destroyed by `src/app/LauncherHost.*` as the service's `open` moves. One config key, `[launcher] max_results`
 (default 8, 1 to 50); one IPC verb, `launcher toggle`. Terminal applications are not offered: starting one means
 choosing a terminal emulator and there is no verified convention to choose by. Not done: the design's provider
-plugins (emoji, calculator, window switcher), frecency ordering, icons, and dismissal by clicking outside (the
-surface holds the keyboard exclusively, so Escape is the way out). Verified by `apps-test`, `launcher-test`
+plugins (emoji, calculator, window switcher), frecency ordering, icons. Escape closes it, and so does a click outside the panel (the backdrop, below). Verified by `apps-test`, `launcher-test`
 (offscreen, keys sent through the window's own event path, a real process started by Enter) and the IPC tests.
+
+**Backdrop (landed).** A layer surface has no popup grab, so a click outside a panel can only be seen by a surface
+that is there to be clicked. `qml/Backdrop.qml` (`quantum-shell-backdrop`) is a transparent surface anchored to all
+four edges with an exclusive zone of −1, on the **top** layer — one below the panels' overlay layer, because the
+protocol orders layers and does not order two surfaces within one: a first version on the overlay layer beside the
+panel took the clicks meant for the panel on sway. `src/app/Backdrop.*` creates it for the launcher, control centre
+and notification history hosts before the panel and takes it down with the panel; a press emits `dismissed` and
+the host closes the panel through its service, the path Escape takes. Verified on a headless sway with a virtual
+pointer: a click on the launcher's input field leaves it open, a click outside closes it, and the same outside click
+closes the control centre; `launcher-test`, `control-center-test` and `notification-test` each deliver a real click
+to the backdrop (and fail with the QML handler or the host's teardown removed). Not verified: niri, whose stacking
+of the top layer against the bar is unchecked (a click on the bar while a panel is open may reach the backdrop
+rather than the bar); and a panel opened while another is open has two backdrops, of which the upper one takes the
+click.
 
 **Control centre (landed, partial).** `qsctl control-center toggle` opens a panel in the top-right corner (overlay
 layer, keyboard on demand, `quantum-shell-control-center`) holding only the controls this shell has a real service
