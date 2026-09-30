@@ -866,7 +866,22 @@ Rules:
   exist; when a `qsctl config dump` can print the defaults for a user to copy, the text will be
   generated from the schema rather than stored beside it.
 - **Include support.** `include = ["~/.config/quantum-shell/themes/foo.toml"]` with cycle detection.
-  Not yet: no key reads it, and a key exists only when code reads it.
+  Not yet: no key reads it, and a key exists only when code reads it. The one file `config.toml` does pull in
+  is a theme, through the `theme` key (below), which is not general includes: it names one file that holds
+  `[bar.colors]` and `[bar.font]` and nothing else, and nothing nests.
+- **Themes (landed, Phase 7's first module).** `theme = "name"` reads `themes/<name>.toml` beside the config
+  file, or an absolute path when the value begins with `/`; a name is letters, digits, `-` and `_` only, so it
+  can only ever name a file directly inside `themes/`. The schema stays a pure function: it is handed a
+  `ThemeReader` and lays the theme's two tables over the defaults *before* it reads the file's own, so the file
+  wins where both write a key and a theme only supplies what the file leaves out. A theme is refused whole —
+  missing, not TOML, or another `schema_version` — with a warning naming the theme and its path, and nothing of
+  it applies; a missing `schema_version` is a warning and the theme is read, as for the config. `ConfigWatcher`
+  resolves the file, watches it and its directory (and drops the watch when the key names another), so an edit
+  to the key or to the theme re-applies through the same diff that emits only what changed. Verified on a
+  headless sway: a config naming `warm` drew bold `#ff8c42` accents, naming `cool` changed the colours and
+  weight in the same process, editing `cool.toml` changed them again, and naming a theme that does not exist
+  warned and put the defaults back. **Not done:** theme assets (nothing draws from one), spacing and animation
+  tokens (no code reads them), import/export commands, dynamic colours, and shipped themes.
 - **Defaults ship embedded**, so a missing config file is not an error. An absent file is not even worth
   a warning; a file that exists and carries no `schema_version` is, because it is a file whose author
   meant to configure something.

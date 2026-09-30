@@ -455,6 +455,10 @@ class Config : public QObject {
     // signals. A `barChanged` here as well would re-evaluate every binding under `Config.bar` on any
     // edit, which is the coarse notification this class exists to avoid.
     Q_PROPERTY(quantum::config::ConfigBar* bar READ bar CONSTANT)
+    // The theme the file names, or empty. Nothing in QML draws from it — the values the theme supplied are in
+    // `bar.colors` and `bar.font` — so it is here for what asks which theme is in use (`qsctl config get theme`)
+    // and for a binding that wants to show it.
+    Q_PROPERTY(QString theme READ theme NOTIFY themeChanged)
     Q_PROPERTY(quantum::config::ConfigLauncher* launcher READ launcher CONSTANT)
 
 public:
@@ -462,6 +466,7 @@ public:
 
     ConfigBar* bar() { return &bar_; }
     ConfigLauncher* launcher() { return &launcher_; }
+    QString theme() const { return theme_; }
 
     void apply(const ConfigValues& values);
 
@@ -479,7 +484,11 @@ public:
     // and compares its copy at compile time, because it registers this object for the bar it loads.
     inline static constexpr auto QmlTypeName = "Config";
 
+Q_SIGNALS:
+    void themeChanged();
+
 private:
+    QString theme_;
     ConfigBar bar_;
     LauncherConfig launcherValues_;
     ConfigLauncher launcher_;

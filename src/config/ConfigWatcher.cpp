@@ -28,6 +28,29 @@ QString deepestExistingDirectory(const QString& filePath) {
     return directory.absolutePath();
 }
 
+// How the schema is told to read a theme: a bare name is a file directly inside `themes/` next to the config
+// file, an absolute path is itself. The schema has already refused everything else, and a name cannot contain a
+// separator, so nothing here can be steered outside the configuration directory by a name. Runs on the worker
+// thread with the same by-value rule as `readAndParse`.
+ThemeFile readThemeFile(const QString& configPath, const QString& reference) {
+    ThemeFile theme;
+    theme.path = reference.startsWith(QLatin1Char('/'))
+                     ? QDir::cleanPath(reference)
+                     : QDir(QFileInfo(configPath).absolutePath())
+                           .filePath(QStringLiteral("themes/%1.toml").arg(reference));
+    QFile file(theme.path);
+    if (!file.exists()) {
+        theme.error = QStringLiteral("does not exist");
+        return theme;
+    }
+    if (!file.open(QIODevice::ReadOnly)) {
+        theme.error = QStringLiteral("could not be opened: %1").arg(file.errorString());
+        return theme;
+    }
+    theme.text = file.readAll();
+    return theme;
+}
+
 // Reads and validates one file. Runs on the worker thread, so it takes the path by value and touches no
 // member of the watcher: nothing here can outlive the object that asked for it.
 ParseResult readAndParse(const QString& path) {
@@ -45,7 +68,7 @@ ParseResult readAndParse(const QString& path) {
         return result;
     }
 
-    return parseConfig(file.readAll());
+    return parseConfig(file.readAll(), [path](const QString& reference) { return readThemeFile(path, reference); });
 }
 
 }  // namespace
@@ -131,8 +154,14 @@ void ConfigWatcher::apply(const ParseResult& result) {
 
     // An unusable file is not applied. The values already in `Config` came from the last file that
     // worked, or from the schema's defaults, and both are better than a half-read file's.
-    if (result.errors.isEmpty())
+    if (result.errors.isEmpty()) {
         config_.apply(result.values);
+        // The theme this file names is watched from now on, and the one it stopped naming is not.
+        if (themePath_ != result.themePath) {
+            themePath_ = result.themePath;
+            rewatch();
+        }
+    }
 
     // Emitted even when it is empty: "this read found nothing to report" is an answer, and a listener
     // should not have to infer it from the absence of a signal.
@@ -146,6 +175,17 @@ void ConfigWatcher::rewatch() {
     const QString directory = deepestExistingDirectory(path_);
     if (!directory.isEmpty())
         wanted.append(directory);
+    // The theme file and the deepest directory above it, for the reasons the config's own two are watched: an
+    // editor's atomic replace shows as the directory changing, and `themes/` may not exist yet when `theme` is
+    // written first. The directory is often the config's own already, so duplicates are dropped below.
+    if (!themePath_.isEmpty()) {
+        if (QFileInfo::exists(themePath_))
+            wanted.append(themePath_);
+        const QString themeDirectory = deepestExistingDirectory(themePath_);
+        if (!themeDirectory.isEmpty())
+            wanted.append(themeDirectory);
+    }
+    wanted.removeDuplicates();
 
     QStringList current = watcher_.files();
     current.append(watcher_.directories());

@@ -50,6 +50,11 @@ private slots:
     void onlyThePropertyThatChangedEmits();
     void reportsAnUnknownKeyAndStillUsesTheRestOfTheFile();
     void keepsTheLastGoodValuesWhenTheFileCannotBeUsed();
+    void aThemeNamedByTheFileIsAppliedAndItsOwnValuesWin();
+    void editingTheThemeFileReAppliesItWhileTheShellRuns();
+    void namingADifferentThemeSwitchesWithoutARestart();
+    void aThemeWrittenAfterTheConfigNamesItIsPickedUp();
+    void aThemeThatIsMissingWarnsAndAppliesNothing();
 
 private:
     QString configPath() const;
@@ -59,6 +64,10 @@ private:
     bool replace(const QByteArray& text);
     // Writes it in place, truncating what was there.
     bool overwrite(const QByteArray& text);
+    // A theme file in `themes/` beside the config file, written in place; `replaceTheme` does it the atomic way.
+    QString themePath(const QString& name) const;
+    bool writeTheme(const QString& name, const QByteArray& text);
+    bool replaceTheme(const QString& name, const QByteArray& text);
     // Every height the bar was told about, in order, from now on.
     QList<int> recordHeights();
 
@@ -100,6 +109,33 @@ bool ConfigWatcherTest::overwrite(const QByteArray& text) {
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
     return file.write(text) == text.size();
+}
+
+QString ConfigWatcherTest::themePath(const QString& name) const {
+    return QDir(QFileInfo(configPath()).absolutePath()).filePath(QStringLiteral("themes/%1.toml").arg(name));
+}
+
+bool ConfigWatcherTest::writeTheme(const QString& name, const QByteArray& text) {
+    if (!QDir().mkpath(QFileInfo(themePath(name)).absolutePath()))
+        return false;
+    QFile file(themePath(name));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    return file.write(text) == text.size();
+}
+
+bool ConfigWatcherTest::replaceTheme(const QString& name, const QByteArray& text) {
+    if (!QDir().mkpath(QFileInfo(themePath(name)).absolutePath()))
+        return false;
+    QFile staging(themePath(name) + QStringLiteral(".new"));
+    if (!staging.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    const bool written = staging.write(text) == text.size();
+    staging.close();
+    if (!written)
+        return false;
+    QFile::remove(themePath(name));
+    return staging.rename(themePath(name));
 }
 
 QList<int> ConfigWatcherTest::recordHeights() {
@@ -299,6 +335,100 @@ void ConfigWatcherTest::keepsTheLastGoodValuesWhenTheFileCannotBeUsed() {
     QTest::qWait(150);
     QCOMPARE(config_->bar()->height(), 44);
     QCOMPARE(announcedHeights_, QList<int>{});
+}
+
+namespace {
+QByteArray themeFile(const QByteArray& accent, const QByteArray& extra = QByteArray()) {
+    return QByteArray("schema_version = 1\n[bar.colors]\naccent = \"") + accent + "\"\n" + extra;
+}
+}  // namespace
+
+void ConfigWatcherTest::aThemeNamedByTheFileIsAppliedAndItsOwnValuesWin() {
+    QVERIFY(writeTheme(QStringLiteral("nord"),
+                       themeFile("#88c0d0", "urgent = \"#bf616a\"\n[bar.font]\nfamily = \"Noto Sans\"\n")));
+    // The file writes `urgent` itself, so the theme's value for it must lose; `accent` and the font are the
+    // theme's alone.
+    QVERIFY(replace(configFile(coveredDefaultHeight,
+                               "\n[bar.colors]\nurgent = \"#ff0000\"\n")
+                    .prepend("theme = \"nord\"\n")));
+    QSignalSpy diagnosedSpy(watcher_.get(), &ConfigWatcher::diagnosed);
+    watcher_->start();
+
+    QCOMPARE(config_->bar()->colors()->accent(), QStringLiteral("#88c0d0"));
+    QCOMPARE(config_->bar()->colors()->urgent(), QStringLiteral("#ff0000"));
+    QCOMPARE(config_->bar()->font()->family(), QStringLiteral("Noto Sans"));
+    QCOMPARE(config_->theme(), QStringLiteral("nord"));
+    QCOMPARE(diagnosedSpy.count(), 1);
+    QCOMPARE(diagnosedSpy.at(0).at(0).toStringList(), QStringList{});
+}
+
+void ConfigWatcherTest::editingTheThemeFileReAppliesItWhileTheShellRuns() {
+    QVERIFY(writeTheme(QStringLiteral("nord"), themeFile("#88c0d0")));
+    QVERIFY(replace(configFile(coveredDefaultHeight).prepend("theme = \"nord\"\n")));
+    watcher_->start();
+    QCOMPARE(config_->bar()->colors()->accent(), QStringLiteral("#88c0d0"));
+
+    // In place, and then as an atomic replace: the two ways an editor writes, and the second is the one that
+    // leaves a watch on the file's old inode dead.
+    QSignalSpy accentSpy(config_->bar()->colors(), &quantum::config::ConfigColors::accentChanged);
+    QVERIFY(writeTheme(QStringLiteral("nord"), themeFile("#a3be8c")));
+    QTRY_COMPARE(config_->bar()->colors()->accent(), QStringLiteral("#a3be8c"));
+    QVERIFY(replaceTheme(QStringLiteral("nord"), themeFile("#b48ead")));
+    QTRY_COMPARE(config_->bar()->colors()->accent(), QStringLiteral("#b48ead"));
+    QCOMPARE(accentSpy.count(), 2);
+}
+
+void ConfigWatcherTest::namingADifferentThemeSwitchesWithoutARestart() {
+    QVERIFY(writeTheme(QStringLiteral("nord"), themeFile("#88c0d0")));
+    QVERIFY(writeTheme(QStringLiteral("gruvbox"), themeFile("#fabd2f")));
+    QVERIFY(replace(configFile(coveredDefaultHeight).prepend("theme = \"nord\"\n")));
+    watcher_->start();
+    QCOMPARE(config_->bar()->colors()->accent(), QStringLiteral("#88c0d0"));
+
+    QSignalSpy heightSpy(config_->bar(), &ConfigBar::heightChanged);
+    QVERIFY(replace(configFile(coveredDefaultHeight).prepend("theme = \"gruvbox\"\n")));
+    QTRY_COMPARE(config_->bar()->colors()->accent(), QStringLiteral("#fabd2f"));
+    QCOMPARE(config_->theme(), QStringLiteral("gruvbox"));
+    // Nothing but what the theme carries moved.
+    QCOMPARE(heightSpy.count(), 0);
+
+    // And the theme it left is no longer watched: editing it changes nothing, while editing the one it names
+    // still does.
+    QVERIFY(writeTheme(QStringLiteral("nord"), themeFile("#000001")));
+    QTest::qWait(200);
+    QCOMPARE(config_->bar()->colors()->accent(), QStringLiteral("#fabd2f"));
+    QVERIFY(writeTheme(QStringLiteral("gruvbox"), themeFile("#000002")));
+    QTRY_COMPARE(config_->bar()->colors()->accent(), QStringLiteral("#000002"));
+
+    // Naming no theme puts the defaults back.
+    QVERIFY(replace(configFile(coveredDefaultHeight)));
+    QTRY_COMPARE(config_->bar()->colors()->accent(), quantum::config::ColorsConfig{}.accent);
+    QCOMPARE(config_->theme(), QString());
+}
+
+void ConfigWatcherTest::aThemeWrittenAfterTheConfigNamesItIsPickedUp() {
+    // The config names a theme whose file, and whose `themes/` directory, do not exist yet.
+    QVERIFY(replace(configFile(coveredDefaultHeight).prepend("theme = \"late\"\n")));
+    watcher_->start();
+    QCOMPARE(config_->bar()->colors()->accent(), quantum::config::ColorsConfig{}.accent);
+
+    QVERIFY(writeTheme(QStringLiteral("late"), themeFile("#123456")));
+    QTRY_COMPARE(config_->bar()->colors()->accent(), QStringLiteral("#123456"));
+}
+
+void ConfigWatcherTest::aThemeThatIsMissingWarnsAndAppliesNothing() {
+    QSignalSpy diagnosedSpy(watcher_.get(), &ConfigWatcher::diagnosed);
+    QVERIFY(replace(configFile(44).prepend("theme = \"absent\"\n")));
+    watcher_->start();
+
+    QCOMPARE(diagnosedSpy.count(), 1);
+    const QStringList messages = diagnosedSpy.at(0).at(0).toStringList();
+    QCOMPARE(messages.size(), 1);
+    QVERIFY2(messages.first().contains(QStringLiteral("absent")), qPrintable(messages.first()));
+    QVERIFY2(messages.first().contains(themePath(QStringLiteral("absent"))), qPrintable(messages.first()));
+    QVERIFY2(messages.first().contains(QStringLiteral("does not exist")), qPrintable(messages.first()));
+    // The rest of the file is used all the same.
+    QCOMPARE(config_->bar()->height(), 44);
 }
 
 QTEST_GUILESS_MAIN(ConfigWatcherTest)

@@ -77,11 +77,15 @@ private:
     void scheduleRead();
     void readFinished();
     void apply(const ParseResult& result);
-    // Points the watcher at the file and at the deepest directory above it that exists today.
+    // Points the watcher at the file and at the deepest directory above it that exists today, and the same for
+    // the theme file the last read resolved to: a theme is edited, replaced and created like the config is.
     void rewatch();
 
     Config& config_;
     QString path_;
+    // The file the last successful read's `theme` key resolved to, or empty. Held so the watch set can be
+    // re-derived from it after every event; only the GUI thread touches it.
+    QString themePath_;
     QFileSystemWatcher watcher_;
     QFutureWatcher<ParseResult> read_;
     bool reading_ = false;

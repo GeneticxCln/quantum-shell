@@ -1099,6 +1099,20 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    `notification-test`, which fail with the QML handler or the host's teardown removed. Not
                    verified: niri.
 
+                   The theme system began with its one honest module: a top-level `theme` key names a theme file
+                   (`themes/<name>.toml` beside `config.toml`, or an absolute path) holding `[bar.colors]` and
+                   `[bar.font]`, read through a `ThemeReader` the schema is handed so it stays a pure function, laid
+                   over the defaults before the file's own tables so the file wins where both write a key, refused
+                   whole with a warning naming its path when missing, not TOML or from another `schema_version`,
+                   and watched by `ConfigWatcher` (file and directory, dropped when the key names another theme)
+                   so editing the key or the theme re-applies colours and font with no restart — the same diff,
+                   so only what changed emits. `Config.theme` and `qsctl config get theme` report it. Pinned by six
+                   `config-test` slots, five `config-watcher-test` slots against real files and one
+                   `ipc-capabilities-test` slot, and five mutations each fail a named slot (theme applied last,
+                   name check off, a refused theme half-applied, the theme not watched, the watch not moved).
+                   Seen on a headless sway switching `warm` to `cool` in one process. Not done: theme assets,
+                   spacing and animation tokens, import/export, dynamic colours, shipped themes.
+
                    Phase 8 has begun with the parts that can be verified here: crash handling
                    (`CrashHandler` installs handlers for SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT that write the
                    version, the signal and the call stack to standard error from an alternate stack — so a stack

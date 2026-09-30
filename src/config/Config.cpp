@@ -222,6 +222,10 @@ Config::Config(QObject* parent) : QObject(parent), launcher_(launcherValues_) {
 }
 
 void Config::apply(const ConfigValues& values) {
+    if (theme_ != values.theme) {
+        theme_ = values.theme;
+        emit themeChanged();
+    }
     bar_.apply(values.bar);
     launcher_.apply(values.launcher);
 }
@@ -232,6 +236,7 @@ ConfigValues Config::values() const {
     // nested tables — each writes into a field of the struct it returns — so this is a copy of one table
     // and not a walk, and neither table has a second place its values live.
     ConfigValues values;
+    values.theme = theme_;
     values.bar = bar_.values();
     values.launcher = launcher_.values();
     return values;

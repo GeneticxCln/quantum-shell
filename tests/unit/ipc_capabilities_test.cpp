@@ -53,7 +53,8 @@ namespace {
 // The key paths the shell offers to `qsctl config get`, written out independently of `ConfigSchema.h` and
 // compared with it at compile time. The duplication is the point: these paths are what a script types, so a
 // rename in the schema must not build until it is acknowledged here and in the document that lists them.
-constexpr std::array<const char*, 29> coveredKeyPaths{"bar.height",
+constexpr std::array<const char*, 30> coveredKeyPaths{"theme",
+                                                       "bar.height",
                                                        "bar.layerNamespace",
                                                        "bar.system.sample_interval_ms",
                                                        "bar.system.show_cpu",
@@ -111,6 +112,7 @@ private slots:
     void everyStateKeyIsAPropertyOfTheService();
     void theStateIsTheServicesOwnValues();
     void everyConfigurationKeyPathResolvesToTheLiveValue();
+    void theThemeKeyReportsTheThemeTheConfigurationHolds();
     void aKeyThisShellDoesNotReadResolvesToNothing();
     void withNoBarThereIsNothingToToggle();
     void theLauncherToggleIsTheServicesOwn();
@@ -270,13 +272,24 @@ void IpcCapabilitiesTest::everyConfigurationKeyPathResolvesToTheLiveValue() {
     config_.apply(ConfigValues{});
 }
 
+void IpcCapabilitiesTest::theThemeKeyReportsTheThemeTheConfigurationHolds() {
+    // Empty is the default and an answer, not an absence: a shell with no theme says so.
+    QCOMPARE(capabilities_->configValue(QStringLiteral("theme"))->toString(), QString());
+    ConfigValues themed;
+    themed.theme = QStringLiteral("nord");
+    config_.apply(themed);
+    QCOMPARE(capabilities_->configValue(QStringLiteral("theme"))->toString(), QStringLiteral("nord"));
+    config_.apply(ConfigValues{});
+    QCOMPARE(capabilities_->configValue(QStringLiteral("theme"))->toString(), QString());
+}
+
 void IpcCapabilitiesTest::aKeyThisShellDoesNotReadResolvesToNothing() {
     // Every shape of a path that is not a key the schema reads. Each must resolve to nothing rather than to
     // an empty string or a default, because the server turns "nothing" into a refusal that names the path and
     // a null value into an answer a script would have to detect for itself.
     for (const char* path : {"bar", "bar.widht", "bar.height.px", "bar.system", "bar.sample_interval_ms",
                             "bar.system.sample_interval", "bar.system.show", "bar.system.memory_formats",
-                            "schema_version", "theme", ""}) {
+                            "schema_version", "themes", ""}) {
         QVERIFY2(!capabilities_->configValue(QString::fromLatin1(path)).has_value(), path);
     }
 }

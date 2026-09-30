@@ -119,7 +119,8 @@ static_assert(quantum::config::MinVolumeStepDecibels == coveredMinVolumeStepDeci
 // The key paths the shell offers to `qsctl config get`, mirrored the same way and for a sharper reason: a
 // path is what a script types. It is interface, so a rename has to be acknowledged here — and in the
 // document that lists the keys — rather than being free to happen in the schema alone.
-constexpr std::array<const char*, 29> coveredKeyPaths{"bar.height",
+constexpr std::array<const char*, 30> coveredKeyPaths{"theme",
+                                                       "bar.height",
                                                        "bar.layerNamespace",
                                                        "bar.system.sample_interval_ms",
                                                        "bar.system.show_cpu",
@@ -225,6 +226,12 @@ private slots:
     void everyPropertyIsOneABindingNeeds();
     void qmlReadsTheSameValuesAndFollowsAChange();
     void everyKeyPathTheSchemaOffersResolvesAndNothingElseDoes();
+    void aThemeIsTheBaseAndTheFilesOwnTablesWin();
+    void aThemeReferenceIsANameOrAnAbsolutePathAndNothingElse();
+    void aThemeThatCannotBeUsedAppliesNothingOfItAndSaysWhy();
+    void aBadValueInAThemeIsRefusedByNameLikeAnyOther();
+    void aThemeHoldsTheLooksTablesAndNothingElse();
+    void aThemeKeyWithNoWayToReadOneIsReported();
 };
 
 void ConfigTest::defaultsAreWhatTheShellShipsWithoutAFile() {
@@ -1209,7 +1216,8 @@ void ConfigTest::everyPropertyIsOneABindingNeeds() {
     // The QML-visible property set, written out here rather than read from the classes, so that a
     // property added to `Config` or `ConfigBar` without a decision about what it is for fails this test
     // instead of being noticed by an audit later.
-    QStringList expected{QStringLiteral("Config.bar"),
+    QStringList expected{QStringLiteral("Config.theme"),
+                         QStringLiteral("Config.bar"),
                          QStringLiteral("Config.bar.height"),
                          QStringLiteral("Config.bar.layerNamespace"),
                          QStringLiteral("Config.bar.system"),
@@ -1532,9 +1540,193 @@ void ConfigTest::everyKeyPathTheSchemaOffersResolvesAndNothingElseDoes() {
                             "bar.system.sample_interval", "bar.system.sample_interval_ms.px", "bar.system.show",
                             "bar.system.show_cpus", "bar.system.memory_formats", "bar.audio.volume_scales",
                             "bar.audio.scale", "bar.audio.step_decibel", "bar.audio.steps", "schema_version",
-                            "theme", ""}) {
+                            "themes", "theme.name", ""}) {
         QVERIFY2(!quantum::config::configValueForPath(parsed.values, QString::fromLatin1(path)).has_value(), path);
     }
+}
+
+namespace {
+
+// A reader that answers from a map of reference to text, and remembers what it was asked for, so a slot can say
+// both what the schema did with a theme and what it asked the reader for.
+struct FakeThemes {
+    QHash<QString, QByteArray> files;
+    mutable QStringList asked;
+    quantum::config::ThemeReader reader() const {
+        return [this](const QString& reference) {
+            asked.append(reference);
+            quantum::config::ThemeFile file;
+            file.path = QStringLiteral("/themes/%1.toml").arg(reference);
+            if (!files.contains(reference))
+                file.error = QStringLiteral("does not exist");
+            else
+                file.text = files.value(reference);
+            return file;
+        };
+    }
+};
+
+}  // namespace
+
+void ConfigTest::aThemeIsTheBaseAndTheFilesOwnTablesWin() {
+    FakeThemes themes;
+    themes.files.insert(QStringLiteral("nord"),
+                        QByteArrayLiteral("schema_version = 1\n"
+                                          "[bar.colors]\nforeground = \"#d8dee9\"\naccent = \"#88c0d0\"\n"
+                                          "[bar.font]\nfamily = \"Noto Sans\"\nsize = 14\nweight = 500\n"));
+    const ParseResult parsed = parseConfig(QByteArrayLiteral("schema_version = 1\n"
+                                                             "theme = \"nord\"\n"
+                                                             "[bar.colors]\naccent = \"#ff0000\"\n"
+                                                             "[bar.font]\nsize = 20\n"),
+                                           themes.reader());
+    QVERIFY2(parsed.errors.isEmpty(), qPrintable(parsed.errors.join(QStringLiteral("; "))));
+    QVERIFY2(parsed.warnings.isEmpty(), qPrintable(parsed.warnings.join(QStringLiteral("; "))));
+    QCOMPARE(themes.asked, QStringList{QStringLiteral("nord")});
+    QCOMPARE(parsed.themePath, QStringLiteral("/themes/nord.toml"));
+    QCOMPARE(parsed.values.theme, QStringLiteral("nord"));
+    // What only the theme says is the theme's; what the file says for itself is the file's; what neither says is
+    // the default. `accent` and `size` are written by both, and the file wins them.
+    QCOMPARE(parsed.values.bar.colors.foreground, QStringLiteral("#d8dee9"));
+    QCOMPARE(parsed.values.bar.colors.accent, QStringLiteral("#ff0000"));
+    QCOMPARE(parsed.values.bar.colors.muted, quantum::config::ColorsConfig{}.muted);
+    QCOMPARE(parsed.values.bar.font.family, QStringLiteral("Noto Sans"));
+    QCOMPARE(parsed.values.bar.font.size, 20);
+    QCOMPARE(parsed.values.bar.font.weight, 500);
+
+    // No `theme` key asks the reader for nothing and leaves everything at the defaults.
+    FakeThemes none;
+    const ParseResult plain = parseConfig(QByteArrayLiteral("schema_version = 1\n"), none.reader());
+    QVERIFY(none.asked.isEmpty());
+    QCOMPARE(plain.values, ConfigValues{});
+    QVERIFY(plain.themePath.isEmpty());
+    // An empty string is the way to say none, and is not worth a warning.
+    const ParseResult empty = parseConfig(QByteArrayLiteral("schema_version = 1\ntheme = \"\"\n"), none.reader());
+    QVERIFY(none.asked.isEmpty());
+    QVERIFY2(empty.warnings.isEmpty(), qPrintable(empty.warnings.join(QStringLiteral("; "))));
+    QCOMPARE(empty.values, ConfigValues{});
+}
+
+void ConfigTest::aThemeReferenceIsANameOrAnAbsolutePathAndNothingElse() {
+    FakeThemes themes;
+    themes.files.insert(QStringLiteral("nord-2_x"), QByteArrayLiteral("schema_version = 1\n"));
+    themes.files.insert(QStringLiteral("/opt/themes/mine.toml"), QByteArrayLiteral("schema_version = 1\n"));
+    for (const char* good : {"nord-2_x", "/opt/themes/mine.toml"}) {
+        themes.asked.clear();
+        const ParseResult parsed = parseConfig(QByteArray("schema_version = 1\ntheme = \"") + good + "\"\n",
+                                               themes.reader());
+        QVERIFY2(parsed.warnings.isEmpty(), good);
+        QCOMPARE(themes.asked, QStringList{QString::fromLatin1(good)});
+        QCOMPARE(parsed.values.theme, QString::fromLatin1(good));
+    }
+    // A relative path, a name with a separator or `..` in it, a space, a dot — each is refused by name before
+    // the reader is asked, so a name can only ever be a file directly inside `themes/`.
+    for (const char* bad : {"themes/nord", "../nord", "..", "nord.toml", "no rd", "~/nord", "./nord"}) {
+        themes.asked.clear();
+        const ParseResult parsed = parseConfig(QByteArray("schema_version = 1\ntheme = \"") + bad + "\"\n",
+                                               themes.reader());
+        QVERIFY2(parsed.errors.isEmpty(), bad);
+        QCOMPARE(parsed.warnings.size(), 1);
+        QVERIFY2(parsed.warnings.first().startsWith(QStringLiteral("theme: ")), qPrintable(parsed.warnings.first()));
+        QVERIFY2(parsed.warnings.first().contains(QString::fromLatin1(bad)), qPrintable(parsed.warnings.first()));
+        QVERIFY2(themes.asked.isEmpty(), bad);
+        QVERIFY2(parsed.values.theme.isEmpty(), bad);
+        QVERIFY2(parsed.themePath.isEmpty(), bad);
+    }
+    // Not a string.
+    const ParseResult number = parseConfig(QByteArrayLiteral("schema_version = 1\ntheme = 3\n"), themes.reader());
+    QCOMPARE(number.warnings.size(), 1);
+    QVERIFY2(number.warnings.first().contains(QStringLiteral("expected a string")), qPrintable(number.warnings.first()));
+    QVERIFY(number.values.theme.isEmpty());
+}
+
+void ConfigTest::aThemeThatCannotBeUsedAppliesNothingOfItAndSaysWhy() {
+    FakeThemes themes;
+    themes.files.insert(QStringLiteral("broken"), QByteArrayLiteral("this is not toml {{{\n"));
+    themes.files.insert(QStringLiteral("future"),
+                        QByteArrayLiteral("schema_version = 2\n[bar.colors]\naccent = \"#010203\"\n"));
+    themes.files.insert(QStringLiteral("stringy"), QByteArrayLiteral("schema_version = \"1\"\n"));
+    themes.files.insert(QStringLiteral("nonascii"), QByteArrayLiteral("schema_version = 1\nvé = 1\n"));
+    themes.files.insert(QStringLiteral("unversioned"), QByteArrayLiteral("[bar.colors]\naccent = \"#0a0b0c\"\n"));
+
+    const auto parse = [&](const char* name) {
+        return parseConfig(QByteArray("theme = \"") + name + "\"\nschema_version = 1\n[bar]\nheight = 44\n",
+                           themes.reader());
+    };
+
+    // The config itself is not affected by any of these: it is applied, the theme is what is reported.
+    for (const char* name : {"broken", "future", "stringy", "nonascii", "absent"}) {
+        const ParseResult parsed = parse(name);
+        QVERIFY2(parsed.errors.isEmpty(), name);
+        QCOMPARE(parsed.values.bar.height, 44);
+        QCOMPARE(parsed.warnings.size(), 1);
+        QVERIFY2(parsed.warnings.first().startsWith(QStringLiteral("theme \"%1\"").arg(QLatin1String(name))),
+                 qPrintable(parsed.warnings.first()));
+        QVERIFY2(parsed.warnings.first().contains(QStringLiteral("no theme applied")), qPrintable(parsed.warnings.first()));
+        // Nothing of the theme applied, and the path is still reported so the caller can watch for it.
+        QCOMPARE(parsed.values.bar.colors, quantum::config::ColorsConfig{});
+        QCOMPARE(parsed.values.bar.font, quantum::config::FontConfig{});
+        QCOMPARE(parsed.themePath, QStringLiteral("/themes/%1.toml").arg(QLatin1String(name)));
+    }
+    QVERIFY(parse("future").warnings.first().contains(QStringLiteral("schema_version 2")));
+    QVERIFY(parse("absent").warnings.first().contains(QStringLiteral("does not exist")));
+    QVERIFY(parse("broken").warnings.first().contains(QStringLiteral("not valid TOML")));
+
+    // A theme with no schema_version is warned about and used, the rule a config file follows.
+    const ParseResult unversioned = parse("unversioned");
+    QCOMPARE(unversioned.warnings.size(), 1);
+    QVERIFY(unversioned.warnings.first().contains(QStringLiteral("no schema_version")));
+    QCOMPARE(unversioned.values.bar.colors.accent, QStringLiteral("#0a0b0c"));
+}
+
+void ConfigTest::aBadValueInAThemeIsRefusedByNameLikeAnyOther() {
+    FakeThemes themes;
+    themes.files.insert(QStringLiteral("typo"),
+                        QByteArrayLiteral("schema_version = 1\n"
+                                          "[bar.colors]\naccent = \"blue\"\nmuted = \"#445566\"\n"
+                                          "[bar.font]\nweight = 1000\n"));
+    const ParseResult parsed =
+        parseConfig(QByteArrayLiteral("schema_version = 1\ntheme = \"typo\"\n"), themes.reader());
+    QVERIFY(parsed.errors.isEmpty());
+    // Two refusals, each naming the key and the theme it came from, and the values that were fine still apply.
+    QCOMPARE(parsed.warnings.size(), 2);
+    for (const QString& warning : parsed.warnings)
+        QVERIFY2(warning.startsWith(QStringLiteral("theme \"typo\" (/themes/typo.toml): ")), qPrintable(warning));
+    QVERIFY(parsed.warnings.join(QLatin1Char('\n')).contains(QStringLiteral("bar.colors.accent")));
+    QVERIFY(parsed.warnings.join(QLatin1Char('\n')).contains(QStringLiteral("bar.font.weight")));
+    QCOMPARE(parsed.values.bar.colors.accent, quantum::config::ColorsConfig{}.accent);
+    QCOMPARE(parsed.values.bar.colors.muted, QStringLiteral("#445566"));
+    QCOMPARE(parsed.values.bar.font.weight, quantum::config::FontConfig{}.weight);
+}
+
+void ConfigTest::aThemeHoldsTheLooksTablesAndNothingElse() {
+    FakeThemes themes;
+    themes.files.insert(QStringLiteral("greedy"),
+                        QByteArrayLiteral("schema_version = 1\ntheme = \"other\"\nlauncher = { max_results = 3 }\n"
+                                          "[bar]\nheight = 99\n[bar.audio]\nstep_percent = 9\n"
+                                          "[bar.colors]\naccent = \"#101010\"\n"));
+    const ParseResult parsed =
+        parseConfig(QByteArrayLiteral("schema_version = 1\ntheme = \"greedy\"\n"), themes.reader());
+    QVERIFY(parsed.errors.isEmpty());
+    const QString all = parsed.warnings.join(QLatin1Char('\n'));
+    // Everything that is not `[bar.colors]` or `[bar.font]` is named as not read by a theme, and none of it
+    // took effect: a theme cannot resize the bar, change a step or name another theme.
+    for (const char* key : {"theme is not a key a theme reads", "launcher is not a key a theme reads",
+                            "bar.height is not a key a theme reads", "bar.audio is not a key a theme reads"})
+        QVERIFY2(all.contains(QString::fromLatin1(key)), qPrintable(QString::fromLatin1(key) + " in " + all));
+    QCOMPARE(parsed.values.bar.height, BarConfig{}.height);
+    QCOMPARE(parsed.values.bar.audio, BarConfig{}.audio);
+    QCOMPARE(parsed.values.launcher, ConfigValues{}.launcher);
+    QCOMPARE(parsed.values.theme, QStringLiteral("greedy"));
+    // What it is allowed to say still applies.
+    QCOMPARE(parsed.values.bar.colors.accent, QStringLiteral("#101010"));
+}
+
+void ConfigTest::aThemeKeyWithNoWayToReadOneIsReported() {
+    const ParseResult parsed = parseConfig(QByteArrayLiteral("schema_version = 1\ntheme = \"nord\"\n"));
+    QCOMPARE(parsed.warnings.size(), 1);
+    QVERIFY2(parsed.warnings.first().contains(QStringLiteral("no way to read one")), qPrintable(parsed.warnings.first()));
+    QCOMPARE(parsed.values.bar.colors, quantum::config::ColorsConfig{});
+    QVERIFY(parsed.themePath.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(ConfigTest)

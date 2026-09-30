@@ -26,6 +26,7 @@
 #include <QVariant>
 
 #include <array>
+#include <functional>
 #include <optional>
 
 namespace quantum::config {
@@ -456,6 +457,11 @@ inline constexpr int MaxLauncherMaxResults = 50;
 // The whole validated configuration. Nested objects mirror the file's tables, so `bar` is the `[bar]`
 // table and nothing else is interpolated between the file and this struct.
 struct ConfigValues {
+    // The `theme` key: the name or absolute path of the theme file whose `[bar.colors]` and `[bar.font]` sit
+    // under the file's own. Empty, the default, is no theme. It is the reference the file wrote and that passed
+    // the form check, not a claim that the file it names exists: whether it could be read is a warning, and
+    // what it supplied is in `bar.colors` and `bar.font` like any other value.
+    QString theme;
     BarConfig bar;
     LauncherConfig launcher;
 
@@ -491,21 +497,39 @@ struct ParseResult {
     // `schema_version`. Each names the key and says what was kept instead.
     QStringList warnings;
 
+    // The file the `theme` key resolved to, whether or not it could be read — the caller watches it, so that a
+    // theme written after the config names it, or edited while the shell runs, is picked up. Empty when no theme
+    // is named or the reference was refused.
+    QString themePath;
+
     // Problems that made the file unusable: it is not TOML, or it was written for a schema version this
     // build does not know. Non-empty means `values` must not be applied.
     QStringList errors;
 };
 
+// How a theme file is read, which is the one thing a schema cannot do for itself and a theme is a second file.
+// The caller passes it to `parseConfig`: it takes the `theme` key's reference (already checked to be a name or an
+// absolute path) and answers with the path it resolved to and the file's text, or the reason there is none.
+struct ThemeFile {
+    QString path;
+    QByteArray text;
+    // Non-empty when the file could not be read: it is missing, or it could not be opened.
+    QString error;
+};
+using ThemeReader = std::function<ThemeFile(const QString& reference)>;
+
 // Parses and validates one configuration file. `text` is the file's whole contents; a file that does not
 // exist is the caller's concern and is not an error (QUANTUM_SHELL.md: defaults ship embedded, so a
-// missing config file is not an error).
-ParseResult parseConfig(const QByteArray& text);
+// missing config file is not an error). Without a `readTheme`, a `theme` key is reported and not applied, which
+// is the honest answer for a caller that has no files to read.
+ParseResult parseConfig(const QByteArray& text, const ThemeReader& readTheme = {});
 
 // The keys by the path a user names them, which is the spelling `qsctl config get` takes. Declared here
 // rather than wherever they are asked for, because this file is where a key exists: the schema is what
 // reads a key, what defaults it, and what refuses it. A path in this list that resolves to nothing, or a
 // key the schema reads that is missing from it, is a name that lies about what the shell reads — so
 // `config-test` walks the list in both directions and fails on either.
+inline constexpr auto KeyTheme = "theme";
 inline constexpr auto KeyBarHeight = "bar.height";
 inline constexpr auto KeyBarLayerNamespace = "bar.layerNamespace";
 inline constexpr auto KeyBarSystemSampleIntervalMs = "bar.system.sample_interval_ms";
@@ -535,7 +559,8 @@ inline constexpr auto KeyBarColorsUrgent = "bar.colors.urgent";
 inline constexpr auto KeyBarFontFamily = "bar.font.family";
 inline constexpr auto KeyBarFontSize = "bar.font.size";
 inline constexpr auto KeyBarFontWeight = "bar.font.weight";
-inline constexpr std::array<const char*, 29> KeyPaths{
+inline constexpr std::array<const char*, 30> KeyPaths{
+    KeyTheme,
     KeyBarHeight,
     KeyBarLayerNamespace,
     KeyBarSystemSampleIntervalMs,
