@@ -2873,8 +2873,13 @@ phase is crash handling, the two profilers, a release tarball, a versioned packa
 an upgrade path between shell versions. The Nix flake waits on a machine where it can be
 built. **Landed since:** crash handling (`src/app/CrashHandler.*`: a report of the version, the signal and the call
 stack to standard error, from an alternate stack, then the default action re-raised so core dumps and the
-supervisor's restart still work), the release tarball with its checksum, and `UPGRADING.md`; what remains is the two
-profilers' measurements, a versioned package and the release.
+supervisor's restart still work), the release tarball with its checksum, and `UPGRADING.md`; the heap-growth measurement is
+done (2000 hide/show pairs on a headless sway: RSS plateaus, so the 0.5 KiB per pair once recorded was the JS heap
+awaiting collection, not a leak) and an idle CPU/RSS figure was taken there too, though not on niri
+(`ENGINEERING_SPEC.md` §7); what remains is the idle measurement on niri, a versioned package and the release. The clock's staleness after a
+suspend or a clock or timezone change is fixed too: `ClockService` (`clock-test`) reports the real-time clock being
+set — `timerfd` with `TFD_TIMER_CANCEL_ON_SET`, which the kernel also completes on resume — and the timezone
+changing, and the clock re-reads the time.
 
 **Exit criteria:** reproducible packages for at least one distro, a released version, and a
 documented upgrade path between shell versions.

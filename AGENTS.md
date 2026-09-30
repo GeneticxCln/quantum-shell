@@ -266,7 +266,7 @@ Build system:     CMake 3.31 floor (4.4.3 tested), C++23, Qt 6.11 floor (6.11.2 
                   language for wayland-scanner's output alone; Qt Concurrent is used for the off-thread
                   config parse, and PipeWire's own thread loop is where its callbacks run, so nothing
                   in src/audio/ blocks the GUI thread
-Tests:            ctest, forty tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
+Tests:            ctest, forty-one tests without a compositor socket or opt-ins — qs-scan-self-test and repo-scan (the
                   gate), public-names-test (the test names and environment variables the documents tell
                   people to run, against the declarations in tests/public_names.cmake), then two order
                   checks that read each test binary rather than its source:
@@ -310,7 +310,7 @@ Tests:            ctest, forty tests without a compositor socket or opt-ins — 
                   combination flakier than one in a hundred thousand — six passes with that floor, say
                   — is refused before it runs) —
                   and
-                  thirty unit tests that need no compositor or session daemon: niri-version-test, crash-handler-test (a copy of the binary dies of each fatal signal and the report and the manner of death are read back), dist-test (the release tarball against a repository of its own: contents, checksum, reproducibility, the dirty-tree refusal), control-center-test (the control centre's surface: Do Not Disturb, a transport click reaching a real MPRIS player double, the volume section inert without a sink), osd-test (the volume display), launcher-test (the launcher's surface: keys typed into it, Enter starting a real process), apps-test (the launcher's desktop-entry parse, `Exec` split, ranking, scan and a real launch), niri-ipc-test,
+                  thirty-one unit tests that need no compositor or session daemon: niri-version-test, clock-test (the real-time clock set by a real `clock_settime` and a timezone switched the way `timedatectl` does it, each reported to the clock), crash-handler-test (a copy of the binary dies of each fatal signal and the report and the manner of death are read back), dist-test (the release tarball against a repository of its own: contents, checksum, reproducibility, the dirty-tree refusal), control-center-test (the control centre's surface: Do Not Disturb, a transport click reaching a real MPRIS player double, the volume section inert without a sink), osd-test (the volume display), launcher-test (the launcher's surface: keys typed into it, Enter starting a real process), apps-test (the launcher's desktop-entry parse, `Exec` split, ranking, scan and a real launch), niri-ipc-test,
                   niri-event-stream-test, niri-state-test, niri-actions-test, niri-output-test,
                   niri-keyboard-layouts-test, niri-outputs-test, niri-reconnect-test and
                   niri-service-test (which loads a QML binding in a real engine, and still needs no
@@ -476,8 +476,8 @@ Tests:            ctest, forty tests without a compositor socket or opt-ins — 
                   its access point with what that prints, so the reader and the code under test are
                   two things; it needs no opt-in because it only reads, and where the machine has no
                   system bus with NetworkManager it skips with the reason rather than passing
-                  quietly. The counts: 42 registered
-                  with a socket, 40 without one; QS_NIRI_SESSION_TESTS adds its two and
+                  quietly. The counts: 43 registered
+                  with a socket, 41 without one; QS_NIRI_SESSION_TESTS adds its two and
                   QS_NIRI_RESTART_TESTS its own two, both needing a socket, while QS_NIRI_SCALE_TESTS
                   adds its one — the scale matrix, which starts a compositor of its own and takes no
                   lock, because the window it maps is on the nested instance and not on the session's
@@ -1032,11 +1032,12 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    `haveReading`. **A touchpad swipe stepped once per event**: both wheel handlers now take
                    one step per 120 units of accumulated distance (twelve deltas of ten are one step),
                    pinned in `bar-interaction-test` and failing with a step per event (16 requests where
-                   one was expected). Not fixed, and recorded rather than hidden: the clock's minute timer
-                   runs on the monotonic clock, so after a suspend or a manual clock or timezone change it
-                   can be stale for up to a minute, and the fix is a logind or `timerfd` subscription this
-                   environment cannot verify; and 0.5 KiB per bar hide/show pair is still unaccounted for,
-                   with no owner identified.
+                   one was expected). Recorded at the time as not fixed: the clock's minute timer runs on the
+                   monotonic clock, so after a suspend or a manual clock or timezone change it could be stale for up
+                   to a minute; that is now fixed by `ClockService`, below. The 0.5 KiB per bar hide/show pair that had been recorded as
+                   unaccounted for was later measured over 2000 pairs and is not a leak: RSS rises about 0.5 MiB in
+                   the first 250 pairs and then oscillates with drops, which is the JS heap being collected
+                   (`ENGINEERING_SPEC.md` §6).
 
                    The roadmap's next item landed after the audits: **notification history and Do Not
                    Disturb**. `NotificationService` keeps the last 50 notifications (newest first, an
@@ -1113,6 +1114,20 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    Seen on a headless sway switching `warm` to `cool` in one process. Not done: theme assets,
                    spacing and animation tokens, import/export, dynamic colours, shipped themes.
 
+                   The clock no longer goes stale when the wall clock is set or the timezone changes.
+                   `ClockService` (`src/system/`) holds a `timerfd` on `CLOCK_REALTIME` armed with
+                   `TFD_TIMER_CANCEL_ON_SET` — the kernel completes its `read` with `ECANCELED` when the clock is
+                   set, including the step taken on resume from suspend — and a watch on `/etc/localtime` and its
+                   directory that reports only when the zone it resolves to differs (the directory is `/etc`, which
+                   is busy). `clockChanged()` makes `qml/Clock.qml` read the time and re-arm; no timer was added.
+                   `clock-test` sets the real clock to the value it just read, twice in a row, and switches a zone
+                   file of its own the way `timedatectl` does; four mutations each fail a slot — the identity check,
+                   the forced re-watch after a switch (a real defect the test found: a watch on a symlink stays on
+                   the old target), the timerfd never armed, and, in `bar-interaction-test`, the QML handler
+                   emptied, which also caught `Clock.qml` missing its `import QuantumShell 1.0`. Seen on a headless
+                   sway: a +5 minute step changed the bar's time within 1.5 s and stepping back restored it. Not
+                   verified: a real suspend and resume, and niri.
+
                    Phase 8 has begun with the parts that can be verified here: crash handling
                    (`CrashHandler` installs handlers for SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT that write the
                    version, the signal and the call stack to standard error from an alternate stack — so a stack
@@ -1121,8 +1136,10 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    itself that die of each signal and reads the report and the manner of death back, and removing the
                    alternate stack or the re-raise each fails it), a `dist` target that builds a reproducible release
                    tarball with a `sha256sum -c` checksum from the committed tree and refuses a dirty one
-                   (`dist-test`), and `UPGRADING.md`. Not done: a versioned package, the release itself, the two
-                   profilers' measurements, the Nix flake.
+                   (`dist-test`), and `UPGRADING.md`. The heap-growth soak is done (2000 hide/show pairs on a headless sway:
+                   RSS plateaus, no leak) and a degraded-mode idle figure was taken there (0.067% CPU, about
+                   50 MB, no niri or PipeWire). Not done: a versioned package, the release itself, the idle
+                   measurement on niri, the Nix flake.
 
                    The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
                    packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,
@@ -1403,7 +1420,7 @@ DESTDIR=/tmp/stage cmake --install build/release --prefix /usr
                                                    # is resolved at install time, so an install under
                                                    # a prefix the build was not configured with names
                                                    # the prefix it landed in
-ctest --preset dev                                 # forty tests with no session;
+ctest --preset dev                                 # forty-one tests with no session;
                                                    # live tests join them only when NIRI_SOCKET is set,
                                                    # and the preset runs four tests at a time
 ctest --preset dev -R audio-test                   # the volume module's pure half: the Props pod parse,
@@ -1447,6 +1464,11 @@ ctest --preset dev -R ipc-server-test              # the IPC server over a real 
 ctest --preset dev -R ipc-protocol-test            # the wire format as pure functions, ~0.02 s
 ctest --preset dev -R ipc-capabilities-test        # what the IPC may reach, against a real service
 ctest --preset dev -R app-logging-test             # the record format and the category names
+ctest --preset dev -R clock-test                   # the service that tells the clock it was moved: a real
+                                                   # clock_settime reported twice (skips without
+                                                   # CAP_SYS_TIME), a timezone switched by symlink
+                                                   # replacement, an in-place edit of the zone in force,
+                                                   # and a neighbouring file saying nothing, ~3.2 s
 ctest --preset dev -R crash-handler-test           # a fatal signal's report and manner of death, read off real
                                                    # child processes, ~0.05 s
 ctest --preset dev -R dist-test                    # the release tarball and checksum against a git repository of

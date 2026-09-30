@@ -195,6 +195,9 @@ set(QS_ORDER_CHECK_COSTS
     niri-live-test=213
     niri-live-stream-test=114
     sysmon-test=788
+    # Real files and a real timerfd, and four waits that are the point (a quiet period asserted to stay quiet, twice,
+    # and two modification-time pauses): measured as the median of six passes on this machine, 3116-3205 ms.
+    clock-test=3160
     config-test=22
     audio-test=11
     # Pure functions of D-Bus payloads and no I/O at all, which is why it sits beside `audio-test` rather than

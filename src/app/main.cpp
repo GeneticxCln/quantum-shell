@@ -41,6 +41,7 @@
 #include "niri/NiriReconnect.h"
 #include "niri/NiriService.h"
 #include "niri/NiriState.h"
+#include "system/ClockService.h"
 #include "system/SysMonService.h"
 #include "wayland/LayerShellWindow.h"
 
@@ -121,6 +122,9 @@ int main(int argc, char **argv)
     // `setActive` is not called until there is a bar to hide — which is also what keeps a hidden bar free.
     quantum::system::SysMonService sysMon;
     quantum::system::SysMonService::registerQmlSingleton(sysMon);
+    // Tells the clock when the wall clock was set or the timezone changed, which its own timer cannot see.
+    quantum::system::ClockService clockService;
+    quantum::system::ClockService::registerQmlSingleton(clockService);
 
     // The cadence is the person's rather than a constant here: `bar.system.sample_interval_ms` reaches the
     // service through this one line, before the engine loads, so the first reading is taken at the interval

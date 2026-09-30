@@ -48,6 +48,7 @@ set(QS_TEST_NAMES
     config-test
     config-watcher-test
     sysmon-test
+    clock-test
     audio-test
     network-test
     battery-test
