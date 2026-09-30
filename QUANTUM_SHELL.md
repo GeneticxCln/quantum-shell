@@ -2793,7 +2793,7 @@ and starts the chosen entry with `QProcess::startDetached`. The surface is `qml/
 and destroyed by `src/app/LauncherHost.*` as the service's `open` moves. One config key, `[launcher] max_results`
 (default 8, 1 to 50); one IPC verb, `launcher toggle`. Terminal applications are not offered: starting one means
 choosing a terminal emulator and there is no verified convention to choose by. Not done: the design's provider
-plugins (emoji, calculator, window switcher), frecency ordering, icons. Escape closes it, and so does a click outside the panel (the backdrop, below). Verified by `apps-test`, `launcher-test`
+plugins (emoji, calculator, window switcher), icons. Launches are remembered (frecency): each successful launch is recorded in `$XDG_STATE_HOME/quantum-shell/launcher-history.json` (`~/.local/state` when unset) — count and last time per desktop file ID, written atomically on a writer thread and read on the scan's worker — and among equally good matches the entry with the higher recency-weighted count comes first, so the empty query opens on what was started lately; it never outranks a better match. It is the shell's own state, not configuration: no config key, no `schema_version`, a file that is not its format is refused with a record and replaced by the next launch. Escape closes it, and so does a click outside the panel (the backdrop, below). Verified by `apps-test`, `launcher-test`
 (offscreen, keys sent through the window's own event path, a real process started by Enter) and the IPC tests.
 
 **Backdrop (landed).** A layer surface has no popup grab, so a click outside a panel can only be seen by a surface

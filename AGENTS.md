@@ -1076,7 +1076,7 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    rather than its text field, so typing would never have reached it, and toml++'s
                    `value<int64_t>()` answers 1 for `true`, so every integer key in the schema — `bar.height`
                    included — accepted a boolean as a number; `integerOf` now type-tests, pinned in
-                   `config-test`. Not done: provider plugins, frecency, icons.
+                   `config-test`. Not done: provider plugins, icons. Frecency landed after it: `LaunchHistory` (`src/apps/`) records each successful launch (count, last time per desktop file ID) in `$XDG_STATE_HOME/quantum-shell/launcher-history.json`, written atomically on a writer thread and read on the scan worker, and `rank` orders equally good matches by recency-weighted count — so the empty query opens on what was started lately — without ever outranking a better match; four `apps-test` slots, two mutations each caught (the tie-break removed, the write removed).
 
                    The control centre is the landing after the launcher, and it is partial on purpose:
                    `qsctl control-center toggle` opens a top-right overlay (`quantum-shell-control-center`, keyboard

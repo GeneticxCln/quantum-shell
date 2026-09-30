@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QProcess>
 #include <QQmlEngine>
@@ -41,8 +42,10 @@ LauncherService::LauncherService(const QStringList& dataDirs, const QStringList&
     , currentDesktops_(currentDesktops)
     , locale_(locale)
 {
-    watcher_ = new QFutureWatcher<QList<DesktopEntry>>(this);
-    connect(watcher_, &QFutureWatcher<QList<DesktopEntry>>::finished, this, &LauncherService::applyScan);
+    // One writer thread, so two launches in quick succession are written in the order they happened.
+    writer_.setMaxThreadCount(1);
+    watcher_ = new QFutureWatcher<Scan>(this);
+    connect(watcher_, &QFutureWatcher<Scan>::finished, this, &LauncherService::applyScan);
 }
 
 LauncherService::~LauncherService()
@@ -51,6 +54,19 @@ LauncherService::~LauncherService()
     // the watcher from delivering to an object that is gone.
     if (watcher_ != nullptr)
         watcher_->waitForFinished();
+    writer_.waitForDone();
+}
+
+void LauncherService::setHistoryPath(const QString& path)
+{
+    historyPath_ = path;
+}
+
+QString LauncherService::defaultHistoryPath()
+{
+    const QString state = qEnvironmentVariable("XDG_STATE_HOME");
+    const QString base = state.isEmpty() ? QDir::homePath() + QStringLiteral("/.local/state") : state;
+    return base + QStringLiteral("/quantum-shell/launcher-history.json");
 }
 
 QStringList LauncherService::defaultDataDirs()
@@ -112,11 +128,13 @@ QList<DesktopEntry> LauncherService::scan(const QStringList& dataDirs, const QSt
     return offered;
 }
 
-QList<DesktopEntry> LauncherService::rank(const QList<DesktopEntry>& entries, const QString& query, int limit)
+QList<DesktopEntry> LauncherService::rank(const QList<DesktopEntry>& entries, const QString& query, int limit,
+                                          const LaunchHistory& history, qint64 nowMs)
 {
     struct Scored
     {
         int score;
+        qint64 frecency;
         const DesktopEntry* entry;
     };
     QList<Scored> scored;
@@ -134,11 +152,13 @@ QList<DesktopEntry> LauncherService::rank(const QList<DesktopEntry>& entries, co
                 score = viaComment - 90;
         }
         if (score >= 0 || query.isEmpty())
-            scored.append({std::max(score, 0), &entry});
+            scored.append({std::max(score, 0), frecency(history.value(entry.id), nowMs), &entry});
     }
     std::sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) {
         if (a.score != b.score)
             return a.score > b.score;
+        if (a.frecency != b.frecency)
+            return a.frecency > b.frecency;
         const int byName = a.entry->name.compare(b.entry->name, Qt::CaseInsensitive);
         return byName != 0 ? byName < 0 : a.entry->id < b.entry->id;
     });
@@ -173,18 +193,36 @@ void LauncherService::refresh()
     const QStringList dirs = dataDirs_;
     const QStringList desktops = currentDesktops_;
     const QString locale = locale_;
-    watcher_->setFuture(QtConcurrent::run([dirs, desktops, locale] {
+    const QString historyPath = historyPath_;
+    watcher_->setFuture(QtConcurrent::run([dirs, desktops, locale, historyPath] {
         int refused = 0;
-        const QList<DesktopEntry> found = scan(dirs, desktops, locale, &refused);
-        qCInfo(quantum::app::launcherLog) << "scanned" << dirs.size() << "data directories:" << found.size()
-                                         << "applications offered," << refused << "entries refused";
-        return found;
+        Scan result;
+        result.entries = scan(dirs, desktops, locale, &refused);
+        qCInfo(quantum::app::launcherLog) << "scanned" << dirs.size() << "data directories:"
+                                         << result.entries.size() << "applications offered," << refused
+                                         << "entries refused";
+        if (!historyPath.isEmpty()) {
+            QString error;
+            result.history = readHistoryFile(historyPath, &error);
+            if (!error.isEmpty())
+                qCWarning(quantum::app::launcherLog)
+                    << "launch history" << historyPath << "could not be read:" << error << "; starting empty";
+        }
+        return result;
     }));
 }
 
 void LauncherService::applyScan()
 {
-    entries_ = watcher_->result();
+    const Scan scanned = watcher_->result();
+    entries_ = scanned.entries;
+    // A launch made while this scan ran is already in `history_` and not yet in what the worker read; merging by
+    // the larger count keeps it.
+    for (auto it = scanned.history.cbegin(); it != scanned.history.cend(); ++it) {
+        LaunchRecord& mine = history_[it.key()];
+        if (it.value().count > mine.count)
+            mine = it.value();
+    }
     scanning_ = false;
     emit scanningChanged();
     emit applicationCountChanged();
@@ -197,7 +235,7 @@ void LauncherService::applyScan()
 
 void LauncherService::rerank()
 {
-    QList<DesktopEntry> next = rank(entries_, query_, maxResults_);
+    QList<DesktopEntry> next = rank(entries_, query_, maxResults_, history_, QDateTime::currentMSecsSinceEpoch());
     const bool changed = next != shown_;
     shown_ = std::move(next);
     const int selected = shown_.isEmpty() ? -1 : 0;
@@ -286,6 +324,17 @@ bool LauncherService::launch(int index)
         return false;
     }
     qCInfo(quantum::app::launcherLog) << "started" << program << "for" << entry.id;
+    if (!historyPath_.isEmpty()) {
+        recordLaunch(history_, entry.id, QDateTime::currentMSecsSinceEpoch());
+        const QString path = historyPath_;
+        const LaunchHistory snapshot = history_;
+        writer_.start([path, snapshot] {
+            QString error;
+            if (!writeHistoryFile(path, snapshot, &error))
+                qCWarning(quantum::app::launcherLog)
+                    << "launch history" << path << "could not be written:" << error;
+        });
+    }
     setOpen(false);
     return true;
 }

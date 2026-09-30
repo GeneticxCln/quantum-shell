@@ -34,12 +34,14 @@
 #pragma once
 
 #include "apps/DesktopEntry.h"
+#include "apps/LaunchHistory.h"
 
 #include <QFutureWatcher>
 #include <QList>
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QThreadPool>
 #include <QVariantList>
 
 QT_BEGIN_NAMESPACE
@@ -87,7 +89,11 @@ public:
                                     const QString& locale, int* refused = nullptr);
 
     // Ranks `entries` against `query`: best first, ties by name, nothing that does not match, at most `limit`.
-    static QList<DesktopEntry> rank(const QList<DesktopEntry>& entries, const QString& query, int limit);
+    // Among equally good matches the entry with the higher `frecency` of `history` at `nowMs` comes first, then
+    // the name. Frecency never outranks a better match: it orders ties, which is every entry when the query is
+    // empty — the state the launcher opens in, where what was started lately is what is wanted.
+    static QList<DesktopEntry> rank(const QList<DesktopEntry>& entries, const QString& query, int limit,
+                                    const LaunchHistory& history = {}, qint64 nowMs = 0);
 
     bool isOpen() const { return open_; }
     QString query() const { return query_; }
@@ -99,6 +105,13 @@ public:
 
     void setOpen(bool open);
     void setQuery(const QString& query);
+
+    // Where launches are remembered. Empty (the default) keeps no history. Set once before the first `refresh()`:
+    // the file is read on the scan's worker thread, and each successful launch is recorded and written on a
+    // writer thread of the service's own, so neither blocks the GUI thread.
+    void setHistoryPath(const QString& path);
+    // `$XDG_STATE_HOME/quantum-shell/launcher-history.json`, `~/.local/state` when the variable is unset.
+    static QString defaultHistoryPath();
 
     // A value outside `MinMaxResults`..`MaxMaxResults` is refused with a record, for the reason every other
     // service refuses what the schema would: two places with an opinion agree or one is wrong.
@@ -131,6 +144,13 @@ Q_SIGNALS:
     void scanningChanged();
 
 private:
+    // What the scan's worker returns: the entries and the history read beside them, so both arrive on the GUI
+    // thread together and a ranking never sees one without the other.
+    struct Scan {
+        QList<DesktopEntry> entries;
+        LaunchHistory history;
+    };
+
     void applyScan();
     void rerank();
 
@@ -147,7 +167,11 @@ private:
     bool scanning_ = false;
     bool rescanQueued_ = false;
 
-    QFutureWatcher<QList<DesktopEntry>>* watcher_ = nullptr;
+    QString historyPath_;
+    LaunchHistory history_;
+    QThreadPool writer_;
+
+    QFutureWatcher<Scan>* watcher_ = nullptr;
 };
 
 }  // namespace quantum::apps
