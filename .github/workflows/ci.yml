@@ -68,7 +68,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwayland-dev libwayland-bin wayland-protocols pkg-config \
-            libxkbcommon-dev libdbus-1-dev dbus meson ninja-build libdbus-1-dev
+            libxkbcommon-dev libdbus-1-dev dbus meson ninja-build libglib2.0-dev
 
       - name: Cache PipeWire 1.6.0
         id: pipewire-cache
@@ -157,7 +157,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwayland-dev libwayland-bin wayland-protocols pkg-config \
-            libxkbcommon-dev libdbus-1-dev dbus meson ninja-build libdbus-1-dev
+            libxkbcommon-dev libdbus-1-dev dbus meson ninja-build libglib2.0-dev
 
       - name: Cache PipeWire 1.6.0
         id: pipewire-cache
