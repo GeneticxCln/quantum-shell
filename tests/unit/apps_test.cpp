@@ -6,6 +6,7 @@
 // directory this test writes: the entries in it are the answer for files the test made, so nothing here can be
 // moved by what is installed on the machine that runs it.
 #include "apps/DesktopEntry.h"
+#include "apps/LaunchHistory.h"
 #include "apps/LauncherService.h"
 #include "config/ConfigSchema.h"
 
@@ -20,6 +21,8 @@
 #include <QTest>
 
 using quantum::apps::DesktopEntry;
+using quantum::apps::LaunchHistory;
+using quantum::apps::LaunchRecord;
 using quantum::apps::LauncherService;
 using quantum::apps::isOffered;
 using quantum::apps::matchScore;
@@ -86,6 +89,10 @@ private slots:
     void aLaunchStartsARealProcessWithItsArgumentsAndClosesThePanel();
     void aProgramThatCannotStartLeavesThePanelOpen();
     void maxResultsIsBoundedAndCapsTheList();
+    void frecencyWeighsTheCountByHowRecentTheLastLaunchWas();
+    void theHistoryFileRoundTripsAndRefusesWhatIsNotItsFormat();
+    void frecencyOrdersTiesAndNeverOutranksABetterMatch();
+    void aLaunchIsRememberedAndOrdersTheNextOpen();
 };
 
 void AppsTest::anApplicationEntryIsParsed()
@@ -463,6 +470,157 @@ void AppsTest::maxResultsIsBoundedAndCapsTheList()
     service.setMaxResults(LauncherService::MaxMaxResults + 1);
     QCOMPARE(service.maxResults(), 2);
     QCOMPARE(changed.count(), 1);
+}
+
+void AppsTest::frecencyWeighsTheCountByHowRecentTheLastLaunchWas()
+{
+    constexpr qint64 day = 24LL * 60 * 60 * 1000;
+    const qint64 now = 1'000'000LL * day;
+    QCOMPARE(quantum::apps::frecency({3, now - 1 * day}, now), qint64{300});
+    QCOMPARE(quantum::apps::frecency({3, now - 5 * day}, now), qint64{210});
+    QCOMPARE(quantum::apps::frecency({3, now - 20 * day}, now), qint64{150});
+    QCOMPARE(quantum::apps::frecency({3, now - 60 * day}, now), qint64{90});
+    QCOMPARE(quantum::apps::frecency({3, now - 400 * day}, now), qint64{30});
+    // The edges: exactly four days is the second bucket, one millisecond short of it the first.
+    QCOMPARE(quantum::apps::frecency({1, now - 4 * day + 1}, now), qint64{100});
+    QCOMPARE(quantum::apps::frecency({1, now - 4 * day}, now), qint64{70});
+    // Often long ago yields to a few times lately.
+    QVERIFY(quantum::apps::frecency({2, now - 1 * day}, now) > quantum::apps::frecency({15, now - 400 * day}, now));
+    // Nothing launched is nothing; a clock set back is the newest bucket and not a negative age.
+    QCOMPARE(quantum::apps::frecency({0, now}, now), qint64{0});
+    QCOMPARE(quantum::apps::frecency({2, now + 10 * day}, now), qint64{200});
+
+    LaunchHistory history;
+    quantum::apps::recordLaunch(history, QStringLiteral("a.desktop"), 5);
+    quantum::apps::recordLaunch(history, QStringLiteral("a.desktop"), 9);
+    QCOMPARE(history.value(QStringLiteral("a.desktop")), (LaunchRecord{2, 9}));
+}
+
+void AppsTest::theHistoryFileRoundTripsAndRefusesWhatIsNotItsFormat()
+{
+    LaunchHistory history;
+    history.insert(QStringLiteral("a.desktop"), {4, 1'700'000'000'123LL});
+    history.insert(QStringLiteral("org.x.B.desktop"), {1, 5});
+    QString error;
+    const auto parsed = quantum::apps::parseHistory(quantum::apps::serializeHistory(history), &error);
+    QVERIFY2(parsed.has_value(), qPrintable(error));
+    QCOMPARE(*parsed, history);
+
+    for (const char* bad : {"", "not json", "[1, 2]", "3", "{\"a\": "}) {
+        QString why;
+        QVERIFY2(!quantum::apps::parseHistory(bad, &why).has_value(), bad);
+        QVERIFY2(!why.isEmpty(), bad);
+    }
+    // One bad entry is dropped and the rest are kept: a non-object, a missing field, a count that is zero,
+    // negative or fractional, a time that is text or fractional.
+    const auto partial = quantum::apps::parseHistory(
+        R"({"ok.desktop": {"count": 2, "last": 7}, "s": 4, "nolast": {"count": 1},
+            "zero": {"count": 0, "last": 1}, "neg": {"count": -3, "last": 1}, "frac": {"count": 1.5, "last": 1},
+            "text": {"count": "2", "last": 1}, "ftime": {"count": 1, "last": 1.5}})");
+    QVERIFY(partial.has_value());
+    QCOMPARE(partial->size(), 1);
+    QCOMPARE(partial->value(QStringLiteral("ok.desktop")), (LaunchRecord{2, 7}));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("state/deeper/launcher-history.json"));
+    // Not there yet: an empty history and no error, because nothing has been launched.
+    QString readError;
+    QVERIFY(quantum::apps::readHistoryFile(path, &readError).isEmpty());
+    QVERIFY2(readError.isEmpty(), qPrintable(readError));
+    // Written into a directory that did not exist, and read back.
+    QString writeError;
+    QVERIFY2(quantum::apps::writeHistoryFile(path, history, &writeError), qPrintable(writeError));
+    QCOMPARE(quantum::apps::readHistoryFile(path, &readError), history);
+    // A file that exists and is not the format is an empty history *and* an error, and is replaced by the next write.
+    QVERIFY(write(path, QStringLiteral("garbage")));
+    readError.clear();
+    QVERIFY(quantum::apps::readHistoryFile(path, &readError).isEmpty());
+    QVERIFY(!readError.isEmpty());
+    QVERIFY2(quantum::apps::writeHistoryFile(path, history, &writeError), qPrintable(writeError));
+    QCOMPARE(quantum::apps::readHistoryFile(path, &readError), history);
+}
+
+void AppsTest::frecencyOrdersTiesAndNeverOutranksABetterMatch()
+{
+    constexpr qint64 day = 24LL * 60 * 60 * 1000;
+    const qint64 now = 1'000'000LL * day;
+    const QList<DesktopEntry> entries{
+        make(QStringLiteral("a"), QStringLiteral("Alpha"), QStringLiteral("/usr/bin/alpha")),
+        make(QStringLiteral("b"), QStringLiteral("Beta"), QStringLiteral("/usr/bin/beta")),
+        make(QStringLiteral("g"), QStringLiteral("Gamma"), QStringLiteral("/usr/bin/gamma")),
+        make(QStringLiteral("f"), QStringLiteral("Firefox"), QStringLiteral("/usr/bin/firefox")),
+        make(QStringLiteral("w"), QStringLiteral("Web Browser"), QStringLiteral("/usr/bin/firefox-esr"))};
+    LaunchHistory history;
+    history.insert(QStringLiteral("g"), {5, now - 1 * day});
+    history.insert(QStringLiteral("b"), {1, now - 1 * day});
+    history.insert(QStringLiteral("w"), {50, now - 1 * day});
+
+    // The empty query: every entry ties at zero, so history decides, then the name.
+    const auto opened = LauncherService::rank(entries, QString(), 10, history, now);
+    QCOMPARE(opened.at(0).id, QStringLiteral("w"));
+    QCOMPARE(opened.at(1).id, QStringLiteral("g"));
+    QCOMPARE(opened.at(2).id, QStringLiteral("b"));
+    QCOMPARE(opened.at(3).id, QStringLiteral("a"));
+    QCOMPARE(opened.at(4).id, QStringLiteral("f"));
+    // Without a history it is by name, as before.
+    QCOMPARE(LauncherService::rank(entries, QString(), 10).at(0).id, QStringLiteral("a"));
+
+    // `fire`: Firefox is a prefix of the name and "Web Browser" matches only through its program, which is weaker;
+    // fifty launches of the latter do not lift it over the former.
+    const auto fire = LauncherService::rank(entries, QStringLiteral("fire"), 10, history, now);
+    QCOMPARE(fire.at(0).id, QStringLiteral("f"));
+    QCOMPARE(fire.at(1).id, QStringLiteral("w"));
+}
+
+void AppsTest::aLaunchIsRememberedAndOrdersTheNextOpen()
+{
+    const QString touch = QStandardPaths::findExecutable(QStringLiteral("touch"));
+    if (touch.isEmpty())
+        QSKIP("no `touch` on this machine to start");
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString marker = root.filePath(QStringLiteral("ran"));
+    QVERIFY(write(root.filePath(QStringLiteral("applications/a.desktop")),
+                  entryText(QStringLiteral("Alpha"), QStringLiteral("/nonexistent-alpha"))));
+    QVERIFY(write(root.filePath(QStringLiteral("applications/b.desktop")),
+                  entryText(QStringLiteral("Beta"), QStringLiteral("%1 \"%2\"").arg(touch, marker))));
+    const QString history = root.filePath(QStringLiteral("state/launcher-history.json"));
+
+    {
+        LauncherService service({root.path()}, {}, QString());
+        service.setHistoryPath(history);
+        service.setOpen(true);
+        QTRY_COMPARE_WITH_TIMEOUT(service.results().size(), 2, 5000);
+        // By name, nothing launched yet.
+        QCOMPARE(service.shown().at(0).id, QStringLiteral("a.desktop"));
+        QVERIFY(!QFileInfo::exists(history));
+
+        service.setQuery(QStringLiteral("beta"));
+        QVERIFY(service.launchSelected());
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(marker), 5000);
+        // The history is written off the GUI thread; the destructor waits for it.
+    }
+    QVERIFY(QFileInfo::exists(history));
+    QString error;
+    const LaunchHistory stored = quantum::apps::readHistoryFile(history, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(stored.size(), 1);
+    QCOMPARE(stored.value(QStringLiteral("b.desktop")).count, 1);
+
+    // A new service — a new shell — with the same file opens with the launched entry first, though "Alpha" is
+    // first by name.
+    LauncherService again({root.path()}, {}, QString());
+    again.setHistoryPath(history);
+    again.setOpen(true);
+    QTRY_COMPARE_WITH_TIMEOUT(again.results().size(), 2, 5000);
+    QCOMPARE(again.shown().at(0).id, QStringLiteral("b.desktop"));
+
+    // Without a path there is no history and no file: the order is by name.
+    LauncherService none({root.path()}, {}, QString());
+    none.setOpen(true);
+    QTRY_COMPARE_WITH_TIMEOUT(none.results().size(), 2, 5000);
+    QCOMPARE(none.shown().at(0).id, QStringLiteral("a.desktop"));
 }
 
 QTEST_MAIN(AppsTest)

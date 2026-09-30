@@ -173,6 +173,7 @@ int main(int argc, char **argv)
                                             qEnvironmentVariable("XDG_CURRENT_DESKTOP")
                                                 .split(QLatin1Char(':'), Qt::SkipEmptyParts),
                                             QLocale::system().name());
+    launcher.setHistoryPath(quantum::apps::LauncherService::defaultHistoryPath());
     quantum::apps::LauncherService::registerQmlSingleton(launcher);
     launcher.setMaxResults(config.launcher()->maxResults());
     QObject::connect(config.launcher(), &quantum::config::ConfigLauncher::maxResultsChanged, &launcher,

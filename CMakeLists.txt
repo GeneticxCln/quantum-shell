@@ -171,6 +171,7 @@ target_link_libraries(quantum-shell-control-center PUBLIC Qt6::Core Qt6::Qml qua
 # process a launch starts (`LauncherService`). Core, Concurrent and Qml only; the surface is a host's.
 add_library(quantum-shell-apps STATIC
     src/apps/DesktopEntry.cpp
+    src/apps/LaunchHistory.cpp
     src/apps/LauncherService.cpp)
 target_include_directories(quantum-shell-apps PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-apps
