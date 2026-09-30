@@ -57,7 +57,7 @@ These are public interface (`AGENTS.md` § Public interface is frozen without ap
 key binding or an external widget can rely on them across upgrades:
 
 - the layer-shell namespaces `quantum-shell-*` (`bar`, `toast`, `notification-history`, `osd`, `launcher`,
-  `control-center`, `backdrop`);
+  `control-center`, `calendar`, `backdrop`);
 - the abstract socket `\0quantum-shell` and the six IPC verbs (`version`, `state`, `config get`, `bar toggle`,
   `launcher toggle`, `control-center toggle`);
 - every configuration key in `ENGINEERING_SPEC.md` § 2.5, with its default and bound.

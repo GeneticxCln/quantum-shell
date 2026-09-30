@@ -84,7 +84,7 @@ qs_unit_test(bar-interaction-test
 # own (the same harness `notification-test` uses), takes the notifications name with the service, hands it
 # back at the end of the slot that asked, and — with a real reading in hand — tells the readout's
 # configuration slot apart from one that would pass with the flag ignored.
-target_link_libraries(bar-interaction-test PRIVATE Qt6::Quick quantum-shell-system quantum-shell-config quantum-shell-notifications
+target_link_libraries(bar-interaction-test PRIVATE Qt6::Quick quantum-shell-control-center quantum-shell-system quantum-shell-config quantum-shell-notifications
                                                  quantum-shell-audio quantum-shell-network
                                                  quantum-shell-battery quantum-shell-media quantum-shell-logging
                                                  qs-test-support)
@@ -108,12 +108,19 @@ foreach(qs_qml IN LISTS QS_QML_FILES)
         set(QS_BACKDROP_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "Launcher\\.qml$")
         set(QS_LAUNCHER_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
+    elseif(qs_qml MATCHES "Calendar\\.qml$")
+        set(QS_CALENDAR_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "ControlCenter\\.qml$")
         set(QS_CONTROL_CENTER_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     elseif(qs_qml MATCHES "NotificationHistory\\.qml$")
         set(QS_HISTORY_QML "${CMAKE_SOURCE_DIR}/${qs_qml}")
     endif()
 endforeach()
+if(NOT DEFINED QS_CALENDAR_QML)
+    message(FATAL_ERROR
+        "no Calendar.qml is named in QS_QML_FILES, so control-center-test would have no calendar to load and would "
+        "fail at run time instead of here.")
+endif()
 if(NOT DEFINED QS_BACKDROP_QML)
     message(FATAL_ERROR
         "no Backdrop.qml is named in QS_QML_FILES, so the panel tests would have no backdrop to load and would "
@@ -230,6 +237,7 @@ target_link_libraries(control-center-test PRIVATE quantum-shell-toasts quantum-s
                       quantum-shell-notifications quantum-shell-media quantum-shell-config
                       Qt6::Gui Qt6::Quick qs-test-support)
 target_compile_definitions(control-center-test PRIVATE QS_CONTROL_CENTER_QML="${QS_CONTROL_CENTER_QML}"
+    QS_CALENDAR_QML="${QS_CALENDAR_QML}"
     QS_BACKDROP_QML="${QS_BACKDROP_QML}")
 
 # The launcher's surface: the host, the QML it creates, and keys typed into it reaching the service. Offscreen.

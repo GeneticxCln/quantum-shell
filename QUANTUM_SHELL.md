@@ -546,6 +546,7 @@ Typical surfaces:
 | OSD (volume, landed) | overlay | none | `quantum-shell-osd` |
 | Control Center (landed, partial) | overlay | on-demand | `quantum-shell-control-center` |
 | Launcher (landed) | overlay | exclusive | `quantum-shell-launcher` |
+| Calendar (landed) | overlay | on-demand | `quantum-shell-calendar` |
 | Backdrop (landed) | top | none | `quantum-shell-backdrop` |
 | Lock surface | session-lock (not layer-shell) | exclusive | `quantum-shell-lock` |
 
@@ -2808,6 +2809,17 @@ to the backdrop (and fail with the QML handler or the host's teardown removed). 
 of the top layer against the bar is unchecked (a click on the bar while a panel is open may reach the backdrop
 rather than the bar); and a panel opened while another is open has two backdrops, of which the upper one takes the
 click.
+
+**Calendar (landed).** A click on the bar's clock opens `qml/Calendar.qml` (`quantum-shell-calendar`, overlay layer,
+top-right below the bar, keyboard on demand): a six-week month grid of the system's own date, today marked, previous
+and next buttons, the locale's first weekday and names — no events, because nothing in this shell reads a calendar of
+events. "Today" is the date when the panel was opened, so it needs no timer. The state is `CalendarService.open`,
+followed by `CalendarHost`; a second click on the clock, Escape or a click outside (the backdrop) closes it. No config
+key and no IPC verb were added. Not done: events, week numbers.
+
+**Panels, one at a time.** The launcher, control centre, notification history and calendar are one at a time:
+`PanelGroup` closes the others when one opens, through their own services, so there is never a second panel or a
+second backdrop. The four hosts are one class, `PanelHost`, that differ only in which service holds the state.
 
 **Control centre (landed, partial).** `qsctl control-center toggle` opens a panel in the top-right corner (overlay
 layer, keyboard on demand, `quantum-shell-control-center`) holding only the controls this shell has a real service

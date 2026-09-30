@@ -10,7 +10,11 @@
 // audio write itself (`setVolumePercent`, `toggleMute`) is proven against a real PipeWire daemon by
 // `audio-live-test`, and is not repeated here.
 #include "app/ControlCenterHost.h"
+#include "app/CalendarHost.h"
+#include "app/CalendarService.h"
 #include "app/ControlCenterService.h"
+#include "app/PanelGroup.h"
+#include "apps/LauncherService.h"
 #include "BackdropClick.h"
 #include "audio/PipeWireService.h"
 #include "config/Config.h"
@@ -20,7 +24,10 @@
 
 #include "MprisFixtures.h"
 
+#include <QDate>
+#include <functional>
 #include <QGuiApplication>
+#include <QLocale>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -65,6 +72,8 @@ private slots:
     void theTextAndGeometryRulesAnswerForTheReadingsADaemonSends();
     void escapeClosesAndASurfaceTheCompositorClosesLeavesItClosed();
     void aClickOutsideThePanelClosesItAndTheBackdropGoesWithIt();
+    void openingOnePanelClosesTheOthers();
+    void theCalendarDrawsTheMonthItIsOpenedOnAndMovesByMonth();
 
 private:
     QWindow* openPanel();
@@ -356,6 +365,121 @@ void ControlCenterTest::aClickOutsideThePanelClosesItAndTheBackdropGoesWithIt()
     QTRY_VERIFY_WITH_TIMEOUT(!state_.isOpen(), settleMs);
     QTRY_VERIFY_WITH_TIMEOUT(host_->window() == nullptr, settleMs);
     QTRY_VERIFY_WITH_TIMEOUT(host_->backdropWindow() == nullptr, settleMs);
+}
+
+void ControlCenterTest::openingOnePanelClosesTheOthers()
+{
+    quantum::apps::LauncherService launcher(QStringList{}, QStringList{}, QString());
+    quantum::app::CalendarService calendar;
+    quantum::app::PanelGroup panels(launcher, state_, notifications_, calendar);
+
+    // Each panel, opened while another is up, replaces it: exactly one is open afterwards, and it is the one
+    // that was asked for.
+    const auto open = [&] { return QList<bool>{launcher.isOpen(), state_.isOpen(), notifications_.notificationHistoryOpen()}; };
+    launcher.setOpen(true);
+    QCOMPARE(open(), (QList<bool>{true, false, false}));
+    state_.setOpen(true);
+    QCOMPARE(open(), (QList<bool>{false, true, false}));
+    notifications_.setNotificationHistoryOpen(true);
+    QCOMPARE(open(), (QList<bool>{false, false, true}));
+    launcher.setOpen(true);
+    QCOMPARE(open(), (QList<bool>{true, false, false}));
+    // Every ordered pair, not only the ones the chain above happens to visit: each panel closing each other one.
+    state_.setOpen(true);
+    launcher.setOpen(true);
+    QCOMPARE(open(), (QList<bool>{true, false, false}));
+    notifications_.setNotificationHistoryOpen(true);
+    launcher.setOpen(true);
+    QCOMPARE(open(), (QList<bool>{true, false, false}));
+    notifications_.setNotificationHistoryOpen(true);
+    state_.setOpen(true);
+    QCOMPARE(open(), (QList<bool>{false, true, false}));
+    state_.setOpen(false);
+    launcher.setOpen(true);
+    state_.setOpen(true);
+    QCOMPARE(open(), (QList<bool>{false, true, false}));
+    launcher.setOpen(true);
+
+    // Closing one closes nothing else, and one closing is not another opening.
+    launcher.setOpen(false);
+    QCOMPARE(open(), (QList<bool>{false, false, false}));
+    state_.setOpen(true);
+    state_.setOpen(false);
+    QCOMPARE(open(), (QList<bool>{false, false, false}));
+    notifications_.setNotificationHistoryOpen(false);
+}
+
+void ControlCenterTest::theCalendarDrawsTheMonthItIsOpenedOnAndMovesByMonth()
+{
+    quantum::app::CalendarService calendar;
+    quantum::app::CalendarHost host(calendar, *engine_, QUrl::fromLocalFile(QStringLiteral(QS_CALENDAR_QML)),
+                                    QUrl::fromLocalFile(QStringLiteral(QS_BACKDROP_QML)));
+    QVERIFY2(host.ready(), qPrintable(host.componentError()));
+    QVERIFY(host.window() == nullptr);
+
+    calendar.setOpen(true);
+    QVERIFY(QTest::qWaitFor([&] { return host.window() != nullptr && host.window()->isVisible(); }, settleMs));
+    QWindow* window = host.window();
+    QCOMPARE(window->property("layerNamespace").toString(), QStringLiteral("quantum-shell-calendar"));
+    QCOMPARE(window->property("layer").toInt(), static_cast<int>(QuantumShell::LayerShellWindow::Overlay));
+    backdrop::verifyIsABackdrop(host.backdropWindow());
+
+    // The month shown is the one containing today, and the grid is six weeks with today marked exactly once.
+    const QDate today = QDate::currentDate();
+    QVariant title;
+    auto* quick = qobject_cast<QQuickWindow*>(window);
+    QVERIFY(quick != nullptr);
+    quick->resize(quick->width() + 1, quick->height());
+    quick->resize(quick->width() - 1, quick->height());
+    QVERIFY(QTest::qWaitFor([&] { return quick->contentItem()->width() > 0; }, settleMs));
+    // Visual children are found through `childItems`, which `findChild` does not follow.
+    std::function<void(QQuickItem*, const QString&, QList<QQuickItem*>&)> collect =
+        [&](QQuickItem* item, const QString& name, QList<QQuickItem*>& out) {
+            if (item->objectName() == name)
+                out.append(item);
+            for (QQuickItem* child : item->childItems())
+                collect(child, name, out);
+        };
+    const auto all = [&](const char* name) {
+        QList<QQuickItem*> out;
+        collect(quick->contentItem(), QString::fromLatin1(name), out);
+        return out;
+    };
+    const auto findText = [&](const char* name) {
+        const QList<QQuickItem*> found = all(name);
+        return found.isEmpty() ? nullptr : found.first();
+    };
+    QQuickItem* titleItem = findText("calendarTitle");
+    QVERIFY2(titleItem != nullptr, "the panel has no title");
+    const QString expected = QLocale().monthName(today.month(), QLocale::LongFormat) + QLatin1Char(' ') + QString::number(today.year());
+    QCOMPARE(titleItem->property("text").toString(), expected);
+    const QList<QQuickItem*> days = all("calendarDay");
+    QCOMPARE(days.size(), 42);
+    int marked = 0;
+    for (QQuickItem* day : days)
+        marked += day->property("today").toBool() ? 1 : 0;
+    QCOMPARE(marked, 1);
+
+    // The next button moves one month on, and today is then not in the grid.
+    QQuickItem* next = findText("calendarNext");
+    QVERIFY(next != nullptr);
+    const QPointF point = next->mapToScene(QPointF(next->width() / 2, next->height() / 2));
+    QTest::mouseClick(quick, Qt::LeftButton, Qt::NoModifier, point.toPoint());
+    const QDate later = today.addMonths(1);
+    const QString expectedLater = QLocale().monthName(later.month(), QLocale::LongFormat) + QLatin1Char(' ') + QString::number(later.year());
+    QTRY_COMPARE_WITH_TIMEOUT(titleItem->property("text").toString(), expectedLater, settleMs);
+    // Today may still appear, as one of the leading days of the next month's first week, but never as a day of
+    // the month shown: those cells are the month's own, and today is not in it.
+    for (QQuickItem* day : all("calendarDay")) {
+        if (day->property("today").toBool())
+            QVERIFY2(!day->property("modelData").toMap().value(QStringLiteral("inMonth")).toBool(),
+                     "today is marked inside a month it does not belong to");
+    }
+
+    // A click outside closes it, and the backdrop goes with it.
+    backdrop::click(host.backdropWindow());
+    QTRY_VERIFY_WITH_TIMEOUT(!calendar.isOpen(), settleMs);
+    QTRY_VERIFY_WITH_TIMEOUT(host.window() == nullptr, settleMs);
 }
 
 int main(int argc, char* argv[])

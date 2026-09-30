@@ -67,6 +67,12 @@ Text {
         }
     }
 
+    // A click on the time opens the calendar, and another closes it: the panel's state is the service's.
+    MouseArea {
+        anchors.fill: parent
+        onClicked: CalendarService.toggle()
+    }
+
     Connections {
         target: ClockService
         function onClockChanged() {

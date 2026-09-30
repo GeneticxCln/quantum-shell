@@ -20,8 +20,11 @@
 #include "app/HistoryHost.h"
 #include "app/ControlCenterHost.h"
 #include "app/CrashHandler.h"
+#include "app/CalendarHost.h"
+#include "app/CalendarService.h"
 #include "app/ControlCenterService.h"
 #include "app/LauncherHost.h"
+#include "app/PanelGroup.h"
 #include "app/OsdHost.h"
 #include "app/ToastHost.h"
 #include "apps/LauncherService.h"
@@ -179,6 +182,9 @@ int main(int argc, char **argv)
     // The control centre's open state, registered before the engine loads so the panel naming
     // `ControlCenterService` resolves. What the panel shows and does belongs to the services it is drawn from.
     quantum::app::ControlCenterService controlCenter;
+    // The calendar panel's open state, which the clock's click toggles; registered here for the same reason.
+    quantum::app::CalendarService calendar;
+    quantum::app::CalendarService::registerQmlSingleton(calendar);
     quantum::app::ControlCenterService::registerQmlSingleton(controlCenter);
 
     quantum::niri::NiriIPC requests;
@@ -309,6 +315,17 @@ int main(int argc, char **argv)
                                                       QUrl(QStringLiteral("qrc:/qml/ControlCenter.qml")), QUrl(QStringLiteral("qrc:/qml/Backdrop.qml")));
     if (!controlCenterHost.ready())
         return EXIT_FAILURE;
+
+    // The launcher, the control centre and the notification history are one at a time: opening one closes the
+    // others, so there is never a second panel and a second backdrop on the screen.
+    // The calendar's surface, opened by a click on the bar's clock; fails the process for the same reason the
+    // control centre's does.
+    quantum::app::CalendarHost calendarHost(calendar, engine, QUrl(QStringLiteral("qrc:/qml/Calendar.qml")),
+                                            QUrl(QStringLiteral("qrc:/qml/Backdrop.qml")));
+    if (!calendarHost.ready())
+        return EXIT_FAILURE;
+
+    quantum::app::PanelGroup panels(launcher, controlCenter, notifications, calendar);
 
     quantum::app::ShellCapabilities capabilities(service, config, &bars, &launcher, &controlCenter);
     quantum::ipc::IPCServer ipc(capabilities, QString::fromLatin1(quantum::ipc::SocketName));
