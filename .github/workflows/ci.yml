@@ -61,6 +61,38 @@ jobs:
       # The Qt in the runner image is older than this project's floor, and the floor is pinned rather
       # than inferred: building against a different Qt minor is the failure mode the risk register
       # calls out.
+      # The runner image has neither the Wayland development files Qt6WaylandClient's config needs nor a
+      # PipeWire at the 1.6 floor (Ubuntu 24.04 ships 1.0.5), so the first is installed from apt and the
+      # second is built from its 1.6.0 release tag into a cached prefix. The floor is not lowered.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libwayland-bin wayland-protocols pkg-config \
+            libxkbcommon-dev libdbus-1-dev dbus meson ninja-build libdbus-1-dev
+
+      - name: Cache PipeWire 1.6.0
+        id: pipewire-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/pipewire
+          key: pipewire-1.6.0-${{ runner.os }}-v1
+
+      - name: Build PipeWire 1.6.0
+        if: steps.pipewire-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch 1.6.0 https://gitlab.freedesktop.org/pipewire/pipewire.git /tmp/pipewire-src
+          meson setup /tmp/pipewire-build /tmp/pipewire-src --prefix=/opt/pipewire --libdir=lib \
+            -Dbuildtype=release -Dtests=disabled -Dexamples=disabled -Ddocs=disabled -Dman=disabled \
+            -Dsession-managers=[] -Dgstreamer=disabled -Dpw-cat=disabled -Dvulkan=disabled \
+            -Dbluez5=disabled -Dlibcamera=disabled -Dv4l2=disabled -Dpipewire-v4l2=disabled \
+            -Dalsa=disabled -Djack=disabled -Dpipewire-jack=disabled -Dsdl2=disabled -Dlibusb=disabled
+          ninja -C /tmp/pipewire-build install
+
+      - name: Point the build at PipeWire 1.6.0
+        run: |
+          echo "PKG_CONFIG_PATH=/opt/pipewire/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/pipewire/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
       - name: Install Qt 6.11.2
         uses: jurplel/install-qt-action@v4
         with:
@@ -117,6 +149,38 @@ jobs:
             https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-x86_64.tar.gz
           tar -xzf /tmp/cmake.tar.gz -C /tmp
           echo "/tmp/cmake-4.4.3-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      # The runner image has neither the Wayland development files Qt6WaylandClient's config needs nor a
+      # PipeWire at the 1.6 floor (Ubuntu 24.04 ships 1.0.5), so the first is installed from apt and the
+      # second is built from its 1.6.0 release tag into a cached prefix. The floor is not lowered.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libwayland-bin wayland-protocols pkg-config \
+            libxkbcommon-dev libdbus-1-dev dbus meson ninja-build libdbus-1-dev
+
+      - name: Cache PipeWire 1.6.0
+        id: pipewire-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/pipewire
+          key: pipewire-1.6.0-${{ runner.os }}-v1
+
+      - name: Build PipeWire 1.6.0
+        if: steps.pipewire-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch 1.6.0 https://gitlab.freedesktop.org/pipewire/pipewire.git /tmp/pipewire-src
+          meson setup /tmp/pipewire-build /tmp/pipewire-src --prefix=/opt/pipewire --libdir=lib \
+            -Dbuildtype=release -Dtests=disabled -Dexamples=disabled -Ddocs=disabled -Dman=disabled \
+            -Dsession-managers=[] -Dgstreamer=disabled -Dpw-cat=disabled -Dvulkan=disabled \
+            -Dbluez5=disabled -Dlibcamera=disabled -Dv4l2=disabled -Dpipewire-v4l2=disabled \
+            -Dalsa=disabled -Djack=disabled -Dpipewire-jack=disabled -Dsdl2=disabled -Dlibusb=disabled
+          ninja -C /tmp/pipewire-build install
+
+      - name: Point the build at PipeWire 1.6.0
+        run: |
+          echo "PKG_CONFIG_PATH=/opt/pipewire/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/pipewire/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Install Qt 6.11.2
         uses: jurplel/install-qt-action@v4
