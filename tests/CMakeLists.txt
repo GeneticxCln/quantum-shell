@@ -419,15 +419,19 @@ foreach(shard RANGE 1 ${QS_ORDER_CHECK_SHARDS})
     # is chosen so that the run's triples reach all six of their relative orders, and how far it got is
     # reported rather than assumed. Both are overridable in the environment — the script reads
     # QS_TEST_ORDER_SEED and QS_TEST_ORDER_PASSES — and QS_TEST_ORDER_SEED pins every shard at once. TIMEOUT
-    # is generous because a shard orders its own binaries ninety-six times each: about 100 s for the
-    # slowest shard here, which is the budget that figure was chosen against.
+    # is generous because a shard orders its own binaries ninety-six times each. It was 900 s when the slowest
+    # shard took about 100 s; the same shards were measured at 603 to 737 s on the machine this was built on
+    # and at 708 to 760 s on a hosted runner (four running together on two cores), and the heaviest of them
+    # timed out at 900 s on the machine here, so a budget that leaves under a fifth of headroom on the
+    # machines that actually run it is one the suite's own growth will cross. 1800 s is the same claim with
+    # room: the check is a count of orders reached, so a slow machine takes longer and tests the same thing.
     add_test(NAME slot-order-randomised-shard-${shard}
         COMMAND ${CMAKE_COMMAND}
             "-DTESTS=$<JOIN:${qs_shard_binaries},|>"
             "-DSHARD_INDEX=${shard}"
             "-DSHARD_COUNT=${QS_ORDER_CHECK_SHARDS}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_shuffled_order.cmake)
-    set_tests_properties(slot-order-randomised-shard-${shard} PROPERTIES TIMEOUT 900)
+    set_tests_properties(slot-order-randomised-shard-${shard} PROPERTIES TIMEOUT 1800)
 endforeach()
 
 message(STATUS

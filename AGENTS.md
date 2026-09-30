@@ -75,7 +75,7 @@ Real files in this repository:
                          to and calls into — the state service, whose QML-visible property and key names
                          are declared once in NiriServiceKeys.h, and the actions the bar performs
                          (`NiriActions`: focus a workspace by the id text a capsule carries, focus the
-                         workspace below or above) — whose module URI, version and both type names are
+                         workspace below or above, focus a window by its id text) — whose module URI, version and both type names are
                          declared once in NiriQmlModule.h, pinned by compile-time checks in their tests
   src/wayland/           the layer-shell client, Route 1: the vendored wlr-layer-shell protocol, the
                          generated Qt bindings, the zwlr_layer_surface_v1 role, the shell-integration
@@ -1150,6 +1150,15 @@ Status:           Phase 0 started: the niri connection is implemented and verifi
                    RSS plateaus, no leak) and a degraded-mode idle figure was taken there (0.067% CPU, about
                    50 MB, no niri or PipeWire). Not done: a versioned package, the release itself, the idle
                    measurement on niri, the Nix flake.
+
+                   The window list is the bar's next widget: `NiriService.windows` (every window niri reported, ordered by id, each in
+                   `focusedWindow`'s shape) and `NiriActions.focusWindowById` (`FocusWindow { id }`, the id as exact digits) feed
+                   `qml/Windows.qml`, an entry per window on the bar's own output's workspaces with the focused one marked, a click
+                   focusing the one named, and nothing drawn while there are none. It has no config key. Pinned by a `niri-service-test`
+                   slot, a `niri-actions-test` slot and a `bar-interaction-test` slot; three mutations each fail one (the output filter
+                   removed, the focused-entry skip removed, the id written as a double). **Not verified on niri**: `FocusWindow` is
+                   niri-ipc's action by its documented shape but this environment has no niri to send it to, so a live case in
+                   `niri-live-action-test` is still owed.
 
                    The most recent commits are `02f23b3` (the multi-output bar, toasts, theming and
                    packaging), `1e02310`, `f89873f`, `3420d9b` and `a449a39`; the notification daemon,

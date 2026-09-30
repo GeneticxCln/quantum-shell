@@ -1074,7 +1074,7 @@ The verbs exist only where a handler answers them, and they are declared once in
 | Verb | Answers with | Why it is real today |
 | --- | --- | --- |
 | `version` | `name`, `shell`, `protocol` | it is the shell's own build version, the same one its startup record carries |
-| `state` | the same six values `NiriService` exposes: `workspaces`, `focusedWindow`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` | read from the service itself, so the keys are its property names and cannot be a second mapping |
+| `state` | the same seven values `NiriService` exposes: `workspaces`, `focusedWindow`, `windows`, `outputs`, `keyboardLayout`, `overviewOpen`, `connected` | read from the service itself, so the keys are its property names and cannot be a second mapping |
 | `config get <path>` | `path` and `value` | the schema resolves it; the paths that exist are its own `KeyPaths` list — `bar.height`, `bar.layerNamespace`, `bar.system.sample_interval_ms`, `bar.system.show_cpu`, `bar.system.show_memory`, `bar.system.memory_format`, `bar.audio.show_volume`, `bar.audio.volume_scale`, `bar.audio.step_percent`, `bar.audio.step_decibels`, `bar.network.show_status`, `bar.network.show_name`, `bar.network.show_strength`, `bar.battery.show_status`, `bar.battery.show_percentage`, `bar.battery.show_time`, `bar.media.show_media`, `bar.notifications.show_notifications`, each asserted against the resolver in `ipc-capabilities-test` |
 | `bar toggle` | `visible` | every bar window's own visibility, moved together, and the compositor's layer list loses and regains each surface |
 | `control-center toggle` | `open` | the control centre state's own value after the move — the state the panel follows — so a key binding `spawn "qsctl" "control-center" "toggle"` opens and closes it |
@@ -1220,6 +1220,7 @@ Text { text: NiriService.keyboardLayout.currentName }
 | Property | The binding it exists for |
 | --- | --- |
 | `workspaces` | the workspace strip — `id` (text), `idx`, `name`, `output`, `isActive`, `isFocused`, `isUrgent`, `activeWindowId` |
+| `windows` | the window list — every window niri reported, ordered by id, each with `focusedWindow`'s keys |
 | `focusedWindow` | a title widget — `id` (text), `title`, `appId`, `isFocused`, `isFloating`, `isUrgent`, `workspaceId` |
 | `outputs` | per-monitor widgets — `name`, `make`/`model`, `isEnabled`, `x`/`y`/`width`/`height`, the fractional `scale`, `transform`, and the current mode with `refreshRate` in millihertz |
 | `keyboardLayout` | the layout indicator — `names`, `currentIndex`, `currentName` |
@@ -1345,7 +1346,7 @@ Two things the group owns, and they are the reason it is a component rather than
   Qt's own tree, so anything outside the component can address the group a widget landed in without
   counting the bar's children to work out which one it has hold of.
 
-Three groups, and no fourth: a left one holding the workspace strip, a centre one holding the system
+Three groups, and no fourth: a left one holding the workspace strip and the window list (`qml/Windows.qml`: one entry per window on the bar's own output's workspaces, the focused one marked, a click asking niri to `FocusWindow` it — no config key, so it cannot be switched off — and nothing drawn when there are none), a centre one holding the system
 status and a right one holding the trailing readouts — network, battery, media, notifications — and the
 volume and the clock. The centre group arrived the same way the other two did, with the widget that
 belongs in it, and so did each readout since: a group still arrives that way, so a widget the roadmap

@@ -192,6 +192,7 @@ private slots:
     void outputsAreAskedForAtOnceBecauseNiriDoesNotStreamThem();
     void theWorkspaceStripFollowsTheEventStream();
     void theFocusedWindowFollowsFocusEvents();
+    void theWindowListFollowsTheCompositorsWindows();
     void outputsAndKeyboardLayoutFollowTheCompositor();
     void everyValueQmlReadsComesFromTheFieldItNames();
     void everyKeyTheServiceCanEmitIsTheOneAWidgetReads();
@@ -392,6 +393,47 @@ void NiriServiceTest::theFocusedWindowFollowsFocusEvents() {
     pushEvent(QStringLiteral("WindowFocusChanged"), QJsonObject{{QStringLiteral("id"), QJsonValue()}});
     QTRY_VERIFY(service_.focusedWindow().isEmpty());
     QCOMPARE(changed.count(), 2);
+}
+
+void NiriServiceTest::theWindowListFollowsTheCompositorsWindows() {
+    pushEvent(QStringLiteral("WindowsChanged"), QJsonObject{{QStringLiteral("windows"), QJsonArray{}}});
+    QTRY_VERIFY(service_.windows().isEmpty());
+
+    QSignalSpy changed(&service_, &NiriService::windowsChanged);
+    pushEvent(QStringLiteral("WindowsChanged"),
+              QJsonObject{{QStringLiteral("windows"),
+                           qstest::array({qstest::windowObject(13, QStringLiteral("google-chrome"), 7, true),
+                                          qstest::windowObject(14, QStringLiteral("editor"), 7)})}});
+    QTRY_COMPARE(changed.count(), 1);
+    QVariantList windows = service_.windows();
+    QCOMPARE(windows.size(), 2);
+    QCOMPARE(windows.at(0).toMap().value(QStringLiteral("id")).toString(), QStringLiteral("13"));
+    QCOMPARE(windows.at(0).toMap().value(QStringLiteral("isFocused")).toBool(), true);
+    QCOMPARE(windows.at(1).toMap().value(QStringLiteral("appId")).toString(), QStringLiteral("editor"));
+    QCOMPARE(windows.at(1).toMap().value(QStringLiteral("isFocused")).toBool(), false);
+    QCOMPARE(windows.at(1).toMap().value(QStringLiteral("workspaceId")).toString(), QStringLiteral("7"));
+
+    // Focus moving is a change of the list too — which entry is marked — and is reported, once.
+    pushEvent(QStringLiteral("WindowFocusChanged"), QJsonObject{{QStringLiteral("id"), 14}});
+    QTRY_COMPARE(changed.count(), 2);
+    windows = service_.windows();
+    QCOMPARE(windows.at(0).toMap().value(QStringLiteral("isFocused")).toBool(), false);
+    QCOMPARE(windows.at(1).toMap().value(QStringLiteral("isFocused")).toBool(), true);
+
+    // A window closing leaves the list, and nothing that changes nothing emits anything.
+    pushEvent(QStringLiteral("WindowClosed"), QJsonObject{{QStringLiteral("id"), 13}});
+    QTRY_COMPARE(service_.windows().size(), 1);
+    QCOMPARE(changed.count(), 3);
+    pushEvent(QStringLiteral("WindowFocusChanged"), QJsonObject{{QStringLiteral("id"), 14}});
+    QTest::qWait(50);
+    QCOMPARE(changed.count(), 3);
+
+    // Left as found: no windows and nothing focused. `anEventThatChangesNothingDoesNotWakeABinding` waits for a
+    // focused window on workspace 7 before it starts its spies, and a window left focused there satisfies that
+    // wait before its own event has been read — which the shuffled order check found, as a count of two.
+    pushEvent(QStringLiteral("WindowsChanged"), QJsonObject{{QStringLiteral("windows"), QJsonArray{}}});
+    QTRY_VERIFY(service_.windows().isEmpty());
+    QTRY_VERIFY(service_.focusedWindow().isEmpty());
 }
 
 void NiriServiceTest::outputsAndKeyboardLayoutFollowTheCompositor() {
@@ -662,7 +704,8 @@ void NiriServiceTest::everyKeyTheServiceCanEmitIsTheOneAWidgetReads() {
 void NiriServiceTest::theQmlPropertiesAreTheOnesABindingCanFollow() {
     const QStringList covered{QStringLiteral("connected"),      QStringLiteral("focusedWindow"),
                               QStringLiteral("keyboardLayout"), QStringLiteral("outputs"),
-                              QStringLiteral("overviewOpen"),   QStringLiteral("workspaces")};
+                              QStringLiteral("overviewOpen"),   QStringLiteral("windows"),
+                              QStringLiteral("workspaces")};
 
     const QMetaObject& meta = NiriService::staticMetaObject;
     QStringList actual;

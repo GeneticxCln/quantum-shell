@@ -323,6 +323,7 @@ private slots:
     void theWheelMovesThroughNirisOwnWorkspaces();
     void aSwipeOfSmallDeltasStepsOncePerNotchOfDistance();
     void theStripDrawsOnlyTheWorkspacesOfItsOwnOutput();
+    void theWindowListDrawsOneOutputsWindowsAndFocusesTheOneClicked();
     void thePaletteIsTheOneTheFileSets();
 
     void theBarPlacesItsWidgetsInNamedGroups();
@@ -865,6 +866,93 @@ void BarInteractionTest::theStripDrawsOnlyTheWorkspacesOfItsOwnOutput() {
                              5000);
 }
 
+void BarInteractionTest::theWindowListDrawsOneOutputsWindowsAndFocusesTheOneClicked() {
+    // Two workspaces on one output and one on another, and a window on each of them: 101 is the focused one on
+    // the first, 102 is on the second, 103 is on the other monitor's.
+    const auto pushWorkspaces = [this](bool withOtherOutput) {
+        server_.writeRawTo(1, qstest::eventLine(
+                                  QStringLiteral("WorkspacesChanged"),
+                                  QJsonObject{{QStringLiteral("workspaces"),
+                                               qstest::array({qstest::workspaceObject(firstWorkspaceId, 1, QStringLiteral("DP-3"), true, true),
+                                                              qstest::workspaceObject(secondWorkspaceId, 2, QStringLiteral("DP-3")),
+                                                              qstest::workspaceObject(withOtherOutput ? otherOutputWorkspaceId : thirdWorkspaceId, 3,
+                                                                                      withOtherOutput ? QStringLiteral("HDMI-A-1")
+                                                                                                      : QStringLiteral("DP-3"))})}}));
+        QTRY_COMPARE_WITH_TIMEOUT(service_->workspaces().size(), 3, 5000);
+    };
+    // The entries of the list, left to right: what the widget built a delegate for, and nothing else.
+    const auto entries = [this]() {
+        QList<QQuickItem*> found;
+        QQuickItem* strip = itemNamed(QStringLiteral("windowStrip"));
+        if (strip == nullptr)
+            return found;
+        for (QQuickItem* child : strip->childItems()) {
+            if (child->property("modelData").isValid())
+                found.append(child);
+        }
+        std::sort(found.begin(), found.end(), [](QQuickItem* a, QQuickItem* b) { return a->x() < b->x(); });
+        return found;
+    };
+    const auto labelOf = [](QQuickItem* entry) { return entry->property("label").toString(); };
+
+    // Nothing to list draws nothing and takes no room: this is the state every other slot reads.
+    QVERIFY(bar_->setProperty("outputName", QString()));
+    QTRY_COMPARE_WITH_TIMEOUT(entries().size(), 0, 5000);
+    QQuickItem* widget = itemNamed(QStringLiteral("windows"));
+    QVERIFY2(widget != nullptr, "the bar has no window list");
+    QCOMPARE(widget->width(), 0.0);
+
+    pushWorkspaces(true);
+    server_.writeRawTo(1, qstest::eventLine(
+                              QStringLiteral("WindowsChanged"),
+                              QJsonObject{{QStringLiteral("windows"),
+                                           qstest::array({qstest::windowObject(101, QStringLiteral("term"), firstWorkspaceId, true),
+                                                          qstest::windowObject(102, QStringLiteral("editor"), secondWorkspaceId),
+                                                          qstest::windowObject(103, QStringLiteral("browser"), otherOutputWorkspaceId)})}}));
+    QTRY_COMPARE_WITH_TIMEOUT(service_->windows().size(), 3, 5000);
+
+    // No output: the whole model. On the first output: its own two, and not the other monitor's. On the
+    // second: the one.
+    QTRY_COMPARE_WITH_TIMEOUT(entries().size(), 3, 5000);
+    QVERIFY(bar_->setProperty("outputName", QStringLiteral("HDMI-A-1")));
+    QTRY_COMPARE_WITH_TIMEOUT(entries().size(), 1, 5000);
+    QCOMPARE(labelOf(entries().first()), QStringLiteral("title of browser"));
+    QVERIFY(bar_->setProperty("outputName", QStringLiteral("DP-3")));
+    QTRY_COMPARE_WITH_TIMEOUT(entries().size(), 2, 5000);
+    QCOMPARE(labelOf(entries().at(0)), QStringLiteral("title of term"));
+    QCOMPARE(labelOf(entries().at(1)), QStringLiteral("title of editor"));
+    QTRY_VERIFY_WITH_TIMEOUT(entries().at(1)->x() > entries().at(0)->x(), 5000);
+    QVERIFY2(widget->width() > 0, "a list with entries takes no room");
+
+    // The marked one is niri's: 101 is focused, 102 is not.
+    QCOMPARE(entries().at(0)->property("focused").toBool(), true);
+    QCOMPARE(entries().at(1)->property("focused").toBool(), false);
+
+    // A click on the unfocused entry asks niri to focus *that* window, by the id niri gave it; a click on
+    // the focused one asks for nothing.
+    int before = requestsSent();
+    QTest::mouseClick(window_.get(), Qt::LeftButton, Qt::NoModifier, centreOf(entries().at(1)).toPoint());
+    QTRY_VERIFY_WITH_TIMEOUT(requestsSent() > before, 5000);
+    QCOMPARE(lastRequest(), QStringLiteral(R"({"Action":{"FocusWindow":{"id":102}}})"));
+    before = requestsSent();
+    QTest::mouseClick(window_.get(), Qt::LeftButton, Qt::NoModifier, centreOf(entries().at(0)).toPoint());
+    QTest::qWait(100);
+    QCOMPARE(requestsSent(), before);
+
+    // Everything is put back for the slots around this one: no windows, the three workspaces on the first
+    // output, the bar on none.
+    server_.writeRawTo(1, qstest::eventLine(QStringLiteral("WindowsChanged"),
+                                            QJsonObject{{QStringLiteral("windows"), QJsonArray{}}}));
+    QTRY_COMPARE_WITH_TIMEOUT(service_->windows().size(), 0, 5000);
+    pushWorkspaces(false);
+    QVERIFY(bar_->setProperty("outputName", QString()));
+    QTRY_COMPARE_WITH_TIMEOUT(entries().size(), 0, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(capsuleCount(), 3, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(capsuleAt(0) != nullptr && capsuleAt(1) != nullptr
+                                 && capsuleAt(1)->x() > capsuleAt(0)->x(),
+                             5000);
+}
+
 void BarInteractionTest::thePaletteIsTheOneTheFileSets() {
     // The bar's colours come from `[bar.colors]` rather than from literals in the QML, and this is the check
     // that tells those two apart: a hard-coded colour would pass every other slot in this binary while
@@ -920,9 +1008,10 @@ void BarInteractionTest::theBarPlacesItsWidgetsInNamedGroups() {
     // are in the groups they were declared in rather than wherever an anchor left them.
     const QList<QQuickItem*> leftWidgets = left->childItems();
     const QList<QQuickItem*> rightWidgets = right->childItems();
-    QCOMPARE(leftWidgets.size(), 1);
+    QCOMPARE(leftWidgets.size(), 2);
     QCOMPARE(rightWidgets.size(), 6);
     QCOMPARE(leftWidgets.first()->objectName(), QStringLiteral("workspaces"));
+    QCOMPARE(leftWidgets.at(1)->objectName(), QStringLiteral("windows"));
     // The trailing group holds the network, the battery, the media player, the notification, the volume and then
     // the clock, in the order they were declared in `qml/Bar.qml`: the group decides that order, the machine's
     // own condition is read together at the outside of it — the connection it is on, then the power it has left
@@ -1117,6 +1206,17 @@ void BarInteractionTest::theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved
     const auto minute = [](int offsetMinutes) {
         return QTime::currentTime().addSecs(offsetMinutes * 60).toString(QStringLiteral("HH:mm"));
     };
+
+    // The clock's own timer fires on the minute boundary and rewrites the text, so "its own timer will not correct
+    // it" below is only a claim about a window that contains no boundary. It used to be assumed; hosted CI's
+    // shuffled check met the boundary inside the 50 ms wait (the text read 09:19 where the marker was 00:00). A
+    // boundary that is near is waited out first, so the marker is set with most of a minute in front of it.
+    const auto msToNextMinute = [] {
+        const QTime now = QTime::currentTime();
+        return 60000 - (now.second() * 1000 + now.msec());
+    };
+    if (msToNextMinute() < 2000)
+        QTest::qWait(msToNextMinute() + 250);
 
     // Left showing a time that is nowhere near the present: what a clock that slept through a resume shows. Its
     // own timer will not correct it for up to a minute, so only the service's signal can.

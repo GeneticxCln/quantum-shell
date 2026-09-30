@@ -175,7 +175,7 @@ void IpcCapabilitiesTest::everyStateKeyIsAPropertyOfTheService() {
     for (int index = QObject::staticMetaObject.propertyCount(); index < metaObject->propertyCount(); ++index)
         properties.insert(QString::fromLatin1(metaObject->property(index).name()));
 
-    QCOMPARE(properties.size(), 6);  // there are six; a count of zero would make this a test of nothing
+    QCOMPARE(properties.size(), 7);  // there are seven; a count of zero would make this a test of nothing
     QCOMPARE(reported, properties);
 }
 
@@ -206,6 +206,8 @@ void IpcCapabilitiesTest::theStateIsTheServicesOwnValues() {
              QJsonValue::fromVariant(service_.workspaces()).toArray());
     QCOMPARE(state.value(QStringLiteral("focusedWindow")).toObject(),
              QJsonValue::fromVariant(service_.focusedWindow()).toObject());
+    QCOMPARE(state.value(QStringLiteral("windows")).toArray(),
+             QJsonValue::fromVariant(service_.windows()).toArray());
     QCOMPARE(state.value(QStringLiteral("outputs")).toArray(),
              QJsonValue::fromVariant(service_.outputs()).toArray());
     QCOMPARE(state.value(QStringLiteral("keyboardLayout")).toObject(),
@@ -215,6 +217,7 @@ void IpcCapabilitiesTest::theStateIsTheServicesOwnValues() {
 
     // And with the state established, the two halves are not both empty by accident.
     QCOMPARE(state.value(QStringLiteral("workspaces")).toArray().size(), 2);
+    QCOMPARE(state.value(QStringLiteral("windows")).toArray().size(), 1);
     QCOMPARE(state.value(QStringLiteral("overviewOpen")).toBool(), true);
     QCOMPARE(state.value(QStringLiteral("connected")).toBool(), true);
 }
