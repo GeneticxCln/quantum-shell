@@ -158,6 +158,9 @@ public:
     // `FocusWindow` by id, the same way: the id is the text `NiriService.windows[i].id` carries, refused
     // before anything is sent when it is not decimal digits or is too large to be written exactly.
     Q_INVOKABLE void focusWindowById(const QString& idText);
+    // `SwitchLayout { layout: Next }`: the keyboard layout after the current one, wrapping. Which one that is
+    // is niri's answer, not an index computed from the model here.
+    Q_INVOKABLE void switchLayoutNext();
     Q_INVOKABLE void focusWorkspaceUp();
     Q_INVOKABLE void focusWorkspaceDown();
 

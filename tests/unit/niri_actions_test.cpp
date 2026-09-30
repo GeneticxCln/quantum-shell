@@ -90,6 +90,7 @@ private slots:
     void refusesAnIdTextThatIsNotOneWithoutSendingAnything();
     void writesThatAFailedActionHappenedRatherThanOnlySignallingIt();
     void focusesTheWindowAnIdNamesExactlyAndRefusesWhatIsNotOne();
+    void switchesToTheNextLayoutWhenQmlAsks();
 };
 
 void NiriActionsTest::sendsEachActionInTheShapeNiriParses() {
@@ -565,6 +566,21 @@ void NiriActionsTest::focusesTheWindowAnIdNamesExactlyAndRefusesWhatIsNotOne() {
     for (const QString& action : refused)
         QCOMPARE(action, QStringLiteral("FocusWindow"));
     QCOMPARE(server.receivedRequests().size(), 3);
+}
+
+void NiriActionsTest::switchesToTheNextLayoutWhenQmlAsks() {
+    FakeNiriServer server;
+    QVERIFY2(server.listen(), qPrintable(server.serverError()));
+    server.setReply(QStringLiteral("Action"), QByteArray(R"json({"Ok":"Handled"})json"));
+
+    NiriIPC client;
+    NiriActions actions(client);
+    QVERIFY2(connectTo(client, server), "the request connection never came up");
+
+    actions.switchLayoutNext();
+    QTRY_VERIFY_WITH_TIMEOUT(server.receivedRequests().size() == 1, 5000);
+    QCOMPARE(server.receivedRequests().last(),
+             QStringLiteral(R"({"Action":{"SwitchLayout":{"layout":"Next"}}})"));
 }
 
 void NiriActionsTest::writesThatAFailedActionHappenedRatherThanOnlySignallingIt() {
