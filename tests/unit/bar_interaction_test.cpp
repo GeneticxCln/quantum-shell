@@ -47,6 +47,7 @@
 #include "dbus/BatteryService.h"
 #include "dbus/NetworkService.h"
 #include "dbus/MediaService.h"
+#include "system/ClockService.h"
 #include "system/SysMonService.h"
 
 #include "FakeNiriServer.h"
@@ -90,6 +91,7 @@ using quantum::audio::PipeWireService;
 using quantum::dbus::BatteryService;
 using quantum::dbus::NetworkService;
 using quantum::niri::NiriState;
+using quantum::system::ClockService;
 using quantum::system::SysMonService;
 
 namespace qml = quantum::niri::qml;
@@ -108,6 +110,7 @@ constexpr int coveredModuleMinorVersion = 0;
 constexpr auto coveredServiceTypeName = "NiriService";
 constexpr auto coveredActionTypeName = "NiriActions";
 constexpr auto coveredSysMonTypeName = "SysMonService";
+constexpr auto coveredClockTypeName = "ClockService";
 constexpr auto coveredAudioTypeName = "PipeWireService";
 constexpr auto coveredNetworkTypeName = "NetworkService";
 constexpr auto coveredBatteryTypeName = "BatteryService";
@@ -121,6 +124,8 @@ static_assert(std::string_view(qml::ServiceTypeName) == std::string_view(covered
               "the QML service type name changed: update the mirror above, and every binding that reads it");
 static_assert(std::string_view(qml::ActionTypeName) == std::string_view(coveredActionTypeName),
               "the QML action type name changed: update the mirror above, and every gesture that calls it");
+static_assert(std::string_view(ClockService::QmlTypeName) == std::string_view(coveredClockTypeName),
+              "the QML clock-service name changed: update the mirror above, and `qml/Clock.qml`, which connects to it");
 static_assert(std::string_view(SysMonService::QmlTypeName) == std::string_view(coveredSysMonTypeName),
               "the QML system-statistics name changed: update the mirror above, and every binding that reads it");
 static_assert(std::string_view(PipeWireService::QmlTypeName) == std::string_view(coveredAudioTypeName),
@@ -331,6 +336,7 @@ private slots:
     void theVolumeReadoutSitsInTheTrailingGroupAndShowsNoValue();
     void theVolumeReadoutDrawsTheUnitTheConfigurationNames();
     void theVolumeReadoutFollowsItsConfiguration();
+    void theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved();
 
     void theNetworkReadoutSitsInTheTrailingGroupAndShowsNoValue();
     void theNetworkReadoutDrawsWhatTheDaemonReportsAndTheConfigurationNames();
@@ -411,6 +417,7 @@ private:
     // one word of prose is a cheaper correction than narrowing it.
     QTemporaryDir procRoot_;
     std::unique_ptr<SysMonService> sysMon_;
+    std::unique_ptr<ClockService> clockService_;
     // The fixture's busy time, cumulative as the file's aggregate line is and never reset: every sample in
     // this file therefore sees a line that has moved since the last one.
     qulonglong fixtureBusyJiffies_ = 0;
@@ -482,6 +489,15 @@ void BarInteractionTest::initTestCase() {
     // can be moved by a sample landing between two lines of it.
     sysMon_ = std::make_unique<SysMonService>(procRoot_.path());
     SysMonService::registerQmlSingleton(*sysMon_);
+    // Watching a zone file of its own beside the `/proc` fixture, so this binary never depends on the machine's
+    // `/etc/localtime`; the real-time clock it also watches is the machine's, and nothing here sets it.
+    {
+        QFile zone(procRoot_.filePath(QStringLiteral("localtime")));
+        QVERIFY2(zone.open(QIODevice::WriteOnly), qPrintable(zone.errorString()));
+        zone.write("zone\n");
+    }
+    clockService_ = std::make_unique<ClockService>(procRoot_.filePath(QStringLiteral("localtime")));
+    ClockService::registerQmlSingleton(*clockService_);
     audio_ = std::make_unique<PipeWireService>();
     PipeWireService::registerQmlSingleton(*audio_);
     network_ = std::make_unique<NetworkService>();
@@ -1074,6 +1090,34 @@ void BarInteractionTest::theVolumeReadoutDrawsTheUnitTheConfigurationNames() {
     // Back to what the shell ships, so a slot running after this one reads the default unit.
     config_.apply(ConfigValues{});
     QCOMPARE(widget->property("scale").toString(), QStringLiteral("percent"));
+}
+
+void BarInteractionTest::theClockReadsTheTimeAgainWhenTheClockServiceSaysItMoved()
+{
+    QQuickItem* clock = itemNamed(QStringLiteral("clock"));
+    QVERIFY(clock != nullptr);
+    const auto minute = [](int offsetMinutes) {
+        return QTime::currentTime().addSecs(offsetMinutes * 60).toString(QStringLiteral("HH:mm"));
+    };
+
+    // Left showing a time that is nowhere near the present: what a clock that slept through a resume shows. Its
+    // own timer will not correct it for up to a minute, so only the service's signal can.
+    clock->setProperty("text", QStringLiteral("00:00"));
+    // Not 00:00 by coincidence, or the assertion below would pass with the signal ignored.
+    QVERIFY2(minute(0) != QStringLiteral("00:00") && minute(1) != QStringLiteral("00:00")
+                 && minute(-1) != QStringLiteral("00:00"),
+             "the run fell within a minute of midnight, where the stale marker is a valid time");
+    QTest::qWait(50);
+    QCOMPARE(clock->property("text").toString(), QStringLiteral("00:00"));
+
+    emit clockService_->clockChanged();
+    // A minute boundary may fall between the signal and the read, so the accepted answers are the minute before
+    // the signal and the one after it.
+    const QString before = minute(0);
+    QTRY_VERIFY_WITH_TIMEOUT(clock->property("text").toString() == before ||
+                                 clock->property("text").toString() == minute(0) ||
+                                 clock->property("text").toString() == minute(1),
+                             5000);
 }
 
 void BarInteractionTest::theVolumeReadoutFollowsItsConfiguration() {

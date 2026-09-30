@@ -1,4 +1,5 @@
 import QtQuick
+import QuantumShell 1.0
 
 // The time, from the system clock.
 //
@@ -12,6 +13,11 @@ import QtQuick
 // It asks as little as it can. The timer is single-shot and re-armed for the exact moment the displayed
 // text would differ, so the shell wakes once a minute instead of sixty times, and the minute shown is
 // never stale by a second either.
+//
+// The boundary it computes is on the monotonic clock's terms, which stops counting during a suspend and knows
+// nothing of the clock being set or the zone being changed, so a resume or a change would leave the time wrong
+// for up to a minute. `ClockService` is the event source for exactly those two cases (a real-time clock that was
+// set, a timezone that changed) and this reads the time and re-arms when it says so.
 Text {
     id: clock
     // Outside text is drawn as the characters it is: Qt reads a string as rich text when it looks like
@@ -56,6 +62,14 @@ Text {
         id: timer
         repeat: false
         onTriggered: {
+            clock.refresh()
+            clock.armNextChange()
+        }
+    }
+
+    Connections {
+        target: ClockService
+        function onClockChanged() {
             clock.refresh()
             clock.armNextChange()
         }

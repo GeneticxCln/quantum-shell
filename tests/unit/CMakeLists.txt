@@ -167,6 +167,8 @@ target_compile_definitions(bar-interaction-test PRIVATE FIXTURES="${CMAKE_CURREN
 # /proc as well, because a parser only ever handed this test's own strings agrees with this test and nothing
 # else. `quantum-shell-logging` because a refusal is only a report if the record can be read.
 qs_unit_test(sysmon-test sysmon_test.cpp)
+qs_unit_test(clock-test clock_test.cpp)
+target_link_libraries(clock-test PRIVATE quantum-shell-system quantum-shell-logging)
 target_link_libraries(sysmon-test PRIVATE quantum-shell-system quantum-shell-logging)
 
 # The audio module's pure half: the Props parse, the percentage convention, the wheel's arithmetic, the

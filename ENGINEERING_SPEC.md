@@ -224,14 +224,14 @@ journal otherwise (`journalctl --user _COMM=quantum-shell`). Secrets are never l
 
 ### 2.8 Test and environment names (declared once, `tests/public_names.cmake`)
 
-48 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
+49 tests: `public-names-test`, `qs-scan-self-test`, `repo-scan`,
 `slot-order-independence`, `slot-order-randomised-shard-{1..4}`, `niri-live-test`,
 `niri-live-stream-test`, `niri-live-action-test`, `niri-live-layershell-test`,
 `niri-live-restart-test`, `niri-live-shell-restart-test`, `niri-live-scale-test`, `audio-live-test`,
 `network-live-test`, `notification-test`, `osd-test`, `apps-test`, `launcher-test`, `control-center-test`, `crash-handler-test`, `dist-test`, `niri-version-test`, `niri-ipc-test`, `niri-event-stream-test`,
 `niri-state-test`, `niri-actions-test`, `niri-output-test`,
 `niri-keyboard-layouts-test`, `niri-outputs-test`, `niri-service-test`,
-`niri-reconnect-test`, `config-test`, `config-watcher-test`, `sysmon-test`,
+`niri-reconnect-test`, `config-test`, `config-watcher-test`, `sysmon-test`, `clock-test`,
 `audio-test`, `network-test`, `battery-test`, `media-test`, `ipc-protocol-test`, `ipc-server-test`,
 `ipc-capabilities-test`, `app-logging-test`, `snapshot-reconcile-test`,
 `spec-values-test`, `bar-interaction-test`.
@@ -509,6 +509,7 @@ registers the scale test, which starts a compositor of its own and takes no lock
 | The release tarball and its checksum: built against a git repository the check makes for itself — the committed files under a `quantum-shell-<version>/` prefix and nothing else (no ignored build output, no `.git`), a checksum file `sha256sum -c` accepts (and a wrong one it rejects, so the check has teeth), the same commit giving the same bytes twice, and a tree with uncommitted changes refused with the dirty path named and no tarball left behind | `dist-test` | `ctest --preset dev -R dist-test` |
 | The launcher's reading of the desktop, no display and no bus: the Desktop Entry parse (only the `[Desktop Entry]` group, first key wins, localised `Name`/`Comment` in the specification's order, the string escapes and list values), the `Exec` split (quotes, the four in-quote escapes, field codes removed or resolved, no shell), what is offered on a given desktop (hidden, terminal, `OnlyShowIn`, `NotShowIn`), the ranking of a query, a scan of directories the test writes (user copy shadows the system's, a user's `Hidden` deletes an entry, `TryExec`, subdirectory ids), the service scanning on open on a worker thread and filtering by query, selection wrapping, `max_results` bounded, and a launch that starts a real `touch` on a path containing spaces and closes the panel — with a program that cannot start leaving it open | `apps-test` | `ctest --preset dev -R apps-test` |
 | Every D-Bus name against the daemon's own spelling, its state/connectivity/device-type numbers as the widget's tokens (unknown refused, not guessed), the property map read through its variants (bare and `QDBusVariant` both, text for a number and a number for text refused, `ao` arriving as a raw `QDBusArgument`), a change that overtakes an object's first read not undone by the reply, the reading the chain adds up to (wifi/ethernet/unassociated/offline/clamped/unknown state), and the service against a NetworkManager test double on a private bus: the reading arriving, following `PropertiesChanged` with **zero** calls to the daemon counted after the first read, a chain that moves with the objects it left no longer followed, a daemon leaving and arriving, a reply from a daemon that is gone dropped, an object that refuses leaving the rest standing, an unreachable bus refused with a record | `network-test` (starts a `dbus-daemon` of its own; the test double owns the name there) | `ctest --preset dev -R network-test` |
+| The clock being moved from under it: the real-time clock set, twice in a row, by a real `clock_settime` to the value just read (skips with its reason without `CAP_SYS_TIME`), and a timezone switched the way `timedatectl` does it — the symlink replaced, then the zone now in force edited in place — while a file appearing beside the zone, and a quiet period, say nothing; plus `bar-interaction-test`'s slot that a stale time is read again when the service says the clock moved | `clock-test` (files of its own and a real timerfd), `bar-interaction-test` | `ctest --preset dev -R clock-test` |
 | Schema, diffing, `Config` bindings, compile-time mirrors (defaults, floors, token list, key paths) | `config-test`, `config-watcher-test` (scratch dirs) | `ctest --preset dev -R config` |
 | IPC frames, refusals, a connection from another uid closed unanswered, server over a real socket, capabilities vs real service | `ipc-protocol-test`, `ipc-server-test`, `ipc-capabilities-test` | `ctest --preset dev -R ipc` |
 | Record format + category names | `app-logging-test` | `ctest --preset dev -R app-logging-test` |
@@ -598,9 +599,17 @@ config path, socket bind result) on `quantum.shell`.
   sway (wlroots layer-shell), not against niri: the niri live tests that would pin it are not
   written, and this environment has no niri.
 - Clock: `qml/Clock.qml` re-arms a single-shot timer for the next minute boundary, and Qt timers run on the
-  monotonic clock, which does not advance during suspend. After a resume, or a manual clock or timezone
-  change, the time shown can be stale for up to a minute. The fix needs an event source (logind's
-  `PrepareForSleep`, or a `CLOCK_REALTIME` timerfd with cancel-on-set) that has not been built.
+  monotonic clock, which does not advance during suspend, so on its own it is late by however far the wall
+  clock jumped. `ClockService` (`src/system/`) is the event source that corrects it: a `timerfd` on
+  `CLOCK_REALTIME` armed with `TFD_TIMER_CANCEL_ON_SET`, which the kernel completes with `ECANCELED` when the
+  clock is set (a manual step, an NTP step, and the step taken on resume from suspend), and a watch on
+  `/etc/localtime` and its directory for a timezone switch, reporting only when the zone it resolves to differs.
+  `clockChanged()` makes the clock read the time and re-arm. Verified by `clock-test` (a real `clock_settime` to
+  the value just read, twice in a row; skipped where the process lacks `CAP_SYS_TIME`) and on a headless sway,
+  where stepping the wall clock five minutes forward changed the bar's time within 1.5 s. **Not verified:** a real
+  suspend and resume (this environment cannot suspend), which is assumed to be reported the same way because the
+  kernel treats the step it takes on resume as the clock being set; and a real `timedatectl set-timezone`, which
+  is exercised here as the symlink replacement it performs, against a file of the test's own.
 - Bar hide/show: **not a leak.** A short run does show growth (+96 KiB over 400 pairs, about 0.5 KiB a pair),
   which is why it was recorded as unaccounted for, but over 2000 pairs the release shell's RSS climbs
   49,800 → 50,284 KiB in the first 250 pairs and then oscillates between 50,356 and 50,608 KiB with drops

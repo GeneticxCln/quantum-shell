@@ -150,7 +150,8 @@ target_link_libraries(quantum-shell-config
 # The cadence this library owns is the shell's second reading with no event source, and the reason is written
 # down where the decision is: `src/system/SysMonService.h`.
 add_library(quantum-shell-system STATIC
-    src/system/SysMonService.cpp)
+    src/system/SysMonService.cpp
+    src/system/ClockService.cpp)
 target_include_directories(quantum-shell-system PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quantum-shell-system
     PUBLIC Qt6::Core Qt6::Qml quantum-shell-warnings
